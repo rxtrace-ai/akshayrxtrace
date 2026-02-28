@@ -19,35 +19,55 @@ ALTER TABLE public.skus DROP COLUMN IF EXISTS description;
 
 -- Create indexes if they don't exist
 CREATE INDEX IF NOT EXISTS skus_company_id_idx ON public.skus(company_id);
-CREATE INDEX IF NOT EXISTS skus_company_active_idx ON public.skus(company_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS skus_company_active_idx 
+  ON public.skus(company_id) 
+  WHERE deleted_at IS NULL;
 
--- Add RLS policies
+-- Enable RLS
 ALTER TABLE public.skus ENABLE ROW LEVEL SECURITY;
 
+-- Drop existing policies safely (Postgres supports this)
+DROP POLICY IF EXISTS "Users can view their company SKUs" ON public.skus;
+DROP POLICY IF EXISTS "Users can insert their company SKUs" ON public.skus;
+DROP POLICY IF EXISTS "Users can update their company SKUs" ON public.skus;
+DROP POLICY IF EXISTS "Users can delete their company SKUs" ON public.skus;
+
 -- Policy: Users can view SKUs from their company
-CREATE POLICY IF NOT EXISTS "Users can view their company SKUs"
-  ON public.skus FOR SELECT
-  USING (company_id IN (
-    SELECT id FROM public.companies WHERE user_id = auth.uid()
-  ));
+CREATE POLICY "Users can view their company SKUs"
+  ON public.skus
+  FOR SELECT
+  USING (
+    company_id IN (
+      SELECT id FROM public.companies WHERE user_id = auth.uid()
+    )
+  );
 
 -- Policy: Users can insert SKUs for their company
-CREATE POLICY IF NOT EXISTS "Users can insert their company SKUs"
-  ON public.skus FOR INSERT
-  WITH CHECK (company_id IN (
-    SELECT id FROM public.companies WHERE user_id = auth.uid()
-  ));
+CREATE POLICY "Users can insert their company SKUs"
+  ON public.skus
+  FOR INSERT
+  WITH CHECK (
+    company_id IN (
+      SELECT id FROM public.companies WHERE user_id = auth.uid()
+    )
+  );
 
 -- Policy: Users can update SKUs from their company
-CREATE POLICY IF NOT EXISTS "Users can update their company SKUs"
-  ON public.skus FOR UPDATE
-  USING (company_id IN (
-    SELECT id FROM public.companies WHERE user_id = auth.uid()
-  ));
+CREATE POLICY "Users can update their company SKUs"
+  ON public.skus
+  FOR UPDATE
+  USING (
+    company_id IN (
+      SELECT id FROM public.companies WHERE user_id = auth.uid()
+    )
+  );
 
--- Policy: Users can delete SKUs from their company (soft delete)
-CREATE POLICY IF NOT EXISTS "Users can delete their company SKUs"
-  ON public.skus FOR DELETE
-  USING (company_id IN (
-    SELECT id FROM public.companies WHERE user_id = auth.uid()
-  ));
+-- Policy: Users can delete SKUs from their company
+CREATE POLICY "Users can delete their company SKUs"
+  ON public.skus
+  FOR DELETE
+  USING (
+    company_id IN (
+      SELECT id FROM public.companies WHERE user_id = auth.uid()
+    )
+  );

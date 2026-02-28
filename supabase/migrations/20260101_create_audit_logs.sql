@@ -19,13 +19,19 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor);
 -- Enable RLS
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
+-- Drop existing policies safely (important for migration re-run)
+DROP POLICY IF EXISTS "Companies can view own audit logs" ON audit_logs;
+DROP POLICY IF EXISTS "System can insert audit logs" ON audit_logs;
+
 -- RLS policy: Companies can view their own audit logs
 CREATE POLICY "Companies can view own audit logs"
   ON audit_logs
   FOR SELECT
-  USING (company_id IN (
-    SELECT id FROM companies WHERE user_id = auth.uid()
-  ));
+  USING (
+    company_id IN (
+      SELECT id FROM companies WHERE user_id = auth.uid()
+    )
+  );
 
 -- RLS policy: System can insert audit logs
 CREATE POLICY "System can insert audit logs"
