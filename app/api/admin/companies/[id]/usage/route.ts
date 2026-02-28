@@ -1,69 +1,80 @@
-import { NextResponse } from 'next/server';
-import { getSupabaseAdmin } from '@/lib/supabase/admin';
-import { getCurrentUsage, getUsageLimits } from '@/lib/usage/tracking';
-import { getSeatLimits } from '@/lib/usage/seats';
-import { requireAdmin } from '@/lib/auth/admin';
+import { NextResponse } from "next/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { requireAdmin } from "@/lib/auth/admin";
+import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-// GET: Company usage details
 export async function GET(
-  req: Request,
+  _req: Request,
   { params }: { params: { id: string } }
 ) {
   try {
     const { error: adminError } = await requireAdmin();
     if (adminError) return adminError;
+
     const supabase = getSupabaseAdmin();
-    const company_id = params.id;
+    const companyId = params.id;
+    const snapshot = await getCompanyEntitlementSnapshot(supabase, companyId);
 
-    // Get current period usage
-    const usage = await getCurrentUsage(supabase, company_id);
-    
-    // Get limits
-    const limits = await getUsageLimits(supabase, company_id);
-
-    // Get seat limits
-    const seats = await getSeatLimits(supabase, company_id);
-
-    // Get historical usage (last 6 months)
-    const periodStart = new Date();
-    periodStart.setMonth(periodStart.getMonth() - 6);
-    periodStart.setDate(1);
+    const historicalFrom = new Date();
+    historicalFrom.setMonth(historicalFrom.getMonth() - 6);
+    historicalFrom.setDate(1);
 
     const { data: historical, error: histError } = await supabase
-      .from('usage_counters')
-      .select('metric_type, period_start, used_quantity')
-      .eq('company_id', company_id)
-      .gte('period_start', periodStart.toISOString().split('T')[0])
-      .order('period_start', { ascending: false });
+      .from("usage_counters")
+      .select("metric_type, period_start, used_quantity")
+      .eq("company_id", companyId)
+      .gte("period_start", historicalFrom.toISOString().split("T")[0])
+      .order("period_start", { ascending: false });
 
     if (histError) throw histError;
 
-    // Format usage with limits
-    const usageWithLimits: Record<string, any> = {};
-    Object.keys(usage).forEach((metricType) => {
-      const limit = limits[metricType];
-      usageWithLimits[metricType] = {
-        used: usage[metricType] || 0,
-        limit_value: limit?.limit_value || null,
-        limit_type: limit?.limit_type || 'NONE',
-        exceeded: limit?.limit_value ? (usage[metricType] || 0) > limit.limit_value : false,
-      };
-    });
+    const usageWithLimits = {
+      UNIT: {
+        used: snapshot.usage.unit,
+        limit_value: snapshot.limits.unit,
+        limit_type: "HARD",
+        exceeded: snapshot.remaining.unit <= 0,
+      },
+      BOX: {
+        used: snapshot.usage.box,
+        limit_value: snapshot.limits.box,
+        limit_type: "HARD",
+        exceeded: snapshot.remaining.box <= 0,
+      },
+      CARTON: {
+        used: snapshot.usage.carton,
+        limit_value: snapshot.limits.carton,
+        limit_type: "HARD",
+        exceeded: snapshot.remaining.carton <= 0,
+      },
+      SSCC: {
+        used: snapshot.usage.pallet,
+        limit_value: snapshot.limits.pallet,
+        limit_type: "HARD",
+        exceeded: snapshot.remaining.pallet <= 0,
+      },
+    };
 
     return NextResponse.json({
       success: true,
       current_period: {
         usage: usageWithLimits,
+        state: snapshot.state,
       },
       seats: {
-        max_seats: seats.max_seats,
-        used_seats: seats.used_seats,
-        available_seats: seats.available_seats,
-        seats_from_plan: seats.seats_from_plan,
-        seats_from_addons: seats.seats_from_addons,
+        max_seats: snapshot.limits.seat,
+        used_seats: snapshot.usage.seat,
+        available_seats: snapshot.remaining.seat,
+        seats_from_plan: snapshot.limits.seat,
+        seats_from_addons: 0,
+      },
+      plants: {
+        max_plants: snapshot.limits.plant,
+        used_plants: snapshot.usage.plant,
+        available_plants: snapshot.remaining.plant,
       },
       historical: historical || [],
     });

@@ -1,6 +1,7 @@
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { normalizePlanType, quotasForPlan, resolvePaidPeriod } from '@/lib/billing/period';
 import type { PlanType } from '@/lib/billingConfig';
+import { clearTrialWindowIfConverted } from '@/lib/trial';
 
 export type ActiveUsageRow = {
   id: string;
@@ -30,7 +31,7 @@ export async function getCompanyBillingContext(opts: {
 
   const { data: companyRow, error } = await supabase
     .from('companies')
-    .select('id, subscription_status, subscription_plan, trial_start_date, trial_end_date, trial_activated_at, extra_user_seats')
+    .select('id, subscription_status, subscription_plan, trial_started_at, trial_expires_at, extra_user_seats')
     .eq('id', companyId)
     .maybeSingle();
 
@@ -75,7 +76,7 @@ export async function ensureActiveBillingUsage(opts: {
   if (!planType) return null;
 
   const status = String(company.subscription_status ?? '').toLowerCase();
-  const trialEndRaw = company.trial_end_date ? String(company.trial_end_date) : null;
+  const trialEndRaw = company.trial_expires_at ? String(company.trial_expires_at) : null;
 
   let periodStart: Date;
   let periodEnd: Date;
@@ -200,4 +201,6 @@ export async function assertCompanyCanOperate(opts: {
     e.code = 'SUBSCRIPTION_INACTIVE';
     throw e;
   }
+
+  await clearTrialWindowIfConverted(supabase, companyId, status, company.trial_started_at);
 }

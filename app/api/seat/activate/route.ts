@@ -1,35 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
-import { PRICING, type PlanType } from "@/lib/billingConfig";
 import { writeAuditLog } from "@/lib/audit";
+import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function normalizePlanType(raw: unknown): PlanType | null {
-  const value = String(raw ?? "").trim().toLowerCase();
-  if (value === "starter") return "starter";
-  if (value === "professional" || value === "pro" || value === "growth") return "growth";
-  if (value === "enterprise") return "enterprise";
-  return null;
-}
-
-async function resolveCompanyPlanType(supabase: ReturnType<typeof getSupabaseAdmin>, companyId: string): Promise<PlanType | null> {
-  const { data: companyRow } = await supabase
-    .from("companies")
-    .select("*")
-    .eq("id", companyId)
-    .maybeSingle();
-
-  const planRaw =
-    (companyRow as any)?.plan ??
-    (companyRow as any)?.plan_type ??
-    (companyRow as any)?.subscription_plan ??
-    (companyRow as any)?.tier;
-
-  return normalizePlanType(planRaw);
-}
 
 async function resolveAuthCompanyId() {
   const supabase = await supabaseServer();
@@ -52,7 +28,7 @@ async function resolveAuthCompanyId() {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => ({} as any));
     const seatId = body.seat_id as string | undefined;
     const requestedCompanyId = body.company_id as string | undefined;
 
@@ -70,10 +46,9 @@ export async function POST(req: Request) {
 
     const supabase = getSupabaseAdmin();
 
-    // Check seat belongs to company
     const { data: seatRow, error: seatError } = await supabase
       .from("seats")
-      .select("id, company_id, status")
+      .select("id, company_id, status, active")
       .eq("id", seatId)
       .eq("company_id", companyId)
       .maybeSingle();
@@ -85,42 +60,28 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Seat not found" }, { status: 404 });
     }
 
-    // If already active, no-op
-    if ((seatRow as any).status === "active") {
+    if ((seatRow as any).status === "active" || (seatRow as any).active === true) {
       return NextResponse.json({ success: true, seat: seatRow, message: "Already active" });
     }
 
-    const { data: companyRow } = await supabase
-      .from("companies")
-      .select("*")
-      .eq("id", companyId)
-      .maybeSingle();
+    const snapshot = await getCompanyEntitlementSnapshot(supabase, companyId);
 
-    const planType = await resolveCompanyPlanType(supabase, companyId);
-    const baseMax = planType ? PRICING.plans[planType].max_seats : 1;
-    const extra = Number((companyRow as any)?.extra_user_seats ?? 0);
-    const maxSeats = baseMax + (Number.isFinite(extra) ? extra : 0);
-
-    // Used seats = active + pending
-    const { count: usedSeats, error: countError } = await supabase
-      .from("seats")
-      .select("*", { count: "exact", head: true })
-      .eq("company_id", companyId)
-      .in("status", ["active", "pending"]);
-
-    if (countError) {
-      return NextResponse.json({ success: false, error: countError.message }, { status: 500 });
+    if (snapshot.state === "TRIAL_EXPIRED") {
+      return NextResponse.json({ success: false, error: "TRIAL_EXPIRED" }, { status: 403 });
+    }
+    if (snapshot.state === "NO_ACTIVE_SUBSCRIPTION") {
+      return NextResponse.json({ success: false, error: "NO_ACTIVE_SUBSCRIPTION" }, { status: 403 });
     }
 
-    if ((usedSeats ?? 0) >= maxSeats) {
+    const remainingSeats = Number(snapshot.remaining?.seat ?? 0);
+    if (remainingSeats <= 0) {
       return NextResponse.json(
         {
           success: false,
-          error: `User ID limit reached. Current plan allows ${maxSeats} User ID(s).`,
-          requires_payment: true,
-          max_seats: maxSeats,
-          used_seats: usedSeats ?? 0,
-          plan: planType ?? "starter",
+          error: "SEAT_QUOTA_EXCEEDED",
+          max_seats: Number(snapshot.limits?.seat ?? 0),
+          used_seats: Number(snapshot.usage?.seat ?? 0),
+          available_seats: 0,
         },
         { status: 403 }
       );

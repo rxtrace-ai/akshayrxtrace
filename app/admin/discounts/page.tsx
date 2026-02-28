@@ -1,16 +1,15 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { RefreshCw, Plus, Edit2, Ban, CheckCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Plus, Edit2, X, Save, Trash2, Ban, CheckCircle, Building2, Tag, Users } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { supabaseClient } from '@/lib/supabase/client';
 
-type Discount = {
+type CouponScope = 'subscription' | 'addons' | 'both';
+
+type Coupon = {
   id: string;
   code: string;
   type: 'percentage' | 'flat';
@@ -20,548 +19,313 @@ type Discount = {
   usage_limit: number | null;
   usage_count: number;
   is_active: boolean;
+  scope: CouponScope;
   razorpay_offer_id?: string | null;
-  created_at: string;
-  updated_at: string;
 };
 
-type Company = {
-  id: string;
-  company_name: string;
+type CouponFormState = {
+  code: string;
+  type: 'percentage' | 'flat';
+  value: string;
+  valid_from: string;
+  valid_to: string;
+  usage_limit: string;
+  scope: CouponScope;
+  razorpay_offer_id: string;
 };
 
-type CompanyAssignment = {
-  id: string;
-  company_id: string;
-  discount_id: string;
-  applied_at: string;
-  companies?: Company;
-};
+function createIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
-export default function AdminDiscountsPage() {
-  const [discounts, setDiscounts] = useState<Discount[]>([]);
-  const [companies, setCompanies] = useState<Company[]>([]);
+function toFormState(coupon: Coupon | null): CouponFormState {
+  return {
+    code: coupon?.code || '',
+    type: coupon?.type || 'percentage',
+    value: String(coupon?.value ?? 0),
+    valid_from: coupon?.valid_from ? coupon.valid_from.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    valid_to: coupon?.valid_to ? coupon.valid_to.slice(0, 10) : '',
+    usage_limit: coupon?.usage_limit === null || coupon?.usage_limit === undefined ? '' : String(coupon.usage_limit),
+    scope: coupon?.scope || 'both',
+    razorpay_offer_id: coupon?.razorpay_offer_id || '',
+  };
+}
+
+function validateForm(form: CouponFormState): string | null {
+  if (!form.code.trim()) return 'Coupon code is required';
+  const value = Number(form.value);
+  if (!Number.isFinite(value) || value < 0) return 'Value must be a non-negative number';
+  if (form.type === 'percentage' && value > 100) return 'Percentage cannot be greater than 100';
+
+  const from = new Date(form.valid_from);
+  if (Number.isNaN(from.getTime())) return 'Valid from date is invalid';
+  if (form.valid_to) {
+    const to = new Date(form.valid_to);
+    if (Number.isNaN(to.getTime())) return 'Valid to date is invalid';
+    if (to.getTime() < from.getTime()) return 'Valid to must be after valid from';
+  }
+
+  if (form.usage_limit) {
+    const limit = Number(form.usage_limit);
+    if (!Number.isFinite(limit) || limit < 0) return 'Usage limit must be empty or a non-negative number';
+  }
+
+  const offerId = form.razorpay_offer_id.trim();
+  if (offerId && !/^offer_[a-zA-Z0-9]+$/.test(offerId)) {
+    return 'Razorpay Offer ID must be in format offer_xxx';
+  }
+  return null;
+}
+
+function normalizePayload(form: CouponFormState) {
+  return {
+    code: form.code.trim().toUpperCase(),
+    type: form.type,
+    value: Number(form.value),
+    valid_from: new Date(form.valid_from).toISOString(),
+    valid_to: form.valid_to ? new Date(form.valid_to).toISOString() : null,
+    usage_limit: form.usage_limit ? Number(form.usage_limit) : null,
+    scope: form.scope,
+    razorpay_offer_id: form.razorpay_offer_id.trim() || null,
+  };
+}
+
+export default function AdminCouponsPage() {
   const [loading, setLoading] = useState(false);
-  const [editingDiscount, setEditingDiscount] = useState<Discount | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [editingCoupon, setEditingCoupon] = useState<Coupon | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [selectedDiscount, setSelectedDiscount] = useState<Discount | null>(null);
-  const [assignments, setAssignments] = useState<CompanyAssignment[]>([]);
-  const [showAssignDialog, setShowAssignDialog] = useState(false);
-  const [assignCompanyId, setAssignCompanyId] = useState('');
+  const [form, setForm] = useState<CouponFormState>(toFormState(null));
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchDiscounts();
-    fetchCompanies();
-  }, []);
-
-  async function fetchDiscounts() {
+  async function fetchCoupons() {
     setLoading(true);
+    setError(null);
     try {
-      const res = await fetch('/api/admin/discounts');
+      const res = await fetch('/api/admin/coupons', { cache: 'no-store' });
       const data = await res.json();
-      if (data.success) {
-        setDiscounts(data.discounts || []);
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || data.error || 'Failed to fetch coupons');
       }
-    } catch (err) {
-      console.error('Failed to fetch discounts:', err);
-      alert('Failed to fetch discounts');
+      setCoupons(data.coupons || []);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to fetch coupons');
     } finally {
       setLoading(false);
     }
   }
 
-  async function fetchCompanies() {
-    try {
-      const supabase = supabaseClient();
-      const { data, error } = await supabase
-        .from('companies')
-        .select('id, company_name')
-        .order('company_name', { ascending: true });
-      
-      if (error) throw error;
-      if (data) {
-        setCompanies(data);
-      }
-    } catch (err: any) {
-      console.error('Failed to fetch companies:', err);
-    }
+  useEffect(() => {
+    fetchCoupons();
+  }, []);
+
+  function openCreateForm() {
+    setEditingCoupon(null);
+    setForm(toFormState(null));
+    setShowForm(true);
+    setMessage(null);
+    setError(null);
   }
 
-  async function fetchAssignments(discountId: string) {
-    try {
-      const res = await fetch(`/api/admin/discounts/assign?discount_id=${discountId}`);
-      const data = await res.json();
-      if (data.success) {
-        setAssignments(data.assignments || []);
-      }
-    } catch (err) {
-      console.error('Failed to fetch assignments:', err);
-    }
+  function openEditForm(coupon: Coupon) {
+    setEditingCoupon(coupon);
+    setForm(toFormState(coupon));
+    setShowForm(true);
+    setMessage(null);
+    setError(null);
   }
 
-  async function handleSave(discount: Partial<Discount>) {
+  async function saveCoupon() {
+    const validationError = validateForm(form);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setMessage(null);
     try {
-      const url = '/api/admin/discounts';
-      const method = editingDiscount ? 'PUT' : 'POST';
-      
-      const res = await fetch(url, {
+      const method = editingCoupon ? 'PUT' : 'POST';
+      const payload = normalizePayload(form);
+      const body = editingCoupon ? { ...payload, id: editingCoupon.id } : payload;
+
+      const res = await fetch('/api/admin/coupons', {
         method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editingDiscount ? { ...discount, id: editingDiscount.id } : discount),
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': createIdempotencyKey(),
+        },
+        body: JSON.stringify(body),
       });
-
       const data = await res.json();
-      if (data.success) {
-        await fetchDiscounts();
-        setShowForm(false);
-        setEditingDiscount(null);
-      } else {
-        alert('Failed to save: ' + data.error);
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || data.error || 'Failed to save coupon');
       }
+
+      setMessage(editingCoupon ? 'Coupon updated' : 'Coupon created');
+      setShowForm(false);
+      setEditingCoupon(null);
+      await fetchCoupons();
     } catch (err: any) {
-      alert('Error: ' + err.message);
+      setError(err?.message || 'Failed to save coupon');
+    } finally {
+      setSaving(false);
     }
   }
 
-  async function handleToggleActive(discount: Discount) {
-    if (!confirm(`Are you sure you want to ${discount.is_active ? 'deactivate' : 'activate'} this discount?`)) {
-      return;
-    }
-
+  async function toggleCoupon(coupon: Coupon) {
+    setSaving(true);
+    setError(null);
+    setMessage(null);
     try {
-      const res = await fetch('/api/admin/discounts', {
+      const res = await fetch('/api/admin/coupons', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: discount.id, is_active: !discount.is_active }),
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': createIdempotencyKey(),
+        },
+        body: JSON.stringify({ id: coupon.id, is_active: !coupon.is_active }),
       });
-
       const data = await res.json();
-      if (data.success) {
-        await fetchDiscounts();
-      } else {
-        alert('Failed to update: ' + data.error);
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || data.error || 'Failed to update coupon');
       }
+      setMessage(`Coupon ${coupon.is_active ? 'deactivated' : 'activated'}`);
+      await fetchCoupons();
     } catch (err: any) {
-      alert('Error: ' + err.message);
+      setError(err?.message || 'Failed to update coupon');
+    } finally {
+      setSaving(false);
     }
-  }
-
-  async function handleDelete(discount: Discount) {
-    if (!confirm(`Are you sure you want to DELETE this discount permanently? This will also remove all company assignments. This action cannot be undone.`)) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/admin/discounts?id=${discount.id}`, {
-        method: 'DELETE',
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        await fetchDiscounts();
-        alert('Discount deleted successfully');
-      } else {
-        alert('Failed to delete: ' + data.error);
-      }
-    } catch (err: any) {
-      alert('Error: ' + err.message);
-    }
-  }
-
-  async function handleAssign() {
-    if (!selectedDiscount || !assignCompanyId) {
-      alert('Please select a company');
-      return;
-    }
-
-    try {
-      const res = await fetch('/api/admin/discounts/assign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_id: assignCompanyId,
-          discount_id: selectedDiscount.id,
-        }),
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        await fetchAssignments(selectedDiscount.id);
-        setAssignCompanyId('');
-        alert('Discount assigned successfully');
-      } else {
-        alert('Failed to assign: ' + data.error);
-      }
-    } catch (err: any) {
-      alert('Error: ' + err.message);
-    }
-  }
-
-  async function handleUnassign(companyId: string, discountId: string) {
-    if (!confirm('Are you sure you want to remove this discount assignment?')) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/admin/discounts/assign?company_id=${companyId}&discount_id=${discountId}`, {
-        method: 'DELETE',
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        await fetchAssignments(discountId);
-        alert('Discount assignment removed successfully');
-      } else {
-        alert('Failed to remove assignment: ' + data.error);
-      }
-    } catch (err: any) {
-      alert('Error: ' + err.message);
-    }
-  }
-
-  function openAssignDialog(discount: Discount) {
-    setSelectedDiscount(discount);
-    setShowAssignDialog(true);
-    fetchAssignments(discount.id);
-  }
-
-  function formatDate(dateString: string | null) {
-    if (!dateString) return 'No expiry';
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  }
-
-  function isExpired(discount: Discount) {
-    if (!discount.valid_to) return false;
-    return new Date(discount.valid_to) < new Date();
-  }
-
-  function isUsageLimitReached(discount: Discount) {
-    if (!discount.usage_limit) return false;
-    return discount.usage_count >= discount.usage_limit;
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-[#0052CC]">🎫 Discounts & Coupons</h1>
-          <p className="text-gray-600 mt-1">Manage discount codes and company assignments</p>
+          <h1 className="text-3xl font-bold text-[#0052CC]">Coupons</h1>
+          <p className="text-gray-600 mt-1">Coupon controls with scope and Razorpay offer validation.</p>
         </div>
         <div className="flex gap-2">
-          <Button onClick={fetchDiscounts} disabled={loading} variant="outline">
+          <Button onClick={fetchCoupons} disabled={loading || saving} variant="outline">
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Button onClick={() => { setEditingDiscount(null); setShowForm(true); }}>
+          <Button onClick={openCreateForm} disabled={saving}>
             <Plus className="w-4 h-4 mr-2" />
-            New Discount
+            New Coupon
           </Button>
         </div>
       </div>
 
+      {message ? <p className="text-sm text-green-700">{message}</p> : null}
+      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+
       {showForm && (
-        <DiscountForm
-          discount={editingDiscount}
-          onSave={handleSave}
-          onCancel={() => { setShowForm(false); setEditingDiscount(null); }}
-        />
-      )}
-
-      <div className="grid gap-4">
-        {discounts.map((discount) => (
-          <Card key={discount.id}>
-            <CardHeader>
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <CardTitle className="flex items-center gap-2">
-                    <Tag className="w-5 h-5" />
-                    {discount.code}
-                    <Badge variant={discount.is_active ? 'default' : 'secondary'}>
-                      {discount.is_active ? 'Active' : 'Inactive'}
-                    </Badge>
-                    {isExpired(discount) && <Badge variant="destructive">Expired</Badge>}
-                    {isUsageLimitReached(discount) && <Badge variant="outline">Limit Reached</Badge>}
-                  </CardTitle>
-                  <div className="mt-2 space-y-1 text-sm text-gray-600">
-                    <p>
-                      <strong>Type:</strong> {discount.type === 'percentage' ? `${discount.value}%` : `₹${discount.value}`}
-                    </p>
-                    <p>
-                      <strong>Valid:</strong> {formatDate(discount.valid_from)} - {formatDate(discount.valid_to)}
-                    </p>
-                    <p>
-                      <strong>Usage:</strong> {discount.usage_count}
-                      {discount.usage_limit ? ` / ${discount.usage_limit}` : ' / Unlimited'}
-                    </p>
-                    {discount.razorpay_offer_id && (
-                      <p>
-                        <strong>Razorpay Offer ID:</strong> <code className="text-xs bg-gray-100 px-1 rounded">{discount.razorpay_offer_id}</code>
-                      </p>
-                    )}
-                    <p>
-                      <strong>Created:</strong> {formatDate(discount.created_at)}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => openAssignDialog(discount)}
-                  >
-                    <Users className="w-4 h-4 mr-1" />
-                    Assign
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => { setEditingDiscount(discount); setShowForm(true); }}
-                  >
-                    <Edit2 className="w-4 h-4 mr-1" />
-                    Edit
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleToggleActive(discount)}
-                  >
-                    {discount.is_active ? (
-                      <>
-                        <Ban className="w-4 h-4 mr-1" />
-                        Deactivate
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle className="w-4 h-4 mr-1" />
-                        Activate
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => handleDelete(discount)}
-                  >
-                    <Trash2 className="w-4 h-4 mr-1" />
-                    Delete
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-          </Card>
-        ))}
-      </div>
-
-      {discounts.length === 0 && !loading && (
         <Card>
-          <CardContent className="pt-6">
-            <p className="text-center text-gray-500">No discounts found. Create your first discount code.</p>
+          <CardHeader>
+            <CardTitle>{editingCoupon ? 'Edit Coupon' : 'Create Coupon'}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Coupon Code *</Label>
+              <Input value={form.code} onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value.toUpperCase() }))} />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Type</Label>
+                <select
+                  className="w-full rounded-md border px-3 py-2 text-sm"
+                  value={form.type}
+                  onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value as 'percentage' | 'flat' }))}
+                >
+                  <option value="percentage">Percentage</option>
+                  <option value="flat">Flat</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label>Value</Label>
+                <Input type="number" min={0} value={form.value} onChange={(e) => setForm((prev) => ({ ...prev, value: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Scope</Label>
+                <select
+                  className="w-full rounded-md border px-3 py-2 text-sm"
+                  value={form.scope}
+                  onChange={(e) => setForm((prev) => ({ ...prev, scope: e.target.value as CouponScope }))}
+                >
+                  <option value="both">Both</option>
+                  <option value="subscription">Subscription</option>
+                  <option value="addons">Add-ons</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Valid From</Label>
+                <Input type="date" value={form.valid_from} onChange={(e) => setForm((prev) => ({ ...prev, valid_from: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Valid To</Label>
+                <Input type="date" value={form.valid_to} onChange={(e) => setForm((prev) => ({ ...prev, valid_to: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Usage Limit</Label>
+                <Input type="number" min={0} value={form.usage_limit} onChange={(e) => setForm((prev) => ({ ...prev, usage_limit: e.target.value }))} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Razorpay Offer ID</Label>
+              <Input
+                placeholder="offer_xxx"
+                value={form.razorpay_offer_id}
+                onChange={(e) => setForm((prev) => ({ ...prev, razorpay_offer_id: e.target.value }))}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={saveCoupon} disabled={saving}>{saving ? 'Saving...' : 'Save'}</Button>
+              <Button variant="outline" onClick={() => setShowForm(false)} disabled={saving}>Cancel</Button>
+            </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Assign Dialog */}
-      {showAssignDialog && selectedDiscount && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto m-4">
+      <div className="grid gap-4">
+        {coupons.map((coupon) => (
+          <Card key={coupon.id}>
             <CardHeader>
-              <div className="flex justify-between items-center">
-                <div>
-                  <CardTitle>Assign Discount: {selectedDiscount.code}</CardTitle>
-                  <p className="text-sm text-gray-600 mt-1">
-                    Assign this discount code to companies. Companies can use this code at checkout.
-                  </p>
+              <div className="flex items-start justify-between">
+                <CardTitle className="text-lg">{coupon.code}</CardTitle>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => openEditForm(coupon)} disabled={saving}>
+                    <Edit2 className="w-4 h-4 mr-1" />
+                    Edit
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => toggleCoupon(coupon)} disabled={saving}>
+                    {coupon.is_active ? <Ban className="w-4 h-4 mr-1" /> : <CheckCircle className="w-4 h-4 mr-1" />}
+                    {coupon.is_active ? 'Deactivate' : 'Activate'}
+                  </Button>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => setShowAssignDialog(false)}>
-                  <X className="w-4 h-4" />
-                </Button>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-2">
-                <Select value={assignCompanyId} onValueChange={setAssignCompanyId}>
-                  <SelectTrigger className="flex-1">
-                    <SelectValue placeholder="Select company" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {companies.map((company) => (
-                      <SelectItem key={company.id} value={company.id}>
-                        {company.company_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button onClick={handleAssign} disabled={!assignCompanyId}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Assign
-                </Button>
-              </div>
-              <div>
-                <h3 className="font-semibold mb-2">Assigned Companies ({assignments.length})</h3>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {assignments.map((assignment) => {
-                    // Fetch company name if not in assignment
-                    const companyName = assignment.companies?.company_name || 
-                      companies.find(c => c.id === assignment.company_id)?.company_name || 
-                      'Unknown';
-                    return (
-                      <div key={assignment.id} className="flex justify-between items-center p-2 border rounded">
-                        <div>
-                          <p className="font-medium">{companyName}</p>
-                          <p className="text-xs text-gray-500">
-                            Assigned: {formatDate(assignment.applied_at)}
-                          </p>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => handleUnassign(assignment.company_id, assignment.discount_id)}
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    );
-                  })}
-                  {assignments.length === 0 && (
-                    <p className="text-sm text-gray-500 text-center py-4">No companies assigned</p>
-                  )}
-                </div>
-              </div>
+            <CardContent className="text-sm text-gray-700 space-y-1">
+              <p><strong>Type:</strong> {coupon.type === 'percentage' ? `${coupon.value}%` : `₹${coupon.value}`}</p>
+              <p><strong>Scope:</strong> {coupon.scope || 'both'}</p>
+              <p><strong>Validity:</strong> {new Date(coupon.valid_from).toLocaleDateString('en-IN')} - {coupon.valid_to ? new Date(coupon.valid_to).toLocaleDateString('en-IN') : 'No expiry'}</p>
+              <p><strong>Usage:</strong> {coupon.usage_count}{coupon.usage_limit ? ` / ${coupon.usage_limit}` : ' / Unlimited'}</p>
+              {coupon.razorpay_offer_id ? <p><strong>Razorpay Offer ID:</strong> {coupon.razorpay_offer_id}</p> : null}
+              <p><strong>Status:</strong> {coupon.is_active ? 'Active' : 'Inactive'}</p>
             </CardContent>
           </Card>
-        </div>
-      )}
+        ))}
+      </div>
     </div>
   );
 }
 
-function DiscountForm({ discount, onSave, onCancel }: { discount: Discount | null; onSave: (d: Partial<Discount>) => void; onCancel: () => void }) {
-  const [code, setCode] = useState(discount?.code || '');
-  const [type, setType] = useState<'percentage' | 'flat'>(discount?.type || 'percentage');
-  const [value, setValue] = useState(discount?.value?.toString() || '');
-  const [validFrom, setValidFrom] = useState(discount?.valid_from ? new Date(discount.valid_from).toISOString().split('T')[0] : '');
-  const [validTo, setValidTo] = useState(discount?.valid_to ? new Date(discount.valid_to).toISOString().split('T')[0] : '');
-  const [usageLimit, setUsageLimit] = useState(discount?.usage_limit?.toString() || '');
-  const [isActive, setIsActive] = useState(discount?.is_active ?? true);
-  const [razorpayOfferId, setRazorpayOfferId] = useState(discount?.razorpay_offer_id ?? '');
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    onSave({
-      code,
-      type,
-      value: parseFloat(value),
-      valid_from: validFrom ? new Date(validFrom).toISOString() : new Date().toISOString(),
-      valid_to: validTo ? new Date(validTo).toISOString() : null,
-      usage_limit: usageLimit ? parseInt(usageLimit) : null,
-      is_active: isActive,
-      razorpay_offer_id: razorpayOfferId.trim() || null,
-    });
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{discount ? 'Edit Discount' : 'New Discount'}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label>Discount Code *</Label>
-            <Input
-              value={code}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-              placeholder="e.g. SUMMER20"
-              required
-            />
-          </div>
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <Label>Type *</Label>
-              <Select value={type} onValueChange={(v: 'percentage' | 'flat') => setType(v)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="percentage">Percentage (%)</SelectItem>
-                  <SelectItem value="flat">Flat Amount (₹)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Value *</Label>
-              <Input
-                type="number"
-                step="0.01"
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                placeholder={type === 'percentage' ? 'e.g. 20' : 'e.g. 500'}
-                required
-              />
-            </div>
-          </div>
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <Label>Valid From *</Label>
-              <Input
-                type="date"
-                value={validFrom}
-                onChange={(e) => setValidFrom(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <Label>Valid To (Optional)</Label>
-              <Input
-                type="date"
-                value={validTo}
-                onChange={(e) => setValidTo(e.target.value)}
-              />
-            </div>
-          </div>
-          <div>
-            <Label>Usage Limit (Optional)</Label>
-            <Input
-              type="number"
-              value={usageLimit}
-              onChange={(e) => setUsageLimit(e.target.value)}
-              placeholder="Leave empty for unlimited"
-            />
-          </div>
-          <div>
-            <Label>Razorpay Offer ID (Optional)</Label>
-            <Input
-              value={razorpayOfferId}
-              onChange={(e) => setRazorpayOfferId(e.target.value)}
-              placeholder="e.g. offer_xxxx from Razorpay Dashboard"
-              className="font-mono text-sm"
-            />
-            <p className="text-xs text-gray-500 mt-1">Required for this coupon to apply discount at checkout. Create matching offer in Razorpay Dashboard and paste ID here.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="isActive"
-              checked={isActive}
-              onChange={(e) => setIsActive(e.target.checked)}
-            />
-            <Label htmlFor="isActive">Active</Label>
-          </div>
-          <div className="flex gap-2">
-            <Button type="submit">
-              <Save className="w-4 h-4 mr-2" />
-              Save
-            </Button>
-            <Button type="button" variant="outline" onClick={onCancel}>
-              Cancel
-            </Button>
-          </div>
-        </form>
-      </CardContent>
-    </Card>
-  );
-}

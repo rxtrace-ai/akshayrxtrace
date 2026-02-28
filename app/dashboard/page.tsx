@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
@@ -14,6 +15,7 @@ import type { LucideIcon } from 'lucide-react';
 import { LabelGenerationTrend } from '@/components/charts/LabelGenerationTrend';
 import { LabelsByLevel } from '@/components/charts/LabelsByLevel';
 import { CostUsageChart } from '@/components/charts/CostUsageChart';
+import { useSubscriptionSummary } from '@/lib/hooks/useSubscriptionSummary';
 
 type DashboardStats = {
   company_id: string;
@@ -43,6 +45,7 @@ type DashboardStats = {
     details: any;
     created_at: string;
   }>;
+  trial?: any | null;
 };
 
 /* -----------------------------
@@ -82,6 +85,8 @@ function KpiCard({
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const router = useRouter();
+  const { data: subscriptionSummary, loading: summaryLoading } = useSubscriptionSummary();
 
   async function refreshStats(signal?: AbortSignal) {
     const res = await fetch('/api/dashboard/stats', { cache: 'no-store', signal });
@@ -95,16 +100,18 @@ export default function DashboardPage() {
 
     (async () => {
       try {
-        await refreshStats(controller.signal);
+        await Promise.all([refreshStats(controller.signal)]);
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted) {
+          setLoading(false);
+        }
       }
     })();
 
     // Near-realtime dashboard counters.
-    const id = window.setInterval(() => {
-      refreshStats(controller.signal).catch(() => undefined);
-    }, 5000);
+      const id = window.setInterval(() => {
+        refreshStats(controller.signal).catch(() => undefined);
+      }, 5000);
 
     return () => {
       mounted = false;
@@ -141,6 +148,21 @@ export default function DashboardPage() {
     };
   }, [stats, loading]);
 
+  const trialStatusLabel = subscriptionSummary?.entitlement?.trial_active
+    ? 'TRIAL_ACTIVE'
+    : subscriptionSummary?.entitlement?.trial_expires_at
+    ? 'TRIAL_EXPIRED'
+    : 'NOT_STARTED';
+
+  const tooltipText = subscriptionSummary?.entitlement?.trial_active
+    ? `Trial active`
+    : subscriptionSummary?.entitlement?.trial_expires_at
+    ? 'Trial expired'
+    : 'Trial not started';
+
+  const assemblyAllowed = !(subscriptionSummary?.decisions?.generation?.blocked ?? false);
+  const generationBlockCode = subscriptionSummary?.decisions?.generation?.code ?? null;
+
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -151,6 +173,73 @@ export default function DashboardPage() {
         <p className="text-gray-600 mt-1">
           Quick snapshot of your traceability activity
         </p>
+      </div>
+
+      {/* Trial Scoreboard */}
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm uppercase tracking-wide text-gray-500">
+              Trial status
+            </p>
+            <h2 className="text-xl font-semibold text-gray-900">
+              {subscriptionSummary
+                ? subscriptionSummary.entitlement.trial_active
+                  ? 'Trial is active'
+                  : 'Trial window'
+                : 'Loading trial status...'}
+            </h2>
+          </div>
+          <div>
+            <span
+              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                subscriptionSummary?.entitlement?.trial_active
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : subscriptionSummary?.entitlement?.trial_expires_at
+                  ? 'bg-rose-100 text-rose-700'
+                  : 'bg-gray-100 text-gray-700'
+              }`}
+            >
+              {subscriptionSummary ? trialStatusLabel.replace('_', ' ') : 'Loading'}
+            </span>
+          </div>
+        </div>
+
+        <p className="text-sm text-gray-600">
+          {subscriptionSummary ? tooltipText : summaryLoading ? 'Loading trial details...' : 'Trial data unavailable.'}
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {[
+            { key: 'generation', label: 'Generation' },
+            { key: 'seats', label: 'Seats' },
+            { key: 'plants', label: 'Plants' },
+          ].map((item) => {
+            const blocked = (subscriptionSummary as any)?.decisions?.[item.key]?.blocked ?? false;
+            const reason = (subscriptionSummary as any)?.decisions?.[item.key]?.code ?? null;
+            const remaining =
+              item.key === 'generation'
+                ? ((subscriptionSummary?.entitlement?.remaining?.unit ?? 0) +
+                    (subscriptionSummary?.entitlement?.remaining?.box ?? 0) +
+                    (subscriptionSummary?.entitlement?.remaining?.carton ?? 0) +
+                    (subscriptionSummary?.entitlement?.remaining?.pallet ?? 0))
+                : (subscriptionSummary?.entitlement?.remaining?.[item.key] ?? 0);
+            const statusLabel = blocked ? reason || 'Blocked' : 'Allowed';
+            const statusColor = blocked ? 'text-rose-600' : 'text-emerald-600';
+            return (
+              <div
+                key={item.key}
+                className="border border-dashed border-gray-200 rounded-xl px-4 py-3"
+              >
+                <p className="text-xs uppercase tracking-wide text-gray-500">{item.label}</p>
+                <p className={`text-sm font-semibold ${statusColor}`}>{statusLabel}</p>
+                <p className="text-xs text-gray-500">
+                  {remaining} remaining
+                </p>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* KPI Cards */}
@@ -187,7 +276,7 @@ export default function DashboardPage() {
           title="Active Seats"
           value={kpi.activeSeats}
           icon={Activity}
-          href="/dashboard/team"
+          href="/dashboard/seats"
         />
         <KpiCard
           title="Active Handsets"
@@ -283,12 +372,25 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        <Link
-          href="/dashboard/generate"
-          className="bg-orange-500 hover:bg-orange-600 text-white px-8 py-4 rounded-lg font-medium text-lg"
-        >
-          Generate Labels
-        </Link>
+        <div className="flex flex-col items-start gap-2">
+          <button
+            type="button"
+            disabled={!assemblyAllowed || summaryLoading}
+            onClick={() => router.push('/dashboard/generate')}
+            className={`px-8 py-4 rounded-lg font-medium text-lg text-white transition ${
+              (!assemblyAllowed && !summaryLoading) || summaryLoading
+                ? 'bg-orange-300 cursor-not-allowed'
+                : 'bg-orange-500 hover:bg-orange-600'
+            }`}
+          >
+            Generate Labels
+          </button>
+          {!assemblyAllowed && subscriptionSummary && (
+            <p className="text-xs text-rose-700">
+              Generation locked: {generationBlockCode || 'blocked'}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

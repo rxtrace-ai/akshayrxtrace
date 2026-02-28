@@ -1,102 +1,111 @@
-import { NextRequest, NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { NextRequest } from "next/server";
+import { headers } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { requireAdminRole, requireSuperAdmin } from "@/lib/auth/admin";
+import {
+  checkAdminIdempotency,
+  idempotencyErrorResponse,
+} from "@/lib/admin/idempotency";
+import { getOrGenerateCorrelationId } from "@/lib/observability";
+import { errorResponse, successResponse } from "@/lib/admin/responses";
+import { consumeRateLimit } from "@/lib/security/rateLimit";
 
-type Context = {
-  params: {
-    id: string;
-  };
-};
-
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function normalizeRole(role: unknown): string {
-  return String(role ?? "").trim().toLowerCase();
+export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  const headersList = await headers();
+  const correlationId = getOrGenerateCorrelationId(headersList, "admin");
+  const companyId = params.id;
+
+  const auth = await requireAdminRole(["super_admin", "billing_admin", "support_admin"]);
+  if (auth.error) {
+    return errorResponse(403, "FORBIDDEN", "Admin access required", correlationId);
+  }
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("companies")
+    .select(
+      "id, user_id, company_name, gst_number:gst, contact_email:email, contact_phone:phone, address, subscription_status, subscription_plan, trial_started_at, trial_expires_at, extra_user_seats, deleted_at, created_at, updated_at"
+    )
+    .eq("id", companyId)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (error) return errorResponse(500, "INTERNAL_ERROR", error.message, correlationId);
+  if (!data) return errorResponse(404, "NOT_FOUND", "Company not found", correlationId);
+
+  return successResponse(200, { success: true, company: data }, correlationId);
 }
 
-export async function DELETE(_req: NextRequest, context: Context) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const companyId = context.params.id;
-    if (!companyId) {
-      return NextResponse.json(
-        { error: "company id is required" },
-        { status: 400 }
-      );
+    const headersList = await headers();
+    const correlationId = getOrGenerateCorrelationId(headersList, "admin");
+    const companyId = params.id;
+    const endpoint = `/api/admin/companies/${companyId}`;
+    const idempotencyKey = headersList.get("idempotency-key");
+
+    const auth = await requireSuperAdmin();
+    if (auth.error) {
+      return errorResponse(403, "FORBIDDEN", "Super admin access required", correlationId);
     }
 
-    const supabase = await supabaseServer();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const admin = getSupabaseAdmin();
-    const { data: adminRow, error: adminError } = await admin
-      .from("admin_users")
-      .select("role")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (adminError) {
-      return NextResponse.json(
-        { error: `Failed to verify admin role: ${adminError.message}` },
-        { status: 500 }
-      );
-    }
-
-    if (!adminRow || normalizeRole(adminRow.role) !== "superadmin") {
-      return NextResponse.json(
-        { error: "Forbidden: superadmin access required" },
-        { status: 403 }
-      );
-    }
-
-    const { data: company, error: companyError } = await admin
-      .from("companies")
-      .select("id, company_name")
-      .eq("id", companyId)
-      .maybeSingle();
-
-    if (companyError) {
-      throw companyError;
-    }
-    if (!company) {
-      return NextResponse.json({ error: "Company not found" }, { status: 404 });
-    }
-
-    const { error: deleteError } = await admin
-      .from("companies")
-      .delete()
-      .eq("id", companyId);
-
-    if (deleteError) {
-      const status = deleteError.code === "23503" ? 409 : 500;
-      return NextResponse.json(
-        {
-          error:
-            status === 409
-              ? "Company cannot be deleted because related records exist"
-              : deleteError.message,
-          code: deleteError.code,
-        },
-        { status }
-      );
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: "Company deleted successfully",
-      company_id: companyId,
-      company_name: company.company_name,
+    const limit = consumeRateLimit({
+      key: `admin-mutation:${auth.userId}`,
+      refillPerMinute: 20,
+      burst: 30,
     });
+    if (!limit.allowed) {
+      const response = errorResponse(429, "RATE_LIMITED", "Too many mutation requests", correlationId);
+      response.headers.set("Retry-After", String(limit.retryAfterSeconds));
+      return response;
+    }
+
+    const body = await req.json().catch(() => ({}));
+
+    const idempotency = await checkAdminIdempotency({
+      adminId: auth.userId,
+      endpoint,
+      method: "DELETE",
+      idempotencyKey,
+      body,
+    });
+
+    if (idempotency.kind === "missing_key" || idempotency.kind === "conflict") {
+      return idempotencyErrorResponse(idempotency.kind, correlationId);
+    }
+    if (idempotency.kind === "replay") {
+      return successResponse(idempotency.statusCode, idempotency.payload, correlationId);
+    }
+
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase.rpc("admin_company_soft_delete_mutation", {
+      p_company_id: companyId,
+      p_admin_id: auth.userId,
+      p_endpoint: endpoint,
+      p_idempotency_key: idempotency.key,
+      p_request_hash: idempotency.requestHash,
+      p_correlation_id: correlationId,
+    });
+
+    if (error) {
+      if (error.message?.includes("COMPANY_NOT_FOUND")) {
+        return errorResponse(400, "BAD_REQUEST", "Company not found", correlationId);
+      }
+      if (error.message?.includes("ACTIVE_SUBSCRIPTION_EXISTS")) {
+        return errorResponse(409, "CONFLICT", "Cannot delete company with active subscription", correlationId);
+      }
+      if (error.message?.includes("IDEMPOTENCY_CONFLICT")) {
+        return errorResponse(409, "IDEMPOTENCY_CONFLICT", "Idempotency key conflict", correlationId);
+      }
+      return errorResponse(500, "INTERNAL_ERROR", error.message || "Company delete failed", correlationId);
+    }
+
+    return successResponse(200, (data || {}) as Record<string, unknown>, correlationId);
   } catch (error: any) {
-    return NextResponse.json(
-      { error: error?.message || "Failed to delete company" },
-      { status: 500 }
-    );
+    const correlationId = getOrGenerateCorrelationId(await headers(), "admin");
+    return errorResponse(500, "INTERNAL_ERROR", error?.message || "Company delete failed", correlationId);
   }
 }

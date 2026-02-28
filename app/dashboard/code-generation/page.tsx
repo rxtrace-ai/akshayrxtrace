@@ -5,13 +5,15 @@ import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Package, Boxes, ArrowRight, AlertCircle } from 'lucide-react';
-import { useSubscription } from '@/lib/hooks/useSubscription';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { useSubscriptionSummary } from '@/lib/hooks/useSubscriptionSummary';
 
 export default function CodeGenerationIndexPage() {
   const router = useRouter();
-  const { subscription, isFeatureEnabled, loading } = useSubscription();
-  const canGenerate = isFeatureEnabled('code_generation');
+  const { data, loading } = useSubscriptionSummary();
+  const blocked = Boolean(data?.decisions?.generation?.blocked);
+  const code = data?.decisions?.generation?.code ?? null;
+  const canGenerate = !blocked;
 
   return (
     <div className="space-y-6">
@@ -90,6 +92,14 @@ export default function CodeGenerationIndexPage() {
                 Generate SSCC Codes
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
+              {!canGenerate && !loading && (
+                <Alert variant="destructive" className="mt-3">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    Generation blocked: {code || 'blocked'}
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
           </CardContent>
         </Card>

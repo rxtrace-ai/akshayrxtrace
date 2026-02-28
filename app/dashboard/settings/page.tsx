@@ -11,10 +11,8 @@ import { supabaseClient } from "@/lib/supabase/client";
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { subscription, loading, refresh } = useSubscription();
+  const { trialSummary, loading: trialLoading, error: trialError } = useSubscription();
 
-  const [trialLoading, setTrialLoading] = useState(false);
-  const [trialError, setTrialError] = useState("");
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [companyProfile, setCompanyProfile] = useState<{
     id: string;
@@ -145,77 +143,13 @@ export default function SettingsPage() {
     }
   }
 
-  const daysLeft =
-    subscription?.trial_end
-      ? Math.max(
-          0,
-          Math.ceil(
-            (new Date(subscription.trial_end).getTime() -
-              new Date().getTime()) /
-              (1000 * 60 * 60 * 24)
-          )
-        )
-      : 0;
-
-  async function handleStartTrial() {
-    setTrialLoading(true);
-    setTrialError("");
-
-    try {
-      const res = await fetch("/api/trial/activate", {
-        method: "POST",
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setTrialError(data.error || "Failed to start trial");
-        return;
-      }
-
-      await refresh();
-    } catch (err: any) {
-      setTrialError(err.message || "Error starting trial");
-    } finally {
-      setTrialLoading(false);
-    }
-  }
-
-  async function handleCancelTrial() {
-    setTrialLoading(true);
-    setTrialError("");
-
-    try {
-      const res = await fetch("/api/trial/cancel", {
-        method: "POST",
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setTrialError(data.error || "Failed to cancel trial");
-        return;
-      }
-
-      await refresh();
-    } catch (err: any) {
-      setTrialError(err.message || "Error cancelling trial");
-    } finally {
-      setTrialLoading(false);
-    }
-  }
-
-  if (loading) {
+  if (trialLoading) {
     return (
       <div className="p-6 text-gray-500">
         Loading trial details...
       </div>
     );
   }
-
-  const trialActive =
-    subscription?.status === "TRIAL" ||
-    subscription?.status === "trialing";
 
   return (
     <div className="max-w-5xl mx-auto px-8 py-10 space-y-8">
@@ -396,37 +330,69 @@ export default function SettingsPage() {
 
       {/* Trial Section */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
-        <h2 className="text-xl font-medium">Trial</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-medium">Trial</h2>
+            <p className="text-sm text-gray-500">
+              The 15-day trial runs automatically after company setup.
+            </p>
+          </div>
+          <Badge
+            className={`px-3 py-1 text-sm ${
+              trialSummary?.trial_active
+                ? "bg-green-600 text-white"
+                : "bg-gray-100 text-gray-700"
+            }`}
+          >
+            {trialSummary?.trial_active
+              ? "Active"
+              : trialSummary?.trial_expires_at
+              ? "Expired"
+              : "Not started"}
+          </Badge>
+        </div>
 
         {trialError && (
           <div className="text-red-600 text-sm">{trialError}</div>
         )}
 
-        {trialActive ? (
-          <div className="space-y-3">
-            <Badge className="bg-green-600 text-white">
-              Trial Active
-            </Badge>
+        {trialSummary ? (
+          <div className="space-y-4">
+            <div className="text-sm text-gray-600">
+              {trialSummary.trial_active
+                ? `${trialSummary.days_remaining} ${trialSummary.days_remaining === 1 ? "day" : "days"} remaining`
+                : trialSummary.trial_expires_at
+                ? "Trial has ended."
+                : "Trial window not yet available."}
+            </div>
 
-            <p className="text-sm text-gray-600">
-              {daysLeft} {daysLeft === 1 ? "day" : "days"} left
-            </p>
-
-            <Button
-              variant="outline"
-              onClick={handleCancelTrial}
-              disabled={trialLoading}
-            >
-              {trialLoading ? "Cancelling..." : "Cancel Trial"}
-            </Button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+              {[
+                { label: "Unit", key: "unit" },
+                { label: "Box", key: "box" },
+                { label: "Carton", key: "carton" },
+                { label: "Pallet", key: "pallet" },
+                { label: "Seats", key: "seat" },
+                { label: "Plants", key: "plant" },
+              ].map((metric) => {
+                const usage = trialSummary.usage[metric.key as keyof typeof trialSummary.usage];
+                const limit = trialSummary.limits[metric.key as keyof typeof trialSummary.limits];
+                return (
+                  <div
+                    key={metric.key}
+                    className="flex items-center justify-between border border-dashed border-gray-200 rounded-xl px-4 py-3"
+                  >
+                    <span className="text-gray-500">{metric.label}</span>
+                    <span className="font-semibold text-gray-900">
+                      {usage} / {limit}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ) : (
-          <Button
-            onClick={handleStartTrial}
-            disabled={trialLoading}
-          >
-            {trialLoading ? "Starting..." : "Start Free Trial"}
-          </Button>
+          <p className="text-sm text-gray-500">Trial information is unavailable. Please refresh.</p>
         )}
       </div>
 

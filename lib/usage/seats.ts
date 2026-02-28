@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { getTrialSeatUsage, getTrialStatus, TRIAL_LIMITS } from '@/lib/trial';
 
 /**
  * Get seat limits for a company
@@ -13,6 +14,26 @@ export async function getSeatLimits(
   seats_from_plan: number;
   seats_from_addons: number;
 }> {
+  const { data: trialRow } = await supabase
+    .from('companies')
+    .select('trial_started_at, trial_expires_at')
+    .eq('id', company_id)
+    .maybeSingle();
+
+  if (trialRow) {
+    const trialStatus = getTrialStatus(trialRow);
+    if (trialStatus.active) {
+      const usedSeats = await getTrialSeatUsage(supabase, company_id);
+      const max = TRIAL_LIMITS.seat;
+      return {
+        max_seats: max,
+        used_seats: usedSeats,
+        available_seats: Math.max(0, max - usedSeats),
+        seats_from_plan: max,
+        seats_from_addons: 0,
+      };
+    }
+  }
   // Get subscription
   const { data: subscription } = await supabase
     .from('company_subscriptions')

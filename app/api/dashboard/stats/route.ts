@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { resolveCompanyForUser } from '@/lib/company/resolve';
-import { ensureActiveBillingUsage } from '@/lib/billing/usage';
+import { getCompanyEntitlementSnapshot } from '@/lib/entitlement/canonical';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,8 +37,8 @@ export async function GET() {
 
     // Billing usage (current trial/paid period): used label quotas are the most accurate
     // “realtime generation” counters because they are incremented atomically during create APIs.
-    const activeUsage = await ensureActiveBillingUsage({ supabase, companyId }).catch((err) => {
-      console.error('Failed to ensure active billing usage:', err);
+    const entitlement = await getCompanyEntitlementSnapshot(supabase, companyId).catch((err) => {
+      console.error('Failed to load entitlement snapshot:', err);
       return null;
     });
 
@@ -164,10 +164,10 @@ export async function GET() {
         error_scans: errorScans,
       },
       label_generation: {
-        unit: activeUsage ? toNumber((activeUsage as any).unit_labels_used) : 0,
-        box: activeUsage ? toNumber((activeUsage as any).box_labels_used) : 0,
-        carton: activeUsage ? toNumber((activeUsage as any).carton_labels_used) : 0,
-        pallet: activeUsage ? toNumber((activeUsage as any).pallet_labels_used) : 0,
+        unit: entitlement ? toNumber(entitlement.usage.unit) : 0,
+        box: entitlement ? toNumber(entitlement.usage.box) : 0,
+        carton: entitlement ? toNumber(entitlement.usage.carton) : 0,
+        pallet: entitlement ? toNumber(entitlement.usage.pallet) : 0,
       },
       recent_activity: recentActivity ?? [],
     });

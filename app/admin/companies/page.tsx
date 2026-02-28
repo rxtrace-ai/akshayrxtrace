@@ -23,7 +23,9 @@ type Company = {
   trial_status?: 'Active' | 'Expired' | 'Not Used';
   trial_end?: string | null;
   trial_status_raw?: string | null;
-  trial_end_date?: string | null;
+  trial_expires_at?: string | null;
+  wallet_status?: 'ACTIVE' | 'FROZEN';
+  company_wallets?: Array<{ status?: 'ACTIVE' | 'FROZEN' }> | { status?: 'ACTIVE' | 'FROZEN' } | null;
 };
 
 async function parseApiJson(response: Response) {
@@ -37,8 +39,15 @@ async function parseApiJson(response: Response) {
   return response.json();
 }
 
+function createIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function inferTrialStatus(company: Company): { trial_status: Company['trial_status']; trial_end: string | null } {
-  const trialEnd = company.trial_end_date || null;
+  const trialEnd = company.trial_expires_at || null;
   if (trialEnd) {
     return {
       trial_status: new Date(trialEnd) > new Date() ? 'Active' : 'Expired',
@@ -81,39 +90,28 @@ export default function CompaniesManagement() {
   const fetchCompanies = useCallback(async () => {
     setLoading(true);
     try {
-      const supabase = supabaseClient();
-      const { data, error } = await supabase
-        .from('companies')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      let trialMap = new Map<string, { trial_status: Company['trial_status']; trial_end: string | null }>();
-      try {
-        const res = await fetch('/api/admin/companies', { credentials: 'include' });
-        if (res.ok) {
-          const payload = await res.json();
-          (payload.companies || []).forEach((row: any) => {
-            trialMap.set(row.id, {
-              trial_status: row.trial_status as Company['trial_status'],
-              trial_end: row.trial_end ?? null
-            });
-          });
-        } else {
-          console.warn('Failed to load /api/admin/companies for trial status:', res.status);
-        }
-      } catch (_) {
-        // If trial status fetch fails, keep company list without trial data.
+      const res = await fetch('/api/admin/companies?page=1&page_size=1000', {
+        credentials: 'include',
+      });
+      const payload = await parseApiJson(res);
+      if (!res.ok) {
+        throw new Error(payload.message || payload.error || `Failed (${res.status})`);
       }
 
-      if (data) {
-        const merged = data.map((company: Company) => {
-          const trialInfo = trialMap.get(company.id);
-          if (trialInfo) return { ...company, ...trialInfo };
-          return { ...company, ...inferTrialStatus(company) };
-        });
-        setCompanies(merged);
-      }
+      const rows = Array.isArray(payload.companies) ? payload.companies : [];
+      const normalized = rows.map((company: Company) => {
+        const walletRel = company.company_wallets;
+        const walletStatus = Array.isArray(walletRel)
+          ? walletRel[0]?.status
+          : walletRel?.status;
+
+        return {
+          ...company,
+          wallet_status: walletStatus === 'FROZEN' ? 'FROZEN' : 'ACTIVE',
+          ...inferTrialStatus(company),
+        };
+      });
+      setCompanies(normalized);
     } catch (error: any) {
       console.error('Error:', error);
       alert('Failed to fetch companies: ' + error.message);
@@ -130,10 +128,8 @@ export default function CompaniesManagement() {
     e.preventDefault();
     
     try {
-      const supabase = supabaseClient();
-      
       if (editingCompany) {
-        // Update existing company
+        const supabase = supabaseClient();
         const { error } = await supabase
           .from('companies')
           .update(formData)
@@ -164,11 +160,16 @@ export default function CompaniesManagement() {
     try {
       const response = await fetch(`/api/admin/companies/${company.id}`, {
         method: 'DELETE',
-        credentials: 'include'
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': createIdempotencyKey()
+        },
+        body: JSON.stringify({})
       });
       const result = await parseApiJson(response);
       if (!response.ok) {
-        throw new Error(result.error || result.message || `Failed (${response.status})`);
+        throw new Error(result.message || result.error || `Failed (${response.status})`);
       }
       alert('Company deleted successfully!');
       fetchCompanies();
@@ -200,17 +201,19 @@ export default function CompaniesManagement() {
     if (!resetTarget) return;
     setResetLoading(true);
     try {
-      const response = await fetch('/api/admin/trial/reset', {
-        method: 'POST',
+      const response = await fetch(`/api/admin/companies/${resetTarget.id}/reset-trial`, {
+        method: 'PUT',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': createIdempotencyKey()
+        },
         body: JSON.stringify({
-          company_id: resetTarget.id,
           reason: resetReason.trim() || undefined
         })
       });
       const result = await parseApiJson(response);
-      if (!response.ok) throw new Error(result.error || 'Failed to reset trial');
+      if (!response.ok) throw new Error(result.message || result.error || 'Failed to reset trial');
       alert('Trial reset successfully');
       setResetModalOpen(false);
       setResetReason('');
@@ -225,39 +228,23 @@ export default function CompaniesManagement() {
   }
 
   async function handleToggleFreeze(company: Company) {
-    const supabase = supabaseClient();
-    const { data: wallet } = await supabase
-      .from('company_wallets')
-      .select('status')
-      .eq('company_id', company.id)
-      .maybeSingle();
-    
-    const currentStatus = wallet?.status || 'ACTIVE';
+    const currentStatus = company.wallet_status || 'ACTIVE';
     const newStatus = currentStatus === 'ACTIVE' ? 'FROZEN' : 'ACTIVE';
 
     try {
-      const response = await fetch('/api/admin/freeze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch(`/api/admin/companies/${company.id}/freeze`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': createIdempotencyKey()
+        },
         body: JSON.stringify({
-          company_id: company.id,
-          status: newStatus
+          freeze: newStatus === 'FROZEN'
         })
       });
-
       const result = await response.json();
 
-      if (result.requires_confirmation && result.confirmation_token) {
-        destructive.requestConfirmation({
-          title: newStatus === 'FROZEN' ? 'Freeze company account' : 'Unfreeze company account',
-          description: `Are you sure you want to ${newStatus === 'FROZEN' ? 'FREEZE' : 'UNFREEZE'} "${company.company_name}"? This affects the company's ability to use the platform.`,
-          confirmationToken: result.confirmation_token,
-          context: { company, newStatus }
-        });
-        return;
-      }
-
-      if (!response.ok) throw new Error(result.error || result.message);
+      if (!response.ok) throw new Error(result.message || result.error || `Failed (${response.status})`);
 
       alert(`Account ${newStatus === 'FROZEN' ? 'frozen' : 'unfrozen'} successfully!`);
       fetchCompanies();
@@ -268,23 +255,24 @@ export default function CompaniesManagement() {
   }
 
   async function handleConfirmFreeze() {
-    const { token, context: ctx } = destructive.consumeToken();
-    if (!token || !ctx) return;
+    const { context: ctx } = destructive.consumeToken();
+    if (!ctx) return;
 
     setFreezeConfirming(true);
     try {
-      const response = await fetch('/api/admin/freeze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch(`/api/admin/companies/${ctx.company.id}/freeze`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': createIdempotencyKey()
+        },
         body: JSON.stringify({
-          company_id: ctx.company.id,
-          status: ctx.newStatus,
-          confirmation_token: token
+          freeze: ctx.newStatus === 'FROZEN'
         })
       });
 
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || result.message);
+      if (!response.ok) throw new Error(result.message || result.error || `Failed (${response.status})`);
 
       alert(`Account ${ctx.newStatus === 'FROZEN' ? 'frozen' : 'unfrozen'} successfully!`);
       fetchCompanies();
@@ -507,20 +495,7 @@ function CompanyCard({
   onDelete: (c: Company) => void;
   onResetTrial: (c: Company) => void;
 }) {
-  const [status, setStatus] = useState<'ACTIVE' | 'FROZEN'>('ACTIVE');
-
-  useEffect(() => {
-    const fetchStatus = async () => {
-      const supabase = supabaseClient();
-      const { data } = await supabase
-        .from('company_wallets')
-        .select('status')
-        .eq('company_id', company.id)
-        .maybeSingle();
-      if (data?.status) setStatus(data.status as 'ACTIVE' | 'FROZEN');
-    };
-    fetchStatus();
-  }, [company.id]);
+  const status: 'ACTIVE' | 'FROZEN' = company.wallet_status === 'FROZEN' ? 'FROZEN' : 'ACTIVE';
 
   return (
     <Card className="hover:shadow-lg transition">
@@ -560,24 +535,26 @@ function CompanyCard({
           Registered: {new Date(company.created_at).toLocaleDateString('en-IN')}
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex gap-2 pt-3">
+        {/* Freeze Action */}
+        <div className="pt-3">
           <Button
             size="sm"
             variant="outline"
             onClick={() => onToggleFreeze(company)}
-            className={`flex-1 ${status === 'FROZEN' ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-300' : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-300'}`}
+            className={`w-full ${status === 'FROZEN' ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-300' : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-300'}`}
           >
             {status === 'FROZEN' ? <CheckCircle className="w-3 h-3 mr-1" /> : <Ban className="w-3 h-3 mr-1" />}
             {status === 'FROZEN' ? 'Unfreeze' : 'Freeze'}
           </Button>
         </div>
-        <div className="flex gap-2">
+
+        {/* Action Buttons */}
+        <div className="grid grid-cols-1 gap-3 pt-3 md:grid-cols-3">
           <Button
             size="sm"
             variant="outline"
             onClick={() => window.location.href = `/admin/companies/${company.id}`}
-            className="flex-1"
+            className="w-full"
           >
             <FileText className="w-3 h-3 mr-1" /> Audit
           </Button>
@@ -585,25 +562,35 @@ function CompanyCard({
             size="sm"
             variant="outline"
             onClick={() => onEdit(company)}
-            className="flex-1"
+            className="w-full"
           >
             <Edit2 className="w-3 h-3 mr-1" /> Edit
           </Button>
           <Button
             size="sm"
             variant="outline"
+            onClick={() => onDelete(company)}
+            className="w-full text-red-600 hover:text-red-700 hover:bg-red-50"
+          >
+            <Trash2 className="w-3 h-3 mr-1" /> Delete
+          </Button>
+        </div>
+        <div className="grid grid-cols-1 gap-3 pt-3 md:grid-cols-2">
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => onResetTrial(company)}
-            className="flex-1"
+            className="w-full"
           >
             <RefreshCw className="w-3 h-3 mr-1" /> Reset Trial
           </Button>
           <Button
             size="sm"
             variant="outline"
-            onClick={() => onDelete(company)}
-            className="flex-1 text-red-600 hover:text-red-700 hover:bg-red-50"
+            onClick={() => window.location.href = `/admin/companies/${company.id}#bonus`}
+            className="w-full"
           >
-            <Trash2 className="w-3 h-3 mr-1" /> Delete
+            <RefreshCw className="w-3 h-3 mr-1" /> Bonus Quota
           </Button>
         </div>
       </CardContent>

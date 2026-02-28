@@ -54,13 +54,15 @@ export default function SystemScans() {
 
   const fetchCompanies = useCallback(async () => {
     try {
-      const supabase = supabaseClient();
-      const { data, error } = await supabase
-        .from('companies')
-        .select('id, company_name')
-        .order('company_name');
-      if (error) throw error;
-      if (data) setCompanies(data);
+      const response = await fetch('/api/admin/companies?page=1&page_size=1000', {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error(`Failed (${response.status})`);
+      }
+      const payload = await response.json();
+      const rows = Array.isArray(payload?.companies) ? payload.companies : [];
+      setCompanies(rows.map((row: any) => ({ id: row.id, company_name: row.company_name })));
     } catch (error: any) {
       console.error('Failed to fetch companies:', error);
     }

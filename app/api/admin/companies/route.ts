@@ -1,90 +1,79 @@
-import { NextRequest, NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { NextRequest } from "next/server";
+import { headers } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { safeApiErrorMessage } from "@/lib/api-error";
+import { requireAdminRole } from "@/lib/auth/admin";
+import { errorResponse, successResponse } from "@/lib/admin/responses";
+import { getOrGenerateCorrelationId } from "@/lib/observability";
 
-const UUID_REGEX =
-  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function normalizeRole(role: unknown): string {
-  return String(role ?? "").trim().toLowerCase();
-}
-
 export async function GET(req: NextRequest) {
-  try {
-    const supabase = await supabaseServer();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
+  const headersList = await headers();
+  const correlationId = getOrGenerateCorrelationId(headersList, "admin");
 
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const admin = getSupabaseAdmin();
-    const { data: adminRow, error: adminError } = await admin
-      .from("admin_users")
-      .select("role")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (adminError) {
-      return NextResponse.json(
-        { error: `Failed to verify admin role: ${adminError.message}` },
-        { status: 500 }
-      );
-    }
-
-    if (!adminRow || normalizeRole(adminRow.role) !== "superadmin") {
-      return NextResponse.json(
-        { error: "Forbidden: superadmin access required" },
-        { status: 403 }
-      );
-    }
-
-    const { data, error } = await admin
-      .from("companies")
-      .select(
-        `
-          id,
-          company_name,
-          trial_end_date,
-          company_trials!left(ends_at)
-        `
-      )
-      .order("company_name", { ascending: true });
-
-    if (error) {
-      throw error;
-    }
-
-    const companies = (data || []).map((company: any) => {
-      const trialRow = Array.isArray(company.company_trials) ? company.company_trials[0] : null;
-      const legacyEnd = (company as any).trial_end_date || null;
-      const computedTrialEnd = trialRow?.ends_at || legacyEnd || null;
-      let trial_status: "Not Used" | "Active" | "Expired" = "Not Used";
-      let trial_end = computedTrialEnd;
-
-      if (computedTrialEnd) {
-        trial_status = new Date(computedTrialEnd) > new Date() ? "Active" : "Expired";
-      }
-
-      return {
-        id: company.id,
-        company_name: company.company_name,
-        trial_status,
-        trial_end,
-      };
-    });
-
-    return NextResponse.json({ companies });
-  } catch (error: unknown) {
-    return NextResponse.json(
-      { error: safeApiErrorMessage(error, "Failed to load companies") },
-      { status: 500 }
-    );
+  const auth = await requireAdminRole(["super_admin", "billing_admin", "support_admin"]);
+  if (auth.error) {
+    return errorResponse(403, "FORBIDDEN", "Admin access required", correlationId);
   }
+
+  const url = new URL(req.url);
+  const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
+  const pageSize = Math.min(20, Math.max(1, Number(url.searchParams.get("page_size") || "20")));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  const supabase = getSupabaseAdmin();
+  const { data, error, count } = await supabase
+    .from("companies")
+    .select(
+      "id, user_id, company_name, gst_number:gst, contact_email:email, contact_phone:phone, address, subscription_status, subscription_plan, trial_started_at, trial_expires_at, extra_user_seats, deleted_at, created_at, updated_at",
+      { count: "exact" }
+    )
+    .is("deleted_at", null)
+    .order("company_name", { ascending: true })
+    .range(from, to);
+
+  if (error) {
+    return errorResponse(500, "INTERNAL_ERROR", error.message, correlationId);
+  }
+
+  const companyIds = (data || []).map((row) => row.id).filter(Boolean);
+  let walletStatusByCompanyId = new Map<string, string>();
+
+  if (companyIds.length > 0) {
+    const { data: walletRows, error: walletError } = await supabase
+      .from("company_wallets")
+      .select("company_id, status")
+      .in("company_id", companyIds);
+
+    if (walletError) {
+      return errorResponse(500, "INTERNAL_ERROR", walletError.message, correlationId);
+    }
+
+    for (const walletRow of walletRows || []) {
+      if (walletRow.company_id) {
+        walletStatusByCompanyId.set(walletRow.company_id, walletRow.status || "ACTIVE");
+      }
+    }
+  }
+
+  const companiesWithWalletStatus = (data || []).map((row) => ({
+    ...row,
+    company_wallets: {
+      status: walletStatusByCompanyId.get(row.id) || "ACTIVE",
+    },
+  }));
+
+  return successResponse(
+    200,
+    {
+      success: true,
+      page,
+      page_size: pageSize,
+      total: count || 0,
+      companies: companiesWithWalletStatus,
+    },
+    correlationId
+  );
 }

@@ -17,6 +17,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Smartphone,
+  TreeDeciduous,
+  Users,
+  CreditCard,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +29,9 @@ const MENU = [
   { label: "Code Generation", path: "/dashboard/code-generation", icon: QrCode },
   { label: "Handsets", path: "/dashboard/handsets", icon: Smartphone },
   { label: "Trace Hierarchy", path: "/dashboard/search", icon: Boxes },
+  { label: "Plant Management", path: "/dashboard/plants", icon: TreeDeciduous },
+  { label: "Seat Management", path: "/dashboard/seats", icon: Users },
+  { label: "Subscription", path: "/dashboard/subscription", icon: CreditCard },
   { label: "Scan Logs", path: "/dashboard/scans", icon: ScanLine },
   { label: "Reports", path: "/dashboard/audit", icon: FileText },
   { label: "Help & Support", path: "/dashboard/help", icon: HelpCircle },
@@ -39,12 +45,12 @@ export default function Sidebar() {
   return (
     <aside
       className={cn(
-        "bg-blue-900 text-white flex flex-col transition-all duration-300 border-r border-blue-800",
+        "bg-green-100 text-green-900 flex flex-col transition-all duration-300 border-r border-green-200",
         collapsed ? "w-16" : "w-64"
       )}
     >
       {/* Brand */}
-      <div className="h-16 flex items-center justify-between px-4 border-b border-blue-800">
+      <div className="h-16 flex items-center justify-between px-4 border-b border-green-200">
         {!collapsed && (
           <Link href="/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-lg font-semibold hover:opacity-80 transition">
             <Image src="/logo.png" alt="RxTrace" width={32} height={32} />
@@ -58,7 +64,7 @@ export default function Sidebar() {
         )}
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="p-1.5 rounded-md hover:bg-blue-800 transition text-blue-200 hover:text-white"
+          className="p-1.5 rounded-md hover:bg-green-200 transition text-green-600 hover:text-green-900"
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -78,8 +84,8 @@ export default function Sidebar() {
                 "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors",
                 collapsed ? "justify-center" : "",
                 active
-                  ? "bg-blue-700 font-medium text-white"
-                  : "text-blue-100 hover:bg-blue-800 hover:text-white"
+                  ? "bg-green-300 font-medium text-green-950"
+                  : "text-green-800 hover:bg-green-200 hover:text-green-950"
               )}
               title={collapsed ? item.label : undefined}
             >

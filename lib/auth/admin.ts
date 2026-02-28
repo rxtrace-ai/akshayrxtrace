@@ -4,6 +4,57 @@
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { supabaseServer } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { headers } from 'next/headers';
+
+function normalizeAdminRole(role: unknown): string {
+  return String(role ?? '').trim().toLowerCase();
+}
+
+async function resolveAuthenticatedUser(): Promise<{
+  userId: string | null;
+  error?: NextResponse;
+  source?: 'cookie' | 'authorization';
+}> {
+  try {
+    const supabase = await supabaseServer();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (user?.id) {
+      return { userId: user.id, source: 'cookie' };
+    }
+
+    const headersList = await headers();
+    const authHeader = headersList.get('authorization') || headersList.get('Authorization');
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.slice('Bearer '.length).trim();
+      if (token) {
+        const admin = getSupabaseAdmin();
+        const { data: { user: tokenUser }, error: tokenError } = await admin.auth.getUser(token);
+        if (tokenUser?.id) {
+          return { userId: tokenUser.id, source: 'authorization' };
+        }
+        if (tokenError) {
+          console.warn('PHASE-1: Authorization bearer auth failed:', tokenError.message);
+        }
+      }
+    }
+
+    if (authError) {
+      console.warn('PHASE-1: Cookie auth failed:', authError.message);
+    }
+
+    return {
+      userId: null,
+      error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+    };
+  } catch (error) {
+    console.error('PHASE-1: Error resolving authenticated user:', error);
+    return {
+      userId: null,
+      error: NextResponse.json({ error: 'Internal server error' }, { status: 500 }),
+    };
+  }
+}
 
 /**
  * PHASE-1: Check if a user is an admin
@@ -11,39 +62,20 @@ import { NextResponse } from 'next/server';
  */
 export async function isAdmin(userId: string): Promise<boolean> {
   try {
+    const role = await getAdminRole(userId);
+    if (role) return true;
+
     const admin = getSupabaseAdmin();
-    
-    // PHASE-1: First check auth.users metadata
-    const { data: user, error: userError } = await admin.auth.admin.getUserById(userId);
-    
-    if (userError) {
-      console.error('PHASE-1: Error fetching user for admin check:', userError);
-      return false;
-    }
-    
-    // PHASE-1: Check user_metadata.is_admin (and raw_user_meta_data in case API exposes it)
-    const meta = user?.user_metadata ?? (user as { raw_user_meta_data?: { is_admin?: boolean } })?.raw_user_meta_data;
-    if (meta?.is_admin === true) {
-      return true;
-    }
-    
-    // PHASE-1: Also check admin_users table if it exists (fallback)
-    const { data: adminUser, error: adminError } = await admin
-      .from('admin_users')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('is_active', true)
-      .maybeSingle();
-    
-    if (adminError) {
-      // PHASE-1: Table might not exist yet, that's okay - use metadata only
-      if (adminError.code !== '42P01') { // 42P01 = table does not exist
-        console.error('PHASE-1: Error checking admin_users table:', adminError);
+    const { data, error } = await admin.auth.admin.getUserById(userId);
+    if (error) {
+      if (error.code !== 'user_not_found') {
+        console.warn('PHASE-1: Could not fetch user metadata for admin check:', error.message);
       }
       return false;
     }
-    
-    return !!adminUser;
+    const user = (data as any)?.user;
+    const meta = user?.user_metadata ?? user?.raw_user_meta_data;
+    return meta?.is_admin === true;
   } catch (error) {
     console.error('PHASE-1: Error in isAdmin check:', error);
     return false;
@@ -55,22 +87,20 @@ export async function isAdmin(userId: string): Promise<boolean> {
  */
 export async function getCurrentUserIsAdmin(): Promise<{ isAdmin: boolean; userId: string | null; error?: NextResponse }> {
   try {
-    const supabase = await supabaseServer();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    if (authError || !user) {
+    const auth = await resolveAuthenticatedUser();
+    if (auth.error || !auth.userId) {
       return {
         isAdmin: false,
         userId: null,
-        error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+        error: auth.error || NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
       };
     }
-    
-    const adminStatus = await isAdmin(user.id);
+
+    const adminStatus = await isAdmin(auth.userId);
     
     return {
       isAdmin: adminStatus,
-      userId: user.id,
+      userId: auth.userId,
     };
   } catch (error) {
     console.error('PHASE-1: Error in getCurrentUserIsAdmin:', error);
@@ -179,4 +209,100 @@ export async function getAllAdmins(): Promise<Array<{ userId: string; email?: st
     console.error('PHASE-1: Error in getAllAdmins:', error);
     return [];
   }
+}
+
+export async function getAdminRole(userId: string): Promise<string | null> {
+  try {
+    const admin = getSupabaseAdmin();
+    const tryQuery = async (column: 'user_id' | 'id') => {
+      const withIsActive = await admin
+        .from('admin_users')
+        .select('id, user_id, role, role_name, is_active')
+        .eq(column, userId)
+        .maybeSingle();
+
+      if (!withIsActive.error && withIsActive.data) return withIsActive.data as any;
+
+      const withoutIsActive = await admin
+        .from('admin_users')
+        .select('id, user_id, role, role_name')
+        .eq(column, userId)
+        .maybeSingle();
+
+      if (!withoutIsActive.error && withoutIsActive.data) return withoutIsActive.data as any;
+      return null;
+    };
+
+    let data = await tryQuery('user_id');
+    if (!data) data = await tryQuery('id');
+    if (!data) return null;
+
+    if (Object.prototype.hasOwnProperty.call(data, 'is_active') && data.is_active === false) {
+      return null;
+    }
+
+    const roleName = normalizeAdminRole(data.role_name);
+    if (roleName) return roleName;
+    return normalizeAdminRole(data.role);
+  } catch {
+    return null;
+  }
+}
+
+export async function requireAdminRole(
+  allowedRoles: Array<'super_admin' | 'billing_admin' | 'support_admin'>
+): Promise<{ userId: string; role: string | null; error?: NextResponse }> {
+  const auth = await resolveAuthenticatedUser();
+  if (auth.error || !auth.userId) {
+    return {
+      userId: auth.userId || '',
+      role: null,
+      error: auth.error || NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+    };
+  }
+
+  const role = await getAdminRole(auth.userId);
+  const normalized = normalizeAdminRole(role);
+  const alias = normalized === 'superadmin' ? 'super_admin' : normalized;
+
+  console.info('PHASE-1 admin role resolution', {
+    userId: auth.userId,
+    role_raw: role,
+    role_normalized: alias || null,
+    allowedRoles,
+  });
+
+  if (!alias) {
+    return {
+      userId: auth.userId,
+      role: null,
+      error: NextResponse.json(
+        {
+          error: 'FORBIDDEN',
+          message: 'Admin access required',
+        },
+        { status: 403 }
+      ),
+    };
+  }
+
+  if (!allowedRoles.includes(alias as any)) {
+    return {
+      userId: auth.userId,
+      role: alias || null,
+      error: NextResponse.json(
+        {
+          error: 'Forbidden',
+          message: `Requires role: ${allowedRoles.join(', ')}`,
+        },
+        { status: 403 }
+      ),
+    };
+  }
+
+  return { userId: auth.userId, role: alias || null };
+}
+
+export async function requireSuperAdmin(): Promise<{ userId: string; role: string | null; error?: NextResponse }> {
+  return requireAdminRole(['super_admin']);
 }

@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import { requireUserSession } from "@/lib/auth/session";
 import { supabaseServer } from "@/lib/supabase/server";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
+import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
 
 export async function POST(req: Request) {
   try {
@@ -28,6 +29,27 @@ export async function POST(req: Request) {
     const now = new Date();
     const userId = auth.userId;
     const companyId = await resolveCompanyIdFromRequest(req);
+
+    if (!companyId) {
+      return NextResponse.json({ success: false, error: "No company found" }, { status: 403 });
+    }
+
+    const snapshot = await getCompanyEntitlementSnapshot(supabase, companyId);
+    const handsetLimit = Number(snapshot.limits?.handset ?? 0);
+    const handsetRemaining = Number(snapshot.remaining?.handset ?? 0);
+    const entitlementEnabled = handsetLimit > 0;
+
+    if (entitlementEnabled) {
+      if (snapshot.state === "TRIAL_EXPIRED") {
+        return NextResponse.json({ success: false, error: "TRIAL_EXPIRED" }, { status: 403 });
+      }
+      if (snapshot.state === "NO_ACTIVE_SUBSCRIPTION") {
+        return NextResponse.json({ success: false, error: "NO_ACTIVE_SUBSCRIPTION" }, { status: 403 });
+      }
+      if (handsetRemaining <= 0) {
+        return NextResponse.json({ success: false, error: "HANDSET_QUOTA_EXCEEDED" }, { status: 403 });
+      }
+    }
 
     const { data: tokenRecord, error: tokenError } = await supabase
       .from("token")
@@ -58,6 +80,7 @@ export async function POST(req: Request) {
       .from("handset")
       .insert({
         userid: userId,
+        ...(companyId ? { company_id: companyId } : {}),
         devicename: deviceName,
         tokenid: tokenRecord.id,
         activatedat: now.toISOString(),

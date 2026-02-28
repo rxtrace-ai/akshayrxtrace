@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { canCreateSeat } from "@/lib/usage/seats";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
+import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
 
 export async function POST(req: Request) {
   try {
@@ -11,36 +11,44 @@ export async function POST(req: Request) {
     }
 
     const supabase = getSupabaseAdmin();
-    const body = await req.json();
-    const { company_id: requestedCompanyId } = body;
+    const body = await req.json().catch(() => ({} as any));
+    const requestedCompanyId = body.company_id as string | undefined;
 
     if (requestedCompanyId && requestedCompanyId !== authCompanyId) {
       return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
     }
 
-    const company_id = authCompanyId;
+    const companyId = authCompanyId;
+    const snapshot = await getCompanyEntitlementSnapshot(supabase, companyId);
 
-    // Enforce seat limits using subscription system
-    const seatCheck = await canCreateSeat(supabase, company_id);
-    if (!seatCheck.allowed) {
+    if (snapshot.state === "TRIAL_EXPIRED") {
+      return NextResponse.json({ success: false, error: "TRIAL_EXPIRED" }, { status: 403 });
+    }
+    if (snapshot.state === "NO_ACTIVE_SUBSCRIPTION") {
+      return NextResponse.json({ success: false, error: "NO_ACTIVE_SUBSCRIPTION" }, { status: 403 });
+    }
+
+    const remainingSeats = Number(snapshot.remaining?.seat ?? 0);
+    if (remainingSeats <= 0) {
       return NextResponse.json(
         {
           success: false,
-          error: seatCheck.reason || 'Seat limit reached',
-          max_seats: seatCheck.max_seats,
-          used_seats: seatCheck.used_seats,
-          available_seats: seatCheck.available_seats,
+          error: "SEAT_QUOTA_EXCEEDED",
+          max_seats: Number(snapshot.limits?.seat ?? 0),
+          used_seats: Number(snapshot.usage?.seat ?? 0),
+          available_seats: 0,
         },
         { status: 403 }
       );
     }
 
-    // Create a new seat for the company
     const { data: seat, error } = await supabase
       .from("seats")
       .insert({
-        company_id,
+        company_id: companyId,
         active: true,
+        status: "active",
+        activated_at: new Date().toISOString(),
       })
       .select()
       .single();
