@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
+import { getUnifiedSubscriptionStatus } from "@/lib/billing/subscriptionStatus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,29 +22,13 @@ export async function GET() {
   try {
     const entitlement = await getCompanyEntitlementSnapshot(owner.supabase, owner.companyId);
 
-    const { data: currentSubscription, error: subscriptionError } = await owner.supabase
-      .from("company_subscriptions")
-      .select(
-        `
-        status,
-        cancel_at_period_end,
-        current_period_start,
-        current_period_end,
-        next_billing_at,
-        subscription_plan_templates (
-          name,
-          billing_cycle,
-          amount_from_razorpay
-        )
-      `
-      )
-      .eq("company_id", owner.companyId)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (subscriptionError) {
-      return NextResponse.json({ error: subscriptionError.message }, { status: 500 });
-    }
+    const subscriptionStatus = await getUnifiedSubscriptionStatus({
+      supabase: owner.supabase as any,
+      companyId: owner.companyId,
+    });
+
+    const currentSubscription = subscriptionStatus.subscription ?? null;
+    const subTemplate = (currentSubscription as any)?.subscription_plan_templates || null;
 
     const { data: structuralAddOns, error: structuralError } = await owner.supabase
       .from("company_addon_subscriptions")
@@ -66,8 +51,6 @@ export async function GET() {
     if (invoiceError) {
       return NextResponse.json({ error: invoiceError.message }, { status: 500 });
     }
-
-    const subTemplate = (currentSubscription as any)?.subscription_plan_templates || null;
 
     const decisionFromState = (state: string): "TRIAL_EXPIRED" | "NO_ACTIVE_SUBSCRIPTION" | null => {
       if (state === "TRIAL_EXPIRED") return "TRIAL_EXPIRED";
@@ -126,6 +109,10 @@ export async function GET() {
             amount_paise: subTemplate?.amount_from_razorpay ?? 0,
           }
         : null,
+      subscriptionStatus: {
+        status: subscriptionStatus.status,
+        trialExpiresAt: subscriptionStatus.trialExpiresAt ? subscriptionStatus.trialExpiresAt.toISOString() : null,
+      },
       entitlement,
       decisions,
       structural_addons: (structuralAddOns || [])

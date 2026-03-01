@@ -32,6 +32,10 @@ type CheckoutContextPayload = {
   plans: Plan[];
   add_ons: AddOn[];
   eligible_coupons: Array<{ code: string; type: string; value: number; scope: string }>;
+  subscriptionStatus?: {
+    status: "active" | "trial" | "expired";
+    trialExpiresAt: string | null;
+  };
   current_subscription: null | {
     id: string;
     status: string | null;
@@ -46,6 +50,10 @@ type CheckoutContextPayload = {
 
 type SubscriptionSummary = {
   success: boolean;
+  subscriptionStatus?: {
+    status: "active" | "trial" | "expired";
+    trialExpiresAt: string | null;
+  };
   subscription: null | {
     status: string | null;
     cancel_at_period_end: boolean;
@@ -566,6 +574,9 @@ export default function SubscriptionCheckoutPage() {
     return `Status: ${checkoutStatus}`;
   }, [checkoutStatus]);
 
+  const unifiedStatus = summary?.subscriptionStatus?.status ?? null;
+  const unifiedTrialExpiresAt = summary?.subscriptionStatus?.trialExpiresAt ?? null;
+
   if (loading) {
     return <p className="text-sm text-gray-500">Loading subscription...</p>;
   }
@@ -602,8 +613,19 @@ export default function SubscriptionCheckoutPage() {
                     {formatINRFromPaise(summary.subscription?.amount_paise || 0)}
                   </p>
                 </div>
-                <Badge className="bg-gray-100 text-gray-800">{summary.subscription?.status || summary.entitlement.state}</Badge>
+                <Badge className="bg-gray-100 text-gray-800">
+                  {unifiedStatus || summary.subscription?.status || summary.entitlement.state}
+                </Badge>
               </div>
+
+              {unifiedStatus === "trial" ? (
+                <p className="text-xs text-slate-600">
+                  Trial active until{" "}
+                  {unifiedTrialExpiresAt ? new Date(unifiedTrialExpiresAt).toLocaleDateString() : "-"}
+                </p>
+              ) : unifiedStatus === "expired" ? (
+                <p className="text-xs text-rose-700">Trial expired. Upgrade required to continue.</p>
+              ) : null}
 
               <div className="grid gap-2 md:grid-cols-3">
                 <div>

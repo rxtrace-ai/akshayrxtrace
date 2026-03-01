@@ -47,3 +47,4 @@ next-env.d.ts
 # Temporary files with spaces and special characters (common editor artifacts)
 * for *
 * runtime *
+backup*.sql

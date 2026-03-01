@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { loadCheckoutCatalog } from "@/lib/billing/userCheckout";
+import { getUnifiedSubscriptionStatus } from "@/lib/billing/subscriptionStatus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,18 +13,12 @@ export async function GET() {
   try {
     const catalog = await loadCheckoutCatalog(owner.supabase);
 
-    const { data: currentSubscription, error: subscriptionError } = await owner.supabase
-      .from("company_subscriptions")
-      .select(
-        "id, status, current_period_start, current_period_end, next_billing_at, plan_template_id, plan_version_id, subscription_plan_templates(name, billing_cycle, amount_from_razorpay)"
-      )
-      .eq("company_id", owner.companyId)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (subscriptionError) {
-      return NextResponse.json({ error: subscriptionError.message }, { status: 500 });
-    }
+    const subscriptionStatus = await getUnifiedSubscriptionStatus({
+      supabase: owner.supabase as any,
+      companyId: owner.companyId,
+    });
+
+    const currentSubscription = subscriptionStatus.subscription ?? null;
 
     return NextResponse.json({
       success: true,
@@ -55,6 +50,10 @@ export async function GET() {
         value: coupon.value,
         scope: coupon.scope,
       })),
+      subscriptionStatus: {
+        status: subscriptionStatus.status,
+        trialExpiresAt: subscriptionStatus.trialExpiresAt ? subscriptionStatus.trialExpiresAt.toISOString() : null,
+      },
       current_subscription: currentSubscription
         ? {
             id: (currentSubscription as any).id,
@@ -75,4 +74,3 @@ export async function GET() {
     );
   }
 }
-
