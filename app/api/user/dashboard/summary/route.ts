@@ -89,16 +89,12 @@ export async function GET() {
         },
       },
     });
-} catch (error: any) {
-  console.error("DASHBOARD SUMMARY ERROR:", error);
+  } catch (error: any) {
+    console.error("DASHBOARD SUMMARY ERROR:", error);
 
-  return NextResponse.json(
-    {
-      error:
-        error?.message ||
-        (typeof error === "string" ? error : JSON.stringify(error)) ||
-        "Unknown dashboard error",
-    },
-    { status: 500 }
-  );
+    return NextResponse.json(
+      { error: error?.message ?? "Dashboard summary failed" },
+      { status: 500 }
+    );
+  }
 }

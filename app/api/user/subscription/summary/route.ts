@@ -144,6 +144,11 @@ export async function GET() {
       })),
     });
   } catch (error: any) {
-    return NextResponse.json({ error: error?.message || "Failed to load subscription summary" }, { status: 500 });
+    console.error("DASHBOARD SUMMARY ERROR:", error);
+
+    return NextResponse.json(
+      { error: error?.message ?? "Dashboard summary failed" },
+      { status: 500 }
+    );
   }
 }
