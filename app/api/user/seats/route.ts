@@ -6,7 +6,6 @@ import { getSeatEntitlement } from "@/lib/seats/entitlement";
 type SeatRow = {
   id: string;
   email: string | null;
-  full_name: string | null;
   role: string | null;
   status: string | null;
   active: boolean | null;
@@ -37,7 +36,19 @@ export async function GET() {
 
   const { data: seats, error: seatsError } = await supabase
     .from("seats")
-    .select("id, user_id, email, full_name, role, status, active, invited_at, activated_at, created_at, updated_at")
+    .select(`
+      id,
+      user_id,
+      email,
+      role,
+      status,
+      active,
+      invited_at,
+      activated_at,
+      created_at,
+      updated_at,
+      user_profiles ( full_name )
+    `)
     .eq("company_id", resolved.companyId)
     .order("created_at", { ascending: false });
 
@@ -112,8 +123,20 @@ export async function GET() {
     const seat = seatRaw as SeatRow;
     const assignedPlants = plantsBySeat.get(seat.id) || [];
     const invitation = latestInviteBySeat.get(seat.id) || null;
+
+    const full_name = (seatRaw as any).user_profiles?.full_name ?? null;
     return {
-      ...seat,
+      id: seat.id,
+      user_id: seat.user_id,
+      email: seat.email,
+      full_name,
+      role: seat.role,
+      status: seat.status,
+      active: seat.active,
+      invited_at: seat.invited_at,
+      activated_at: seat.activated_at,
+      created_at: seat.created_at,
+      updated_at: seat.updated_at,
       assigned_plants: assignedPlants,
       plant_ids: assignedPlants.map((plant) => plant.id),
       invitation,
