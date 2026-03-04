@@ -4,6 +4,8 @@ import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { writeAuditLog } from '@/lib/audit';
 import { generateCanonicalGS1 } from '@/lib/gs1Canonical';
 import { parseGS1 } from '@/lib/parseGS1';
+import { resolveCodeMode } from '@/lib/codeMode';
+import { buildPicUnitPayload } from '@/lib/picPayload';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -86,13 +88,15 @@ export async function POST(req: Request) {
     const validRows: Array<{
       company_id: string;
       sku_id: string;
-      gtin: string;
+      gtin: string | null;
       batch: string;
       mfd: string | null;
       expiry: string;
       mrp: string | null;
       serial: string;
       gs1_payload: string;
+      code_mode: 'GS1' | 'PIC';
+      payload: string;
     }> = [];
 
     // Process each row
@@ -181,24 +185,22 @@ export async function POST(req: Request) {
           continue;
         }
 
-        // Normalize and validate GTIN if provided
-        let finalGtin: string;
-        if (gtin) {
+        // Determine mode + normalize/validate GTIN if provided
+        const codeMode = resolveCodeMode({ gtin });
+        let finalGtin: string | null = null;
+        if (codeMode === 'GS1') {
           const { validateGTIN } = await import('@/lib/gs1/gtin');
-          const validation = validateGTIN(gtin);
+          const validation = validateGTIN(gtin!);
           if (!validation.valid) {
             results.errors.push({ row: rowNum, error: validation.error || 'Invalid GTIN format' });
             results.invalid++;
             continue;
           }
           finalGtin = validation.normalized!;
-        } else {
-          // Generate internal GTIN if not provided
-          finalGtin = generateInternalGTIN(companyId, serialNumber);
         }
 
-        // Generate GS1 payload
-        let gs1Payload: string;
+        // Generate payload (GS1 or PIC)
+        let payload: string;
 
         // Normalize expiry date format (expect YYYY-MM-DD or YYMMDD)
         let normalizedExpiry = expiryDate;
@@ -223,19 +225,42 @@ export async function POST(req: Request) {
         }
 
         try {
-          gs1Payload = generateCanonicalGS1({
-            gtin: finalGtin,
-            expiry: normalizedExpiry,
-            mfgDate: normalizedMfd || new Date().toISOString().split('T')[0],
-            batch,
-            serial: serialNumber,
-            mrp: mrp ? Number(mrp) : undefined,
-            sku: skuCode
-          });
-        } catch (gs1Error: any) {
-          results.errors.push({ row: rowNum, error: `GS1 generation failed: ${gs1Error.message}` });
+          payload =
+            codeMode === 'GS1'
+              ? generateCanonicalGS1({
+                  gtin: finalGtin!,
+                  expiry: normalizedExpiry,
+                  mfgDate: normalizedMfd || new Date().toISOString().split('T')[0],
+                  batch,
+                  serial: serialNumber,
+                  mrp: mrp ? Number(mrp) : undefined,
+                  sku: skuCode,
+                })
+              : buildPicUnitPayload({
+                  sku: skuCode,
+                  batch,
+                  expiryYYMMDD: normalizedExpiry.replace(/-/g, '').slice(2), // YYYYMMDD -> YYMMDD
+                  mfgYYMMDD: normalizedMfd ? normalizedMfd.replace(/-/g, '').slice(2) : undefined,
+                  serial: serialNumber,
+                  mrp: mrp || undefined,
+                });
+        } catch (e: any) {
+          results.errors.push({ row: rowNum, error: `Payload generation failed: ${e.message}` });
           results.invalid++;
           continue;
+        }
+
+        // If GS1, persist SKU GTIN in master (best-effort; non-blocking)
+        if (codeMode === 'GS1' && finalGtin) {
+          try {
+            await admin
+              .from('skus')
+              .update({ gtin: finalGtin })
+              .eq('company_id', companyId)
+              .eq('id', skuId);
+          } catch {
+            // ignore
+          }
         }
 
         validRows.push({
@@ -247,7 +272,9 @@ export async function POST(req: Request) {
           expiry: normalizedExpiry,
           mrp,
           serial: serialNumber,
-          gs1_payload: gs1Payload,
+          gs1_payload: payload,
+          code_mode: codeMode,
+          payload,
         });
       } catch (rowError: any) {
         results.errors.push({ row: rowNum, error: rowError.message || 'Row processing failed' });
@@ -316,10 +343,3 @@ export async function POST(req: Request) {
   }
 }
 
-// Generate internal GTIN if not provided by ERP
-function generateInternalGTIN(companyId: string, serial: string): string {
-  // Use company ID prefix + serial hash for uniqueness
-  const prefix = '890'; // Internal prefix
-  const hash = serial.slice(0, 10).padEnd(10, '0');
-  return `${prefix}${hash.slice(0, 11)}`; // 14 digits total
-}

@@ -44,6 +44,7 @@ type SSCCFormState = {
   generateBox: boolean;
   generateCarton: boolean;
   generatePallet: boolean;
+  complianceAck: boolean;
 };
 
 type CSVValidationError = {
@@ -233,39 +234,28 @@ async function processSSCCCSV(
 
     if (!sku) continue;
 
-    // Determine API endpoint based on hierarchy type
-    let apiEndpoint = '';
-    let requestBody: any = {
-      sku_id: sku,
-      company_id: companyId,
-      expiry_date: expISO,
-    };
+    // Use unified SSCC generation endpoint for CSV too (driven by Hierarchy Type)
+    const generate_box = hierarchyType === 'BOX' || hierarchyType === 'CARTON' || hierarchyType === 'PALLET';
+    const generate_carton = hierarchyType === 'CARTON' || hierarchyType === 'PALLET';
+    const generate_pallet = hierarchyType === 'PALLET';
 
-    switch (hierarchyType) {
-      case 'BOX':
-        apiEndpoint = '/api/box/create';
-        requestBody.box_count = numberOfPallets;
-        requestBody.units_per_box = unitsPerBox;
-        break;
-      case 'CARTON':
-        apiEndpoint = '/api/carton/create';
-        requestBody.carton_count = numberOfPallets;
-        requestBody.units_per_box = unitsPerBox;
-        requestBody.boxes_per_carton = boxesPerCarton;
-        break;
-      case 'PALLET':
-        apiEndpoint = '/api/pallet/create';
-        requestBody.pallet_count = numberOfPallets;
-        requestBody.units_per_box = unitsPerBox;
-        requestBody.boxes_per_carton = boxesPerCarton;
-        requestBody.cartons_per_pallet = cartonsPerPallet;
-        break;
-    }
-
-    const res = await fetch(apiEndpoint, {
+    const res = await fetch('/api/sscc/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify({
+        compliance_ack: true,
+        sku_id: sku,
+        company_id: companyId,
+        batch,
+        expiry_date: expISO,
+        units_per_box: unitsPerBox,
+        boxes_per_carton: boxesPerCarton,
+        cartons_per_pallet: cartonsPerPallet,
+        number_of_pallets: numberOfPallets,
+        generate_box,
+        generate_carton,
+        generate_pallet,
+      }),
     });
 
     const out = await res.json();
@@ -273,15 +263,19 @@ async function processSSCCCSV(
       throw new Error(`Failed to generate SSCC for SKU ${sku}: ${out.error}`);
     }
 
-    // Handle different response formats
-    const items = out.pallets || out.cartons || out.boxes || [];
-    const labels: SSCCLabel[] = items.map((item: any) => ({
+    const allItems: any[] = [
+      ...(out.boxes || []).map((item: any) => ({ ...item, level: 'BOX' as GenerationLevel })),
+      ...(out.cartons || []).map((item: any) => ({ ...item, level: 'CARTON' as GenerationLevel })),
+      ...(out.pallets || []).map((item: any) => ({ ...item, level: 'PALLET' as GenerationLevel }))
+    ];
+
+    const labels: SSCCLabel[] = allItems.map((item: any) => ({
       id: item.id,
       sscc: item.sscc,
-      sscc_with_ai: item.sscc_with_ai,
+      sscc_with_ai: item.sscc_with_ai || `(00)${item.sscc}`,
       sku_id: item.sku_id,
-      pallet_id: item.id,
-      level: hierarchyType
+      pallet_id: item.pallet_id || item.id,
+      level: item.level
     }));
 
     allLabels.push(...labels);
@@ -323,7 +317,8 @@ export default function SSCCCodeGenerationPage() {
     codeType: 'DATAMATRIX',
     generateBox: false,
     generateCarton: false,
-    generatePallet: false
+    generatePallet: false,
+    complianceAck: false,
   });
 
   const [ssccLabels, setSsccLabels] = useState<SSCCLabel[]>([]);
@@ -335,7 +330,7 @@ export default function SSCCCodeGenerationPage() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvValidation, setCsvValidation] = useState<{ valid: boolean; errors: CSVValidationError[] } | null>(null);
   const [csvProcessing, setCsvProcessing] = useState(false);
-  const [skus, setSkus] = useState<Array<{ id: string; sku_code: string; sku_name: string | null }>>([]);
+  const [skus, setSkus] = useState<Array<{ id: string; sku_code: string; sku_name: string | null; gtin?: string | null }>>([]);
   const [profileCompleted, setProfileCompleted] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -367,6 +362,8 @@ export default function SSCCCodeGenerationPage() {
       }
     })();
   }, []);
+
+  const isGs1Eligible = skus.some((s) => typeof s.gtin === 'string' && s.gtin.trim().length > 0);
 
   function update<K extends keyof SSCCFormState>(k: K, v: SSCCFormState[K]) {
     setForm(s => {
@@ -424,6 +421,18 @@ export default function SSCCCodeGenerationPage() {
       return;
     }
 
+    if (!isGs1Eligible) {
+      setError('SSCC generation is enabled only for GS1-mode companies. Add a GTIN to at least one SKU first.');
+      setLoading(false);
+      return;
+    }
+
+    if (!form.complianceAck) {
+      setError('You must confirm compliance to generate SSCC codes.');
+      setLoading(false);
+      return;
+    }
+
     if (!form.skuId || !form.batch || !form.expiryDate) {
       setError('SKU, Batch Number, and Expiry Date are required');
       setLoading(false);
@@ -465,6 +474,7 @@ export default function SSCCCodeGenerationPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          compliance_ack: true,
           sku_id: form.skuId,
           company_id: companyId,
           batch: form.batch,
@@ -523,6 +533,14 @@ export default function SSCCCodeGenerationPage() {
 
     if (!canGenerate) {
       setError('Code generation is disabled. This feature is available only during an active trial in pilot mode.');
+      return;
+    }
+    if (!isGs1Eligible) {
+      setError('SSCC generation is enabled only for GS1-mode companies. Add a GTIN to at least one SKU first.');
+      return;
+    }
+    if (!form.complianceAck) {
+      setError('You must confirm compliance to generate SSCC codes.');
       return;
     }
 
@@ -656,6 +674,31 @@ export default function SSCCCodeGenerationPage() {
         <Info className="h-4 w-4 text-amber-600" />
         <AlertDescription className="text-amber-800">
           <strong>SSCC is for logistics units only.</strong> This workflow generates codes for boxes, cartons, and pallets using hierarchical relationships. Unit-level codes must be generated separately.
+        </AlertDescription>
+      </Alert>
+
+      {!isGs1Eligible && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            <strong>SSCC disabled:</strong> Your company is not GS1-eligible yet. Add a GTIN to at least one SKU to enable SSCC generation.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <Alert className="bg-slate-50 border-slate-200">
+        <AlertDescription className="text-slate-800">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.complianceAck}
+              onChange={(e) => update('complianceAck', e.target.checked)}
+              className="mt-1"
+            />
+            <span>
+              I confirm I understand and accept the compliance responsibility for generated SSCC codes (format validated only).
+            </span>
+          </label>
         </AlertDescription>
       </Alert>
 
@@ -838,7 +881,7 @@ export default function SSCCCodeGenerationPage() {
 
               <Button 
                 onClick={handleGenerateSingle} 
-                disabled={loading || !canGenerate || !!singleLimitError}
+                disabled={loading || !canGenerate || !!singleLimitError || !isGs1Eligible || !form.complianceAck}
                 className="w-full bg-blue-600 hover:bg-blue-700"
               >
                 {loading ? 'Generating...' : 'Generate SSCC Codes'}
@@ -900,7 +943,7 @@ export default function SSCCCodeGenerationPage() {
                       if (file) handleCSVUpload(file);
                       e.currentTarget.value = '';
                     }}
-                    disabled={csvProcessing || !canGenerate}
+                    disabled={csvProcessing || !canGenerate || !isGs1Eligible || !form.complianceAck}
                   />
                   {csvFile && (
                     <Badge variant="outline" className="flex items-center gap-1">

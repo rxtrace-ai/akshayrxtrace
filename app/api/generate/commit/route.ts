@@ -11,7 +11,15 @@ export async function POST(req: Request) {
   const body = await req.json();
 
   const { company, sku, gtin, batch, mfd, exp, mrp,
-          quantity, packing_rule_id, printer_id } = body;
+          quantity, packing_rule_id, printer_id, compliance_ack } = body;
+
+  if (compliance_ack !== true) {
+    return NextResponse.json({ error: "compliance_ack=true is required" }, { status: 400 });
+  }
+
+  if (!gtin || typeof gtin !== "string" || gtin.trim().length === 0) {
+    return NextResponse.json({ error: "gtin is required (GS1 mode only) for commit route" }, { status: 400 });
+  }
 
   const invalidQuantity =
     typeof quantity !== "number" ||
@@ -70,7 +78,9 @@ export async function POST(req: Request) {
       expiry: exp,
       mrp: mrp || null,
       serial,
-      gs1_payload: gs1
+      gs1_payload: gs1,
+      code_mode: "GS1",
+      payload: gs1
     });
   }
 

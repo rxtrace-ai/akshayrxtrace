@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
 import { billingConfig } from "@/app/lib/billingConfig";
-import { parseGS1 } from "@/lib/parseGS1";
+import { parsePayload } from "@/lib/parsePayload";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { compareGS1Payloads, normalizeGS1Payload } from "@/lib/gs1Canonical";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
+
+const GS = String.fromCharCode(29);
+function normalizeMachinePayload(input: string): string {
+  return String(input || "")
+    .replace(/[()]/g, "")
+    .replace(/[\u001D\u00F1]/g, GS)
+    .replace(/\s/g, "");
+}
 
 // Helper: Check if date is expired (format: YYMMDD or YYYY-MM-DD)
 function isExpired(expiryStr: string): boolean {
@@ -118,7 +126,7 @@ export async function POST(req: Request) {
 
     if (!raw) {
       return NextResponse.json(
-        { success: false, error: "Missing raw GS1 payload" },
+        { success: false, error: "Missing raw payload" },
         { status: 400 }
       );
     }
@@ -126,14 +134,23 @@ export async function POST(req: Request) {
     /* ------------------------------------------------
        1️⃣ Parse GS1 payload (company_id may be resolved from payload or provided)
     ------------------------------------------------ */
-    const data = parseGS1(raw);
-    const hasIdentifiers = !!data?.sscc || !!data?.serialNo;
-    if (!hasIdentifiers) {
+    const parsedAny = parsePayload(raw);
+    if (parsedAny.mode === "INVALID") {
       return NextResponse.json(
-        { success: false, error: "Invalid GS1 payload (missing SSCC/Serial)" },
+        { success: false, error: parsedAny.error || "Invalid payload" },
         { status: 400 }
       );
     }
+
+    const data =
+      parsedAny.mode === "GS1"
+        ? (parsedAny.parsed as any)
+        : ({
+            raw,
+            parsed: true,
+            serialNo: parsedAny.parsed.serial,
+            sscc: undefined,
+          } as any);
 
     /* ------------------------------------------------
        2️⃣ Resolve company_id (from scanned entity)
@@ -366,7 +383,7 @@ export async function POST(req: Request) {
     if (!result && data.serialNo) {
       const { data: unit } = await supabase
         .from("labels_units")
-        .select("id, box_id, serial, gs1_payload, created_at, company_id")
+        .select("id, box_id, serial, gs1_payload, payload, code_mode, created_at, company_id")
         .eq("company_id", resolvedCompanyId)
         .eq("serial", data.serialNo)
         .maybeSingle();
@@ -398,8 +415,13 @@ export async function POST(req: Request) {
           : { data: null as any };
 
         // Validate payload integrity: compare scanned payload with stored payload
-        if (unit.gs1_payload) {
-          const payloadsMatch = compareGS1Payloads(unit.gs1_payload, raw);
+        const storedPayload = (unit as any).payload ?? unit.gs1_payload;
+        const codeMode = ((unit as any).code_mode ?? "GS1") as "GS1" | "PIC";
+        if (storedPayload) {
+          const payloadsMatch =
+            codeMode === "GS1"
+              ? compareGS1Payloads(storedPayload, raw)
+              : normalizeMachinePayload(storedPayload) === normalizeMachinePayload(raw);
           if (!payloadsMatch) {
             // Log the mismatch for audit
             await supabase.from("scan_logs").insert({
@@ -410,8 +432,8 @@ export async function POST(req: Request) {
               metadata: { 
                 level: "unit",
                 status: "PAYLOAD_MISMATCH",
-                stored_payload: normalizeGS1Payload(unit.gs1_payload),
-                scanned_payload: normalizeGS1Payload(raw),
+                stored_payload: codeMode === "GS1" ? normalizeGS1Payload(storedPayload) : normalizeMachinePayload(storedPayload),
+                scanned_payload: codeMode === "GS1" ? normalizeGS1Payload(raw) : normalizeMachinePayload(raw),
                 unit_id: unit.id,
                 device_context: device_context || null
               },
@@ -421,7 +443,7 @@ export async function POST(req: Request) {
             return NextResponse.json(
               { 
                 success: false, 
-                error: "GS1 payload mismatch - code may be tampered or invalid",
+                error: "Payload mismatch - code may be tampered or invalid",
                 code: "PAYLOAD_MISMATCH"
               },
               { status: 400 }
@@ -439,6 +461,8 @@ export async function POST(req: Request) {
           id: unit.id,
           created_at: unit.created_at,
           gs1_payload: unit.gs1_payload,
+          payload: (unit as any).payload ?? unit.gs1_payload,
+          code_mode: (unit as any).code_mode ?? null,
           box: boxNode ?? null,
           carton: cartonNode ?? null,
           pallet: palletNode ?? null,
@@ -497,7 +521,7 @@ export async function POST(req: Request) {
       .from('scan_logs')
       .select('id, scanned_at, metadata')
       .eq('company_id', resolvedCompanyId)
-      .eq('parsed->>serialNo', data.serialNo || '')
+      .eq('metadata->>serial', data.serialNo || '')
       .order('scanned_at', { ascending: true })
       .limit(1);
 
@@ -513,6 +537,7 @@ export async function POST(req: Request) {
     ------------------------------------------------ */
     const metadata: any = { 
       level,
+      serial: data.serialNo || null,
       expiry_status: expiryStatus,
       ...(isDuplicate ? { status: 'DUPLICATE', first_scanned_at: priorScans[0].scanned_at } : {}),
       ...(device_context ? { device_context } : {})

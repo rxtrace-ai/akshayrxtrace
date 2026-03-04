@@ -41,16 +41,17 @@ type UnitFormState = {
   expiryDate: string;
   quantity: number;
   codeType: CodeType;
-  gtinSource: 'customer' | 'internal';
-  gtin?: string; // GTIN input when source is 'customer'
+  gtin?: string; // optional; if present => GS1 mode, else PIC mode
   mfdDate?: string;
   mrp?: string;
+  complianceAck: boolean;
 };
 
 type UnitBatchRow = {
   id: string;
   fields: Gs1Fields;
   payload: string;
+  codeMode?: 'GS1' | 'PIC';
   codeType: CodeType;
 };
 
@@ -64,26 +65,6 @@ const MAX_CODES_PER_REQUEST = 10000;
 const MAX_CODES_PER_ROW = 1000;
 
 // ---------- Helpers ----------
-function generateGTIN(prefix = '890'): string {
-  // Generate GTIN-14 with valid check digit
-  const remainingDigits = 13 - prefix.length;
-  const random = Math.floor(Math.random() * Math.pow(10, remainingDigits))
-    .toString()
-    .padStart(remainingDigits, '0');
-  const base = `${prefix}${random}`.padStart(14, '0').slice(0, 13);
-  
-  // Calculate check digit using GS1 Mod-10 algorithm
-  let sum = 0;
-  let multiplier = 3;
-  for (let i = base.length - 1; i >= 0; i--) {
-    sum += parseInt(base[i], 10) * multiplier;
-    multiplier = multiplier === 3 ? 1 : 3;
-  }
-  const checkDigit = (10 - (sum % 10)) % 10;
-  
-  return `${base}${checkDigit}`;
-}
-
 function isoDateToYYMMDD(iso?: string): string | undefined {
   if (!iso) return undefined;
   const d = new Date(iso);
@@ -127,7 +108,7 @@ function downloadUnitCSVTemplate(companyName: string, companyId: string) {
     'Company ID',
     'Generation Type',
     'Code Format',
-    'GTIN Source',
+    'GTIN (Optional - leave blank for PIC)',
     'SKU Code',
     'Batch Number',
     'Expiry Date (YYYY-MM-DD)',
@@ -142,7 +123,7 @@ function downloadUnitCSVTemplate(companyName: string, companyId: string) {
     companyId,
     'UNIT',
     'QR',
-    'customer',
+    '1234567890123',
     'SKU001',
     'BATCH123',
     '2025-12-31',
@@ -224,21 +205,17 @@ async function processUnitCSV(csvText: string, companyId: string, companyName: s
     const qty = Math.max(1, parseInt((row['Quantity'] || row['quantity'] || row['QTY'] || '1').toString(), 10) || 1);
     const mrp = (row['MRP'] || row['mrp'] || '').toString().trim();
     const mfdRaw = (row['Manufacturing Date'] || row['mfd'] || row['MFD'] || '').toString().trim();
-    const gtinSource = (row['GTIN Source'] || row['gtin_source'] || 'customer').toString().toLowerCase();
+    const gtinRaw = (row['GTIN (Optional - leave blank for PIC)'] || row['GTIN'] || row['gtin'] || '').toString().trim();
     const codeType: CodeType = ((row['Code Format'] || row['code_format'] || 'QR').toString().toUpperCase() === 'DATAMATRIX') ? 'DATAMATRIX' : 'QR';
     
-    // Generate or use customer GTIN
-    let gtin: string;
-    if (gtinSource === 'customer' && row['GTIN']?.trim()) {
-      // Validate customer GTIN using shared helper
-      const validation = validateGTIN(row['GTIN'].trim());
+    // Optional GTIN: validate if provided, else PIC mode for this row.
+    let gtin: string | undefined = undefined;
+    if (gtinRaw) {
+      const validation = validateGTIN(gtinRaw);
       if (!validation.valid) {
         throw new Error(`Row ${idx + 2}: ${validation.error || 'Invalid GTIN'}`);
       }
       gtin = validation.normalized!;
-    } else {
-      // Generate internal GTIN
-      gtin = generateGTIN();
     }
     
     const mfdISO = normalizeCsvDate(mfdRaw);
@@ -256,7 +233,7 @@ async function processUnitCSV(csvText: string, companyId: string, companyName: s
         await fetch('/api/skus/ensure', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sku_code: sku }),
+          body: JSON.stringify({ sku_code: sku, gtin: gtin || undefined }),
         });
       } catch {
         // ignore
@@ -268,7 +245,8 @@ async function processUnitCSV(csvText: string, companyId: string, companyName: s
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        gtin,
+        compliance_ack: true,
+        gtin: gtin || undefined,
         batch,
         mfd: mfdISO || null,
         exp: expISO,
@@ -317,7 +295,7 @@ async function processUnitCSV(csvText: string, companyId: string, companyName: s
       out.push({
         id: `r${out.length + 1}`,
         fields: {
-          gtin,
+          gtin: gtin || 'PIC',
           mfdYYMMDD: isoDateToYYMMDD(mfdISO),
           expiryYYMMDD: isoDateToYYMMDD(expISO),
           batch: batch || undefined,
@@ -326,7 +304,8 @@ async function processUnitCSV(csvText: string, companyId: string, companyName: s
           company: companyName || undefined,
           serial: item.serial
         },
-        payload: item.gs1,
+        payload: item.payload || item.gs1,
+        codeMode: item.code_mode || undefined,
         codeType: codeType
       });
     });
@@ -344,7 +323,8 @@ function exportUnitCodesCSV(batch: UnitBatchRow[]): void {
     'Batch Number': item.fields.batch || '',
     'Expiry Date': item.fields.expiryYYMMDD || '',
     'SKU Code': item.fields.sku || '',
-    'GS1 Payload': item.payload,
+    'Code Mode': item.codeMode || '',
+    'Payload': item.payload,
     'Code Format': item.codeType,
     'Company Name': item.fields.company || ''
   }));
@@ -365,9 +345,10 @@ export default function UnitCodeGenerationPage() {
     expiryDate: '',
     quantity: 1,
     codeType: 'QR',
-    gtinSource: 'customer',
+    gtin: '',
     mfdDate: '',
-    mrp: ''
+    mrp: '',
+    complianceAck: false,
   });
 
   const [batch, setBatch] = useState<UnitBatchRow[]>([]);
@@ -468,6 +449,10 @@ export default function UnitCodeGenerationPage() {
       setError('SKU Code, Batch Number, and Expiry Date are required');
       return;
     }
+    if (!form.complianceAck) {
+      setError('You must confirm compliance to generate codes.');
+      return;
+    }
     if (form.quantity > MAX_CODES_PER_ROW) {
       setError(`Per entry limit exceeded. Maximum ${MAX_CODES_PER_ROW.toLocaleString()} codes per entry.`);
       return;
@@ -479,31 +464,24 @@ export default function UnitCodeGenerationPage() {
 
     try {
       setGeneratingSingle(true);
-      // Validate GTIN if source is customer
-      let gtin: string;
-      if (form.gtinSource === 'customer') {
-        if (!form.gtin || form.gtin.trim().length === 0) {
-          setError('GTIN is required when GTIN Source is "From Company"');
-          return;
-        }
-        // Use shared GTIN validation helper
+      // Optional GTIN: when present => GS1 mode, else PIC mode
+      let gtin: string | undefined = undefined;
+      if (form.gtin && form.gtin.trim().length > 0) {
         const { validateGTIN } = await import('@/lib/gs1/gtin');
         const validation = validateGTIN(form.gtin);
         if (!validation.valid) {
-          setError(validation.error || 'Invalid GTIN. Please verify the number or GTIN source.');
+          setError(validation.error || 'Invalid GTIN. Please verify the number.');
           return;
         }
         gtin = validation.normalized!;
-      } else {
-        // From RxTrace Terminal - generate internal GTIN
-        gtin = generateGTIN();
       }
       
       const res = await fetch('/api/issues', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          gtin,
+          compliance_ack: true,
+          gtin: gtin || undefined,
           batch: form.batch,
           mfd: form.mfdDate || null,
           exp: form.expiryDate,
@@ -551,7 +529,7 @@ export default function UnitCodeGenerationPage() {
       const newRows: UnitBatchRow[] = result.items.map((item: any, idx: number) => ({
         id: `s${batch.length + idx + 1}`,
         fields: {
-          gtin,
+          gtin: gtin || 'PIC',
           mfdYYMMDD: isoDateToYYMMDD(form.mfdDate),
           expiryYYMMDD: isoDateToYYMMDD(form.expiryDate),
           batch: form.batch,
@@ -560,21 +538,19 @@ export default function UnitCodeGenerationPage() {
           company: company || undefined,
           serial: item.serial
         },
-        payload: item.gs1,
+        payload: item.payload || item.gs1,
+        codeMode: item.code_mode || undefined,
         codeType: form.codeType
       }));
 
       setBatch(prev => [...prev, ...newRows]);
       
       // Resolve GTIN for display using type-safe helper
-      const displayGtin = resolveDisplayGtin({
-        validatedGtin: gtin,
-        generatedRows: newRows
-      });
+      const displayGtin = gtin || null;
       
       const successMessage = displayGtin
         ? `Generated ${newRows.length} unit code(s) successfully. GTIN used: ${displayGtin}`
-        : `Generated ${newRows.length} unit code(s) successfully.`;
+        : `Generated ${newRows.length} unit code(s) successfully in PIC mode (no GTIN).`;
       
       setSuccess(successMessage);
     } catch (e: any) {
@@ -592,6 +568,10 @@ export default function UnitCodeGenerationPage() {
 
     if (!canGenerate) {
       setError('Code generation is disabled. This feature is available only during an active trial in pilot mode.');
+      return;
+    }
+    if (!form.complianceAck) {
+      setError('You must confirm compliance to generate codes.');
       return;
     }
 
@@ -667,7 +647,7 @@ export default function UnitCodeGenerationPage() {
       {/* Header */}
       <div>
         <h1 className="text-3xl font-semibold text-gray-900 mb-1.5">Unit-Level Code Generation</h1>
-        <p className="text-sm text-gray-600">Generate GS1-compliant unit-level codes for saleable packs</p>
+        <p className="text-sm text-gray-600">Generate GS1 (with GTIN) or PIC (without GTIN) unit-level codes</p>
       </div>
 
       {/* Subscription Status Alert */}
@@ -801,36 +781,17 @@ export default function UnitCodeGenerationPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="QR">GS1 QR Code</SelectItem>
-                      <SelectItem value="DATAMATRIX">GS1 DataMatrix</SelectItem>
+                      <SelectItem value="QR">QR Code</SelectItem>
+                      <SelectItem value="DATAMATRIX">DataMatrix</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
-                <div>
-                  <Label htmlFor="gtinSource">GTIN Source</Label>
-                  <Select value={form.gtinSource} onValueChange={(v) => update('gtinSource', v as 'customer' | 'internal')}>
-                    <SelectTrigger id="gtinSource">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="customer">From Company</SelectItem>
-                      <SelectItem value="internal">From RxTrace Terminal</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {form.gtinSource === 'customer' 
-                      ? 'Enter your company&apos;s GS1-issued GTIN'
-                      : 'RxTrace will generate an internal GTIN (valid for India only)'}
-                  </p>
-                </div>
-
-                {/* GTIN Field - Always Visible */}
                 <div>
                   <Label htmlFor="gtin">
-                    GTIN {form.gtinSource === 'customer' ? '(8-14 digits) *' : ''}
+                    GTIN (Optional - 8-14 digits)
                   </Label>
-                  {form.gtinSource === 'customer' ? (
+                  {'customer' === 'customer' ? (
                     <>
                       <Input
                         id="gtin"
@@ -872,6 +833,21 @@ export default function UnitCodeGenerationPage() {
                   )}
                 </div>
 
+                <div className="space-y-1">
+                  <label className="flex items-start gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={form.complianceAck}
+                      onChange={(e) => update('complianceAck', e.target.checked)}
+                      className="mt-1"
+                    />
+                    <span>I confirm I understand and accept the compliance responsibility for generated codes.</span>
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    Codes are format-validated only. Ensure GTIN ownership and regulatory compliance before printing/using.
+                  </p>
+                </div>
+
                 <div>
                   <Label htmlFor="mfd">Manufacturing Date (Optional)</Label>
                   <Input
@@ -898,7 +874,7 @@ export default function UnitCodeGenerationPage() {
               <Button 
                 onClick={handleGenerateSingle} 
                 className="w-full bg-blue-600 hover:bg-blue-700"
-                disabled={!canGenerate || generatingSingle || !!singleLimitError}
+                disabled={!canGenerate || generatingSingle || !!singleLimitError || !form.complianceAck}
               >
                 {generatingSingle ? 'Generating...' : 'Generate Unit Codes'}
               </Button>
@@ -942,7 +918,7 @@ export default function UnitCodeGenerationPage() {
                 <div className="text-xs text-gray-700 space-y-1">
                   <p><strong>Required:</strong> SKU Code, Batch Number, Expiry Date, Quantity</p>
                   <p><strong>Optional:</strong> Product Name, MRP, Manufacturing Date, GTIN (if customer-provided)</p>
-                  <p><strong>Auto-filled:</strong> Company Name, Company ID, Generation Type, Code Format, GTIN Source</p>
+                  <p><strong>Auto-filled:</strong> Company Name, Company ID, Generation Type, Code Format</p>
                   <p><strong>Date format:</strong> YYYY-MM-DD (DDMMYYYY/YYMMDD will be normalized).</p>
                   <p className="text-blue-700"><strong>Limits:</strong> Max {MAX_CODES_PER_ROW.toLocaleString()} per CSV row and {MAX_CODES_PER_REQUEST.toLocaleString()} total per upload.</p>
                 </div>

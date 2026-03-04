@@ -115,6 +115,7 @@ export async function POST(req: Request) {
       generate_box = false,
       generate_carton = false,
       generate_pallet = false,
+      compliance_ack,
     } = body ?? {};
     const authCompanyId = await resolveCompanyIdFromRequest(req);
     if (!authCompanyId) {
@@ -124,6 +125,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const company_id = authCompanyId;
+
+    if (compliance_ack !== true) {
+      return NextResponse.json(
+        { error: 'compliance_ack=true is required', code: 'compliance_required' },
+        { status: 400 }
+      );
+    }
+
+    // Option A eligibility (Phase 3+): SSCC allowed only if company has at least one SKU with a GTIN.
+    const { data: anySku } = await supabase
+      .from('skus')
+      .select('id')
+      .eq('company_id', company_id)
+      .not('gtin', 'is', null)
+      .limit(1);
+
+    const hasGs1LikeGtin = Array.isArray(anySku) && anySku.length > 0;
+
+    if (!hasGs1LikeGtin) {
+      return NextResponse.json(
+        { error: 'SSCC generation is enabled only for GS1-mode companies (GTIN required).', code: 'gs1_required' },
+        { status: 403 }
+      );
+    }
 
     // Validate required fields
     const normalizedExpiry = normalizeDateInput(expiry_date);

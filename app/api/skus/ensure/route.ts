@@ -50,9 +50,24 @@ export async function POST(req: Request) {
   const body = await req.json();
   const sku_code = normalizeSkuCode(body.sku_code);
   const sku_name = normalizeText(body.sku_name);
+  const gtinRaw = String(body.gtin ?? "").trim();
 
   if (!sku_code) {
     return NextResponse.json({ error: "sku_code is required" }, { status: 400 });
+  }
+
+  let gtin: string | null = null;
+  if (gtinRaw) {
+    try {
+      const { validateGTIN } = await import("@/lib/gs1/gtin");
+      const validation = validateGTIN(gtinRaw);
+      if (!validation.valid) {
+        return NextResponse.json({ error: validation.error || "Invalid GTIN" }, { status: 400 });
+      }
+      gtin = validation.normalized || null;
+    } catch {
+      return NextResponse.json({ error: "Invalid GTIN" }, { status: 400 });
+    }
   }
 
   const { data: sku, error } = await supabaseAdmin
@@ -62,6 +77,7 @@ export async function POST(req: Request) {
         company_id: auth.companyId,
         sku_code,
         sku_name,
+        gtin,
         deleted_at: null,
       },
       { onConflict: "company_id,sku_code" }

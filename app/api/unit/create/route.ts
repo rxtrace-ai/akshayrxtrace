@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { generateCanonicalGS1 } from "@/lib/gs1Canonical";
+import { resolveCodeMode } from "@/lib/codeMode";
+import { buildPicUnitPayload } from "@/lib/picPayload";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
 import { enforceEntitlement, refundEntitlement } from "@/lib/entitlement/enforce";
 import { UsageType } from "@/lib/entitlement/usageTypes";
@@ -36,7 +38,8 @@ export async function POST(req: Request) {
       mfd,
       expiry,
       mrp,
-      quantity
+      quantity,
+      compliance_ack
     } = body;
     const company_id = authCompanyId;
 
@@ -44,15 +47,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    if (
-      !sku_code ||
-      !gtin ||
-      !batch ||
-      !mfd ||
-      !expiry ||
-      mrp === undefined ||
-      !quantity
-    ) {
+    if (!compliance_ack) {
+      return NextResponse.json({ error: "compliance_ack=true is required" }, { status: 400 });
+    }
+
+    if (!sku_code || !batch || !mfd || !expiry || mrp === undefined || !quantity) {
       return NextResponse.json(
         { error: "Invalid / missing fields" },
         { status: 400 }
@@ -87,7 +86,8 @@ export async function POST(req: Request) {
         {
           company_id,
           sku_code,
-          sku_name
+          sku_name,
+          gtin: codeMode === "GS1" && gtinForStorage ? gtinForStorage : null,
         },
         { onConflict: "company_id,sku_code" }
       )
@@ -95,6 +95,9 @@ export async function POST(req: Request) {
       .single();
 
     if (skuErr || !sku) throw skuErr;
+
+    const codeMode = resolveCodeMode({ gtin });
+    const gtinForStorage = typeof gtin === "string" ? gtin.trim() : "";
 
     // ---------- UNIT GENERATION ----------
     // Generate units with uniqueness validation
@@ -115,8 +118,6 @@ export async function POST(req: Request) {
           .from("labels_units")
           .select("id")
           .eq("company_id", company_id)
-          .eq("gtin", gtin)
-          .eq("batch", batch)
           .eq("serial", serial)
           .maybeSingle();
         
@@ -141,27 +142,50 @@ export async function POST(req: Request) {
         );
       }
 
-      // Generate canonical GS1 payload (machine format, no parentheses)
-      const gs1Payload = generateCanonicalGS1({
-        gtin,
-        expiry,
-        mfgDate: mfd,
-        batch,
-        serial: serial!,
-        mrp: Number(mrp),
-        sku: sku_code
-      });
+      const payload =
+        codeMode === "GS1"
+          ? generateCanonicalGS1({
+              gtin: gtinForStorage,
+              expiry,
+              mfgDate: mfd,
+              batch,
+              serial: serial!,
+              mrp: Number(mrp),
+              sku: sku_code,
+            })
+          : buildPicUnitPayload({
+              sku: String(sku_code).trim().toUpperCase(),
+              batch: String(batch),
+              expiryYYMMDD: (() => {
+                const dt = new Date(String(expiry));
+                const yy = String(dt.getFullYear()).slice(-2);
+                const mm = String(dt.getMonth() + 1).padStart(2, "0");
+                const dd = String(dt.getDate()).padStart(2, "0");
+                return `${yy}${mm}${dd}`;
+              })(),
+              mfgYYMMDD: (() => {
+                const dt = new Date(String(mfd));
+                const yy = String(dt.getFullYear()).slice(-2);
+                const mm = String(dt.getMonth() + 1).padStart(2, "0");
+                const dd = String(dt.getDate()).padStart(2, "0");
+                return `${yy}${mm}${dd}`;
+              })(),
+              serial: serial!,
+              mrp: String(mrp),
+            });
 
       rows.push({
         company_id,
         sku_id: sku.id,
-        gtin,
+        gtin: codeMode === "GS1" ? gtinForStorage : null,
         batch,
         mfd,
         expiry,
         mrp,
         serial: serial!,
-        gs1_payload: gs1Payload
+        gs1_payload: payload,
+        code_mode: codeMode,
+        payload,
       });
     }
 

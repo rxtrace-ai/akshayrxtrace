@@ -224,7 +224,7 @@ export async function GET(req: Request) {
     if (serial) {
       const { data: unit } = await supabase
         .from("labels_units")
-        .select("id, company_id, sku_id, box_id, serial, gs1_payload, created_at")
+        .select("id, company_id, sku_id, box_id, serial, gs1_payload, payload, code_mode, created_at")
         .eq("company_id", companyId)
         .eq("serial", serial)
         .maybeSingle();
@@ -265,6 +265,8 @@ export async function GET(req: Request) {
           id: unit.id,
           created_at: unit.created_at,
           gs1_payload: unit.gs1_payload,
+          payload: (unit as any).payload ?? unit.gs1_payload,
+          code_mode: (unit as any).code_mode ?? null,
           box: (boxNode as any)?.data ?? null,
           carton: (cartonNode as any)?.data ?? null,
           pallet: (palletNode as any)?.data ?? null,

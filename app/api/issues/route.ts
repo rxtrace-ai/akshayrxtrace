@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { generateCanonicalGS1 } from '@/lib/gs1Canonical';
+import { resolveCodeMode } from '@/lib/codeMode';
+import { buildPicUnitPayload } from '@/lib/picPayload';
 import { enforceEntitlement, refundEntitlement } from '@/lib/entitlement/enforce';
 import { UsageType } from '@/lib/entitlement/usageTypes';
 import crypto from 'crypto';
@@ -28,6 +30,15 @@ function normalizeDateInput(raw?: string | null): string | null {
     return `${yyyy}-${mm}-${dd}`;
   }
   return null;
+}
+
+function isoToYYMMDD(iso: string): string {
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) throw new Error(`Invalid date: ${iso}`);
+  const yy = String(dt.getFullYear()).slice(-2);
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}${mm}${dd}`;
 }
 
 // Generate unique serial number
@@ -73,7 +84,15 @@ export async function POST(req: Request) {
     // Parse request body
     const body = await req.json().catch(() => ({}));
     
-    const gtin = typeof body.gtin === 'string' ? body.gtin.trim() : '';
+    const complianceAck = body.compliance_ack === true;
+    if (!complianceAck) {
+      return NextResponse.json(
+        { error: 'compliance_ack=true is required', code: 'compliance_required' },
+        { status: 400 }
+      );
+    }
+
+    const gtinRaw = typeof body.gtin === 'string' ? body.gtin.trim() : '';
     const batch = typeof body.batch === 'string' ? body.batch.trim() : '';
     const mfdInput = typeof body.mfd === 'string' ? body.mfd.trim() || null : null;
     const expInput = typeof body.exp === 'string' ? body.exp.trim() : '';
@@ -82,10 +101,12 @@ export async function POST(req: Request) {
     const skuCode = typeof body.sku === 'string' ? body.sku.trim().toUpperCase() : '';
     const company = typeof body.company === 'string' ? body.company.trim() : companyName;
 
+    const codeMode = resolveCodeMode({ gtin: gtinRaw });
+
     // Validate required fields
-    if (!gtin || !batch || !expInput || !quantity || quantity <= 0) {
+    if (!batch || !expInput || !quantity || quantity <= 0) {
       return NextResponse.json(
-        { error: 'GTIN, batch, expiry date, and quantity are required', code: 'invalid_input' },
+        { error: 'batch, expiry date, and quantity are required', code: 'invalid_input' },
         { status: 400 }
       );
     }
@@ -172,6 +193,23 @@ export async function POST(req: Request) {
 
     const admin = getSupabaseAdmin();
 
+    // Phase 4: persist GTIN on SKU master (best-effort; do not block generation)
+    if (codeMode === 'GS1' && gtinRaw && finalSkuCode) {
+      try {
+        const { validateGTIN } = await import('@/lib/gs1/gtin');
+        const validation = validateGTIN(gtinRaw);
+        if (validation.valid && validation.normalized && skuId) {
+          await admin
+            .from('skus')
+            .update({ gtin: validation.normalized })
+            .eq('company_id', companyId)
+            .eq('id', skuId);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     const decision = await enforceEntitlement({
       companyId,
       usageType: UsageType.UNIT_LABEL,
@@ -188,22 +226,36 @@ export async function POST(req: Request) {
       );
     }
 
-    // Generate unit serials and GS1 payloads (before quota check)
-    const items: Array<{ serial: string; gs1: string }> = [];
+    // Generate unit serials and payloads (before quota check)
+    const items: Array<{ serial: string; payload: string; code_mode: 'GS1' | 'PIC'; gs1: string }> = [];
     const unitRows: Array<{
       company_id: string;
       sku_id: string | null;
-      gtin: string;
+      gtin: string | null;
       batch: string;
       mfd: string;
       expiry: string;
       mrp: string | null;
       serial: string;
       gs1_payload: string;
+      code_mode: 'GS1' | 'PIC';
+      payload: string;
     }> = [];
 
     const maxAttempts = 10;
     const mfdDate = mfd || new Date().toISOString().split('T')[0]; // Use today if not provided
+
+    let gtinForStorage = gtinRaw;
+    if (codeMode === 'PIC') {
+      if (!finalSkuCode) {
+        return NextResponse.json(
+          { error: 'sku is required when GTIN is not provided (PIC mode)', code: 'invalid_input' },
+          { status: 400 }
+        );
+      }
+      // Phase 2+ schema: gtin is nullable; no sentinel values.
+      gtinForStorage = '';
+    }
 
     // Generate all serials and payloads first
     for (let i = 0; i < quantity; i++) {
@@ -218,8 +270,6 @@ export async function POST(req: Request) {
           .from('labels_units')
           .select('id')
           .eq('company_id', companyId)
-          .eq('gtin', gtin)
-          .eq('batch', batch)
           .eq('serial', serial)
           .maybeSingle();
 
@@ -238,29 +288,41 @@ export async function POST(req: Request) {
         );
       }
 
-      // Generate GS1 payload
-      const gs1Payload = generateCanonicalGS1({
-        gtin,
-        expiry: exp,
-        mfgDate: mfdDate,
-        batch,
-        serial,
-        mrp: mrp ? Number(mrp) : undefined,
-        sku: finalSkuCode || undefined,
-      });
+      const payload =
+        codeMode === 'GS1'
+          ? generateCanonicalGS1({
+              gtin: gtinRaw,
+              expiry: exp,
+              mfgDate: mfdDate,
+              batch,
+              serial,
+              mrp: mrp ? Number(mrp) : undefined,
+              sku: finalSkuCode || undefined,
+            })
+          : buildPicUnitPayload({
+              sku: finalSkuCode,
+              batch,
+              expiryYYMMDD: isoToYYMMDD(exp),
+              mfgYYMMDD: mfd ? isoToYYMMDD(mfdDate) : undefined,
+              serial,
+              mrp: mrp || undefined,
+            });
 
-      items.push({ serial, gs1: gs1Payload });
+      // Back-compat: keep `gs1` field name for frontend, but it now means "payload".
+      items.push({ serial, payload, code_mode: codeMode, gs1: payload });
 
       unitRows.push({
         company_id: companyId,
         sku_id: skuId,
-        gtin,
+        gtin: codeMode === 'GS1' ? gtinRaw : null,
         batch,
         mfd: mfdDate,
         expiry: exp,
         mrp: mrp || null,
         serial,
-        gs1_payload: gs1Payload,
+        gs1_payload: payload,
+        code_mode: codeMode,
+        payload,
       });
     }
 

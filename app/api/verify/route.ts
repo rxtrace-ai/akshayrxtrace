@@ -1,7 +1,7 @@
 // app/api/verify/route.ts - STATELESS VERIFICATION (No database lookup)
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { parseGS1, type GS1Data } from '@/lib/parseGS1';
+import { parsePayload } from '@/lib/parsePayload';
 
 // Supabase service role client (server-side only) - only for logging scans
 function getSupabase() {
@@ -66,27 +66,14 @@ export async function POST(req: Request) {
     const rawInput = (body.gs1_raw || body.raw || body.code || body.qr || '').toString();
     if (!rawInput) return NextResponse.json({ status: 'INVALID', message: 'No payload provided' }, { status: 400 });
 
-    // Parse GS1 data
-    let parsed: GS1Data | null = null;
-    let parseError: string | null = null;
-    
-    try {
-      parsed = parseGS1(rawInput);
-    } catch (e: any) {
-      parseError = e?.message || 'Parse error';
-      parsed = null;
-    }
+    const parsedAny = parsePayload(rawInput);
 
-    const serial = parsed?.serialNo;
-    const gtin = parsed?.gtin;
-    const batch = parsed?.batchNo;
-    const expiry = parsed?.expiryDate;
+    const parsedForLog =
+      parsedAny.mode === 'INVALID'
+        ? { parseError: parsedAny.error, raw: parsedAny.raw }
+        : (parsedAny.parsed as any);
 
-    // For logging: keep parsed object even if null
-    const parsedForLog = parsed || { parseError };
-
-    // Validation 1: Must have serial number
-    if (!serial || !gtin) {
+    if (parsedAny.mode === 'INVALID') {
       await supabase.from('scan_logs').insert([{
         raw_scan: rawInput,
         parsed: parsedForLog,
@@ -98,13 +85,22 @@ export async function POST(req: Request) {
       }]);
       return NextResponse.json({ 
         status: 'INVALID', 
-        message: 'Invalid QR code: Missing serial or GTIN', 
-        parsed 
+        message: parsedAny.error || 'Invalid payload',
+        mode: 'INVALID',
+        parsed: parsedAny,
       }, { status: 200 });
     }
 
-    // Validation 2: GTIN format check
-    if (!isValidGTIN(gtin)) {
+    const mode = parsedAny.mode;
+
+    const serial =
+      mode === 'GS1' ? parsedAny.parsed.serialNo : parsedAny.parsed.serial;
+    const gtin = mode === 'GS1' ? parsedAny.parsed.gtin : undefined;
+    const batch = mode === 'GS1' ? parsedAny.parsed.batchNo : parsedAny.parsed.batch;
+    const expiry = mode === 'GS1' ? parsedAny.parsed.expiryDate : parsedAny.parsed.expiryYYMMDD;
+
+    // Validation 1: Must have serial number (and GTIN for GS1 mode)
+    if (!serial || (mode === 'GS1' && !gtin)) {
       await supabase.from('scan_logs').insert([{
         raw_scan: rawInput,
         parsed: parsedForLog,
@@ -112,12 +108,32 @@ export async function POST(req: Request) {
         scanner_printer_id: req.headers.get('x-printer-id') || null,
         scanned_at: new Date().toISOString(),
         ip: req.headers.get('x-forwarded-for') || null,
-        metadata: { status: 'INVALID', reason: 'invalid_gtin_format' }
+        metadata: { status: 'INVALID', reason: 'missing_required_fields', mode }
+      }]);
+      return NextResponse.json({
+        status: 'INVALID',
+        message: mode === 'GS1' ? 'Missing serial or GTIN' : 'Missing serial',
+        mode,
+        parsed: parsedAny,
+      }, { status: 200 });
+    }
+
+    // Validation 2: GTIN format check (GS1 only)
+    if (mode === 'GS1' && gtin && !isValidGTIN(gtin)) {
+      await supabase.from('scan_logs').insert([{
+        raw_scan: rawInput,
+        parsed: parsedForLog,
+        code_id: null,
+        scanner_printer_id: req.headers.get('x-printer-id') || null,
+        scanned_at: new Date().toISOString(),
+        ip: req.headers.get('x-forwarded-for') || null,
+        metadata: { status: 'INVALID', reason: 'invalid_gtin_format', mode }
       }]);
       return NextResponse.json({ 
         status: 'INVALID', 
-        message: 'Invalid GTIN format', 
-        parsed 
+        message: 'Invalid GTIN format',
+        mode,
+        parsed: parsedAny,
       }, { status: 200 });
     }
 
@@ -130,12 +146,13 @@ export async function POST(req: Request) {
         scanner_printer_id: req.headers.get('x-printer-id') || null,
         scanned_at: new Date().toISOString(),
         ip: req.headers.get('x-forwarded-for') || null,
-        metadata: { status: 'EXPIRED', reason: 'past_expiry_date', expiry }
+        metadata: { status: 'EXPIRED', reason: 'past_expiry_date', expiry, mode }
       }]);
       return NextResponse.json({ 
         status: 'EXPIRED', 
         message: 'Product has expired', 
-        parsed,
+        mode,
+        parsed: parsedAny,
         expiryDate: expiry
       }, { status: 200 });
     }
@@ -160,13 +177,15 @@ export async function POST(req: Request) {
         metadata: { 
           status: 'DUPLICATE', 
           first_scanned_at: priorScans[0].scanned_at,
-          serial 
+          serial,
+          mode
         }
       }]);
       return NextResponse.json({ 
         status: 'DUPLICATE', 
         message: 'Code already scanned', 
-        parsed,
+        mode,
+        parsed: parsedAny,
         firstScanAt: priorScans[0].scanned_at
       }, { status: 200 });
     }
@@ -185,7 +204,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ 
       status: 'VALID', 
       message: 'Authentic product', 
-      parsed,
+      mode,
+      parsed: parsedAny,
       product: {
         gtin,
         serial,
