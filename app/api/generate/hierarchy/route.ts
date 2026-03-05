@@ -4,6 +4,7 @@ import { verifyCompanyAccess } from "@/lib/auth/company";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
 import { enforceEntitlement, refundEntitlement } from "@/lib/entitlement/enforce";
 import { UsageType } from "@/lib/entitlement/usageTypes";
+import { getRequestIdFromRequest } from "@/lib/http/requestId";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +35,10 @@ export async function POST(req: Request) {
       compliance_ack,
     } = body;
     const company_id = authCompanyId;
+    const requestId =
+      typeof request_id === "string" && request_id.trim()
+        ? `generate_hierarchy:body:${request_id.trim()}`
+        : getRequestIdFromRequest(req, "generate_hierarchy");
 
     if (requestedCompanyId && requestedCompanyId !== authCompanyId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -114,6 +119,7 @@ export async function POST(req: Request) {
       companyId: company_id,
       usageType: UsageType.UNIT_LABEL,
       quantity: totalUnits,
+      requestId: `${requestId}:unit`,
       metadata: { source: "generate_hierarchy_unit" },
     });
     if (!unitDecision.allow) {
@@ -130,6 +136,7 @@ export async function POST(req: Request) {
       companyId: company_id,
       usageType: UsageType.SSCC_LABEL,
       quantity: totalSSCC,
+      requestId: `${requestId}:sscc`,
       metadata: { source: "generate_hierarchy_sscc" },
     });
     if (!ssccDecision.allow) {

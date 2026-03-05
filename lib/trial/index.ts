@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MetricType } from '@/lib/usage/tracking';
 
 export const TRIAL_CONFIG = {
-  duration_days: 15,
+  duration_days: 10,
   unit_limit: 5000,
   box_limit: 500,
   carton_limit: 100,
@@ -60,9 +60,14 @@ const trialUsageMetrics: Array<keyof TrialUsageTotals> = ['unit', 'box', 'carton
 export function getTrialStatus(company: {
   trial_started_at?: string | null;
   trial_expires_at?: string | null;
+  trial_start_at?: string | null;
+  trial_end_at?: string | null;
 }): TrialStatus {
-  const started = company.trial_started_at ? new Date(company.trial_started_at) : null;
-  const expires = company.trial_expires_at ? new Date(company.trial_expires_at) : null;
+  const startedRaw = company.trial_start_at ?? company.trial_started_at ?? null;
+  const expiresRaw = company.trial_end_at ?? company.trial_expires_at ?? null;
+
+  const started = startedRaw ? new Date(startedRaw) : null;
+  const expires = expiresRaw ? new Date(expiresRaw) : null;
   const now = new Date();
 
   const active =
@@ -146,7 +151,7 @@ export async function startTrialForCompany(
 
   const { data: existing, error: fetchErr } = await supabase
     .from('companies')
-    .select('trial_started_at')
+    .select('trial_started_at, trial_start_at')
     .eq('id', companyId)
     .maybeSingle();
 
@@ -154,12 +159,12 @@ export async function startTrialForCompany(
     throw fetchErr;
   }
 
-  if (!opts?.force && existing?.trial_started_at) {
+  if (!opts?.force && (existing?.trial_start_at || existing?.trial_started_at)) {
     return {
       ok: false,
       error: 'TRIAL_ALREADY_STARTED',
       trial: {
-        started_at: existing.trial_started_at,
+        started_at: existing.trial_start_at ?? existing.trial_started_at,
         expires_at: null,
       },
     };
@@ -170,6 +175,8 @@ export async function startTrialForCompany(
     .update({
       trial_started_at: now.toISOString(),
       trial_expires_at: expires.toISOString(),
+      trial_start_at: now.toISOString(),
+      trial_end_at: expires.toISOString(),
       updated_at: now.toISOString(),
     })
     .eq('id', companyId);

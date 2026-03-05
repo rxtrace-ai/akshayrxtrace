@@ -38,6 +38,22 @@ function deriveEventId(parsedBody: any, rawBody: string): string {
   return `body_sha256:${digest}`;
 }
 
+function extractOrderId(parsedBody: any): string | null {
+  const orderId =
+    parsedBody?.payload?.order?.entity?.id ??
+    parsedBody?.payload?.payment?.entity?.order_id ??
+    null;
+  const out = typeof orderId === "string" ? orderId.trim() : "";
+  return out ? out : null;
+}
+
+function parseTrialPurpose(purpose: string): string | null {
+  const match = String(purpose || "").match(/^trial_activation_company_(.+)$/);
+  if (!match) return null;
+  const companyId = String(match[1] || "").trim();
+  return companyId || null;
+}
+
 export async function POST(req: Request) {
   const headersList = await headers();
   const correlationId = getOrGenerateCorrelationId(headersList, "webhook");
@@ -87,6 +103,55 @@ export async function POST(req: Request) {
       ? parsedBody.event.trim()
       : "unknown";
   try {
+    // Trial activation side effect (₹1 order) - idempotent and webhook-driven.
+    // We do it here (app layer) to avoid coupling to DB RPC versions.
+    if (eventType === "order.paid" || eventType === "payment.captured") {
+      const orderId = extractOrderId(parsedBody);
+      if (orderId) {
+        const { data: orderRow } = await supabase
+          .from("razorpay_orders")
+          .select("order_id, purpose, payment_id, status")
+          .eq("order_id", orderId)
+          .maybeSingle();
+
+        const companyId = orderRow?.purpose ? parseTrialPurpose(String((orderRow as any).purpose)) : null;
+        if (companyId) {
+          // One trial per company: activate only if no legacy trial window exists and no activation marker exists.
+          const { data: companyRow } = await supabase
+            .from("companies")
+            .select("trial_started_at, trial_expires_at, trial_activated_at")
+            .eq("id", companyId)
+            .maybeSingle();
+
+          const alreadyActivated =
+            Boolean((companyRow as any)?.trial_started_at) ||
+            Boolean((companyRow as any)?.trial_expires_at) ||
+            Boolean((companyRow as any)?.trial_activated_at);
+
+          if (!alreadyActivated) {
+            const now = new Date();
+            const end = new Date(now);
+            end.setUTCDate(end.getUTCDate() + 10);
+
+            await supabase
+              .from("companies")
+              .update({
+                // legacy fields used by current app logic
+                trial_started_at: now.toISOString(),
+                trial_expires_at: end.toISOString(),
+                // new Phase 1 fields (future engine)
+                trial_start_at: now.toISOString(),
+                trial_end_at: end.toISOString(),
+                trial_activated_at: now.toISOString(),
+                trial_activated_payment_id: String(parsedBody?.payload?.payment?.entity?.id || "").trim() || null,
+                updated_at: now.toISOString(),
+              })
+              .eq("id", companyId);
+          }
+        }
+      }
+    }
+
     const { data, error } = await supabase.rpc("process_razorpay_webhook_event", {
       p_event_id: eventId,
       p_event_type: eventType,

@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
 import { enforceEntitlement, refundEntitlement } from "@/lib/entitlement/enforce";
 import { UsageType } from "@/lib/entitlement/usageTypes";
+import { getRequestIdFromRequest } from "@/lib/http/requestId";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -98,6 +99,10 @@ export async function POST(req: Request) {
       pallet_sscc,
       assign_boxes = true,
     } = body ?? {};
+    const requestId =
+      typeof (body as any)?.request_id === "string" && String((body as any).request_id).trim()
+        ? `carton_create:body:${String((body as any).request_id).trim()}`
+        : getRequestIdFromRequest(req, "carton_create");
 
     if (requestedCompanyId && requestedCompanyId !== authCompanyId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -256,6 +261,7 @@ export async function POST(req: Request) {
       companyId: company_id,
       usageType: UsageType.CARTON_LABEL,
       quantity: count,
+      requestId,
       metadata: { source: "carton_create" },
     });
     if (!decision.allow) {

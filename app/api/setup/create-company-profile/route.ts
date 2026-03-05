@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
-import { startTrialForCompany } from '@/lib/trial';
 
 export async function POST(req: NextRequest) {
   try {
@@ -112,22 +111,6 @@ export async function POST(req: NextRequest) {
       console.error('Database insert error:', insertError);
       return NextResponse.json(
         { error: 'Failed to create company profile. Please try again.' },
-        { status: 500 }
-      );
-    }
-
-    try {
-      const trialResult = await startTrialForCompany(supabase, company.id);
-      if (!trialResult.ok) {
-        throw new Error(trialResult.error || 'TRIAL_INIT_FAILED');
-      }
-    } catch (trialError: any) {
-      await supabase.from('companies').delete().eq('id', company.id);
-      return NextResponse.json(
-        {
-          error: 'TRIAL_INIT_FAILED',
-          details: trialError?.message || 'Unable to initialize trial window',
-        },
         { status: 500 }
       );
     }

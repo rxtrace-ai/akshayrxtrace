@@ -6,7 +6,8 @@ import { resolveCodeMode } from '@/lib/codeMode';
 import { buildPicUnitPayload } from '@/lib/picPayload';
 import { enforceEntitlement, refundEntitlement } from '@/lib/entitlement/enforce';
 import { UsageType } from '@/lib/entitlement/usageTypes';
-import crypto from 'crypto';
+import { getRequestIdFromRequest } from '@/lib/http/requestId';
+import { generateUnitSerial } from '@/lib/serial/unitSerial';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,11 +42,7 @@ function isoToYYMMDD(iso: string): string {
   return `${yy}${mm}${dd}`;
 }
 
-// Generate unique serial number
-const generateSerial = (companyId: string) =>
-  `U${companyId.slice(0, 4)}${Date.now().toString(36)}${crypto
-    .randomBytes(3)
-    .toString('hex')}`;
+// Serial generation is local; DB uniqueness is the source of truth.
 
 // Resolve company_id from authenticated user
 async function resolveAuthCompany() {
@@ -83,6 +80,10 @@ export async function POST(req: Request) {
 
     // Parse request body
     const body = await req.json().catch(() => ({}));
+    const requestId =
+      typeof (body as any)?.request_id === 'string' && String((body as any).request_id).trim()
+        ? `issues_generate:body:${String((body as any).request_id).trim()}`
+        : getRequestIdFromRequest(req, 'issues_generate');
     
     const complianceAck = body.compliance_ack === true;
     if (!complianceAck) {
@@ -214,6 +215,7 @@ export async function POST(req: Request) {
       companyId,
       usageType: UsageType.UNIT_LABEL,
       quantity,
+      requestId,
       metadata: { source: "issues_generate" },
     });
     if (!decision.allow) {
@@ -242,7 +244,6 @@ export async function POST(req: Request) {
       payload: string;
     }> = [];
 
-    const maxAttempts = 10;
     const mfdDate = mfd || new Date().toISOString().split('T')[0]; // Use today if not provided
 
     let gtinForStorage = gtinRaw;
@@ -257,36 +258,9 @@ export async function POST(req: Request) {
       gtinForStorage = '';
     }
 
-    // Generate all serials and payloads first
+    // Generate all serials and payloads first (no per-serial DB reads).
     for (let i = 0; i < quantity; i++) {
-      let serial: string = '';
-      let attempts = 0;
-      let isUnique = false;
-
-      // Generate unique serial (check against existing labels)
-      while (!isUnique && attempts < maxAttempts) {
-        serial = generateSerial(companyId);
-        const { data: existing } = await admin
-          .from('labels_units')
-          .select('id')
-          .eq('company_id', companyId)
-          .eq('serial', serial)
-          .maybeSingle();
-
-        if (!existing) {
-          isUnique = true;
-        } else {
-          attempts++;
-          await new Promise(resolve => setTimeout(resolve, 1));
-        }
-      }
-
-      if (!isUnique) {
-        return NextResponse.json(
-          { error: `Failed to generate unique serial after ${maxAttempts} attempts` },
-          { status: 500 }
-        );
-      }
+      const serial = generateUnitSerial(companyId);
 
       const payload =
         codeMode === 'GS1'
@@ -326,28 +300,27 @@ export async function POST(req: Request) {
       });
     }
 
-    const { error: insertError } = await admin.from("labels_units").insert(unitRows);
-    if (insertError) {
-      await refundEntitlement({
-        companyId,
-        usageType: UsageType.UNIT_LABEL,
-        quantity,
-      });
+    // Insert with a small retry loop for rare serial collisions.
+    const maxInsertRetries = 3;
+    for (let attempt = 0; attempt < maxInsertRetries; attempt++) {
+      const { error: insertError } = await admin.from("labels_units").insert(unitRows);
+      if (!insertError) break;
 
-      if (insertError.code === '23505' || insertError.message?.includes('unique') || insertError.message?.includes('duplicate')) {
+      const isUniqueViolation =
+        insertError.code === '23505' ||
+        String(insertError.message || '').toLowerCase().includes('unique') ||
+        String(insertError.message || '').toLowerCase().includes('duplicate');
+
+      if (!isUniqueViolation || attempt === maxInsertRetries - 1) {
+        await refundEntitlement({ companyId, usageType: UsageType.UNIT_LABEL, quantity });
+        if (isUniqueViolation) {
+          return NextResponse.json({ error: 'Duplicate serial detected. Please try again.' }, { status: 409 });
+        }
         return NextResponse.json(
-          { error: 'Duplicate serial detected. Please try again.' },
-          { status: 409 }
+          { error: 'Unable to generate unit labels right now. Please retry.', code: 'generation_failed' },
+          { status: 500 }
         );
       }
-
-      return NextResponse.json(
-        {
-          error: 'Unable to generate unit labels right now. Please retry.',
-          code: 'generation_failed',
-        },
-        { status: 500 }
-      );
     }
 
     // Success: quota was consumed and labels were inserted atomically

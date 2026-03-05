@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { generateCanonicalGS1 } from "@/lib/gs1Canonical";
 import { resolveCodeMode } from "@/lib/codeMode";
@@ -7,12 +6,11 @@ import { buildPicUnitPayload } from "@/lib/picPayload";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
 import { enforceEntitlement, refundEntitlement } from "@/lib/entitlement/enforce";
 import { UsageType } from "@/lib/entitlement/usageTypes";
+import { getRequestIdFromRequest } from "@/lib/http/requestId";
+import { generateUnitSerial } from "@/lib/serial/unitSerial";
 
 // ---------- utils ----------
-const generateSerial = (companyId: string) =>
-  `U${companyId.slice(0, 4)}${Date.now().toString(36)}${crypto
-    .randomBytes(3)
-    .toString("hex")}`;
+const MAX_UNITS_PER_REQUEST = 10000;
 
 // ---------- API ----------
 export async function POST(req: Request) {
@@ -42,6 +40,9 @@ export async function POST(req: Request) {
       compliance_ack
     } = body;
     const company_id = authCompanyId;
+    const requestId = typeof body?.request_id === "string" && body.request_id.trim()
+      ? `unit_create:body:${body.request_id.trim()}`
+      : getRequestIdFromRequest(req, "unit_create");
 
     if (requestedCompanyId && requestedCompanyId !== authCompanyId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -62,11 +63,18 @@ export async function POST(req: Request) {
     if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
       return NextResponse.json({ error: "quantity must be a positive integer" }, { status: 400 });
     }
+    if (qty > MAX_UNITS_PER_REQUEST) {
+      return NextResponse.json(
+        { error: `quantity exceeds limit (${MAX_UNITS_PER_REQUEST})`, code: "limit_exceeded", max: MAX_UNITS_PER_REQUEST },
+        { status: 400 }
+      );
+    }
 
     const decision = await enforceEntitlement({
       companyId: company_id,
       usageType: UsageType.UNIT_LABEL,
       quantity: qty,
+      requestId,
       metadata: { source: "unit_create" },
     });
     if (!decision.allow) {
@@ -78,6 +86,9 @@ export async function POST(req: Request) {
         { status: 403 }
       );
     }
+
+    const codeMode = resolveCodeMode({ gtin });
+    const gtinForStorage = typeof gtin === "string" ? gtin.trim() : "";
 
     // ---------- SKU UPSERT ----------
     const { data: sku, error: skuErr } = await supabase
@@ -96,120 +107,77 @@ export async function POST(req: Request) {
 
     if (skuErr || !sku) throw skuErr;
 
-    const codeMode = resolveCodeMode({ gtin });
-    const gtinForStorage = typeof gtin === "string" ? gtin.trim() : "";
-
     // ---------- UNIT GENERATION ----------
-    // Generate units with uniqueness validation
-    const rows: any[] = [];
-    const maxAttempts = 10; // Maximum retries per unit to avoid infinite loops
-    
-    for (let i = 0; i < qty; i++) {
-      let serial: string;
-      let attempts = 0;
-      let isUnique = false;
-      
-      // Generate unique serial with retry logic
-      while (!isUnique && attempts < maxAttempts) {
-        serial = generateSerial(company_id);
-        
-        // Check if serial already exists for this company/GTIN/batch combination
-        const { data: existing } = await supabase
-          .from("labels_units")
-          .select("id")
-          .eq("company_id", company_id)
-          .eq("serial", serial)
-          .maybeSingle();
-        
-        if (!existing) {
-          isUnique = true;
-        } else {
-          attempts++;
-          // Add small delay to avoid timestamp collisions
-          await new Promise(resolve => setTimeout(resolve, 1));
+    // Generate serials locally (no per-serial DB reads). DB uniqueness constraint is the source of truth.
+    const buildRows = () => {
+      const rows: any[] = [];
+      for (let i = 0; i < qty; i++) {
+        const serial = generateUnitSerial(company_id);
+
+        const payload =
+          codeMode === "GS1"
+            ? generateCanonicalGS1({
+                gtin: gtinForStorage,
+                expiry,
+                mfgDate: mfd,
+                batch,
+                serial,
+                mrp: Number(mrp),
+                sku: sku_code,
+              })
+            : buildPicUnitPayload({
+                sku: String(sku_code).trim().toUpperCase(),
+                batch: String(batch),
+                expiryYYMMDD: (() => {
+                  const dt = new Date(String(expiry));
+                  const yy = String(dt.getFullYear()).slice(-2);
+                  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+                  const dd = String(dt.getDate()).padStart(2, "0");
+                  return `${yy}${mm}${dd}`;
+                })(),
+                mfgYYMMDD: (() => {
+                  const dt = new Date(String(mfd));
+                  const yy = String(dt.getFullYear()).slice(-2);
+                  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+                  const dd = String(dt.getDate()).padStart(2, "0");
+                  return `${yy}${mm}${dd}`;
+                })(),
+                serial,
+                mrp: String(mrp),
+              });
+
+        rows.push({
+          company_id,
+          sku_id: sku.id,
+          gtin: codeMode === "GS1" ? gtinForStorage : null,
+          batch,
+          mfd,
+          expiry,
+          mrp,
+          serial,
+          gs1_payload: payload,
+          code_mode: codeMode,
+          payload,
+        });
+      }
+      return rows;
+    };
+
+    const maxInsertRetries = 3;
+    let rows: any[] = [];
+    for (let attempt = 0; attempt < maxInsertRetries; attempt++) {
+      rows = buildRows();
+      const { error } = await supabase.from("labels_units").insert(rows);
+      if (!error) break;
+
+      const isUniqueViolation = error.code === "23505" || String(error.message || "").toLowerCase().includes("unique");
+      if (!isUniqueViolation || attempt === maxInsertRetries - 1) {
+        await refundEntitlement({ companyId: company_id, usageType: UsageType.UNIT_LABEL, quantity: qty });
+        if (isUniqueViolation) {
+          return NextResponse.json({ error: "Duplicate serial detected. Please try again." }, { status: 409 });
         }
+        throw error;
       }
-      
-      if (!isUnique) {
-        await refundEntitlement({
-          companyId: company_id,
-          usageType: UsageType.UNIT_LABEL,
-          quantity: qty,
-        });
-        return NextResponse.json(
-          { error: `Failed to generate unique serial after ${maxAttempts} attempts for unit ${i + 1}` },
-          { status: 500 }
-        );
-      }
-
-      const payload =
-        codeMode === "GS1"
-          ? generateCanonicalGS1({
-              gtin: gtinForStorage,
-              expiry,
-              mfgDate: mfd,
-              batch,
-              serial: serial!,
-              mrp: Number(mrp),
-              sku: sku_code,
-            })
-          : buildPicUnitPayload({
-              sku: String(sku_code).trim().toUpperCase(),
-              batch: String(batch),
-              expiryYYMMDD: (() => {
-                const dt = new Date(String(expiry));
-                const yy = String(dt.getFullYear()).slice(-2);
-                const mm = String(dt.getMonth() + 1).padStart(2, "0");
-                const dd = String(dt.getDate()).padStart(2, "0");
-                return `${yy}${mm}${dd}`;
-              })(),
-              mfgYYMMDD: (() => {
-                const dt = new Date(String(mfd));
-                const yy = String(dt.getFullYear()).slice(-2);
-                const mm = String(dt.getMonth() + 1).padStart(2, "0");
-                const dd = String(dt.getDate()).padStart(2, "0");
-                return `${yy}${mm}${dd}`;
-              })(),
-              serial: serial!,
-              mrp: String(mrp),
-            });
-
-      rows.push({
-        company_id,
-        sku_id: sku.id,
-        gtin: codeMode === "GS1" ? gtinForStorage : null,
-        batch,
-        mfd,
-        expiry,
-        mrp,
-        serial: serial!,
-        gs1_payload: payload,
-        code_mode: codeMode,
-        payload,
-      });
-    }
-
-    // Insert all rows in a single transaction
-    const { error } = await supabase.from("labels_units").insert(rows);
-    if (error) {
-      // Check if it's a uniqueness constraint violation
-      if (error.code === '23505' || error.message?.includes('unique')) {
-        await refundEntitlement({
-          companyId: company_id,
-          usageType: UsageType.UNIT_LABEL,
-          quantity: qty,
-        });
-        return NextResponse.json(
-          { error: "Duplicate serial detected. Please try again." },
-          { status: 409 }
-        );
-      }
-      await refundEntitlement({
-        companyId: company_id,
-        usageType: UsageType.UNIT_LABEL,
-        quantity: qty,
-      });
-      throw error;
     }
 
     return NextResponse.json({

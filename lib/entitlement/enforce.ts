@@ -56,11 +56,13 @@ export async function enforceEntitlement({
   companyId,
   usageType,
   quantity,
+  requestId,
   metadata,
 }: {
   companyId: string;
   usageType: UsageType;
   quantity: number;
+  requestId?: string;
   metadata?: Record<string, any>;
 }): Promise<EntitlementDecision> {
   if (!companyId || typeof companyId !== "string") {
@@ -102,17 +104,19 @@ export async function enforceEntitlement({
   }
 
   const metric = usageTypeToMetric[usageType];
-  const requestId =
-    typeof metadata?.request_id === "string" && metadata.request_id.trim()
-      ? metadata.request_id.trim()
-      : randomUUID();
+  const finalRequestId =
+    typeof requestId === "string" && requestId.trim()
+      ? requestId.trim()
+      : typeof metadata?.request_id === "string" && metadata.request_id.trim()
+        ? metadata.request_id.trim()
+        : randomUUID();
 
   try {
     const consume = await consumeCanonicalEntitlement({
       companyId,
       metric,
       quantity,
-      requestId,
+      requestId: finalRequestId,
       supabase: getSupabaseAdmin(),
     });
 

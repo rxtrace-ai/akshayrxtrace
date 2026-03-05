@@ -28,7 +28,12 @@ function normalizeRaw(input: string): string {
 }
 
 function hasAnyAi(input: string, ais: string[]): boolean {
-  return ais.some((ai) => input.includes(`(${ai})`) || input.includes(ai));
+  return ais.some((ai) => {
+    if (input.includes(`(${ai})`)) return true;
+    // Machine-readable: AI appears at start or immediately after GS (FNC1 / ASCII 29).
+    const re = new RegExp(`(^|${GS})${ai}`);
+    return re.test(input);
+  });
 }
 
 function looksLikeGS1(input: string): boolean {
@@ -135,4 +140,3 @@ export function parsePayload(rawInput: string): ParsedPayload {
 
   return { mode: "INVALID", error: "Unrecognized or mixed payload format", raw };
 }
-

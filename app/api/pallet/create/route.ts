@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
 import { enforceEntitlement, refundEntitlement } from "@/lib/entitlement/enforce";
 import { UsageType } from "@/lib/entitlement/usageTypes";
+import { getRequestIdFromRequest } from "@/lib/http/requestId";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -76,6 +77,10 @@ export async function POST(req: Request) {
       quantity,
       assign_cartons = true,
     } = body ?? {};
+    const requestId =
+      typeof (body as any)?.request_id === "string" && String((body as any).request_id).trim()
+        ? `pallet_create:body:${String((body as any).request_id).trim()}`
+        : getRequestIdFromRequest(req, "pallet_create");
 
     if (requestedCompanyId && requestedCompanyId !== authCompanyId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -228,6 +233,7 @@ export async function POST(req: Request) {
       companyId: company_id,
       usageType: UsageType.PALLET_LABEL,
       quantity: count,
+      requestId,
       metadata: { source: "pallet_create" },
     });
     if (!decision.allow) {
