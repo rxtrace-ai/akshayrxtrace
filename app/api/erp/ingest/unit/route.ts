@@ -177,21 +177,6 @@ export async function POST(req: Request) {
           skuId = newSku.id;
         }
 
-        // Check for duplicate serial (same company, GTIN, batch, serial)
-        const { data: existing } = await admin
-          .from('labels_units')
-          .select('id')
-          .eq('company_id', companyId)
-          .eq('serial', serialNumber)
-          .eq('batch', batch)
-          .maybeSingle();
-
-        if (existing?.id) {
-          results.duplicates++;
-          results.skipped++;
-          continue;
-        }
-
         // Determine mode + normalize/validate GTIN if provided
         const codeMode = resolveCodeMode({ gtin });
         let finalGtin: string | null = null;
@@ -204,6 +189,23 @@ export async function POST(req: Request) {
             continue;
           }
           finalGtin = validation.normalized!;
+        }
+
+        // Check for duplicate serial (same company, GTIN, serial)
+        if (finalGtin) {
+          const { data: existing } = await admin
+            .from('labels_units')
+            .select('id')
+            .eq('company_id', companyId)
+            .eq('gtin', finalGtin)
+            .eq('serial', serialNumber)
+            .maybeSingle();
+
+          if (existing?.id) {
+            results.duplicates++;
+            results.skipped++;
+            continue;
+          }
         }
 
         // Generate payload (GS1 or PIC)
@@ -237,11 +239,8 @@ export async function POST(req: Request) {
               ? generateCanonicalGS1({
                   gtin: finalGtin!,
                   expiry: normalizedExpiry,
-                  mfgDate: normalizedMfd || new Date().toISOString().split('T')[0],
                   batch,
                   serial: serialNumber,
-                  mrp: mrp ? Number(mrp) : undefined,
-                  sku: skuCode,
                 })
               : buildPicUnitPayload({
                   sku: skuCode,

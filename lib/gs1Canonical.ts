@@ -5,13 +5,13 @@
  * All APIs must use this function to ensure consistency and compliance.
  * 
  * GS1 Requirements:
- * - Mandatory AIs: (01) GTIN, (17) Expiry, (11) Mfg Date, (10) Batch, (21) Serial
- * - Internal AIs: (91) MRP, (92) SKU
+ * - Mandatory AIs: (01) GTIN, (17) Expiry, (10) Batch, (21) Serial
+ * - Optional AIs: (11) Mfg Date, (91) MRP, (92) SKU
  * - Machine format (no parentheses) with FNC1 separators
  * - Fixed-length AIs: 01 (14), 17 (6), 11 (6)
  * - Variable-length AIs: 10, 21, 91, 92 (terminated with FNC1)
  * 
- * Format: 01GTIN17YYMMDD11YYMMDD10BATCH<FNC1>21SERIAL<FNC1>91MRP<FNC1>92SKU
+ * Format: 01GTIN17YYMMDD10BATCH<FNC1>21SERIAL<FNC1>[11MFG<FNC1>][91MRP<FNC1>][92SKU]
  */
 
 const FNC1 = String.fromCharCode(29); // ASCII Group Separator (GS)
@@ -155,8 +155,8 @@ export interface GS1GenerationParams {
   /** AI (17) - Expiration Date (required) */
   expiry: string | Date;
   
-  /** AI (11) - Manufacturing Date (required) */
-  mfgDate: string | Date;
+  /** AI (11) - Manufacturing Date (optional) */
+  mfgDate?: string | Date;
   
   /** AI (10) - Batch/Lot Number (required, max 20 chars) */
   batch: string;
@@ -174,9 +174,9 @@ export interface GS1GenerationParams {
 /**
  * Generate canonical GS1 machine-format payload
  * 
- * Format: 01GTIN17YYMMDD11YYMMDD10BATCH<FNC1>21SERIAL<FNC1>91MRP<FNC1>92SKU
+ * Format: 01GTIN17YYMMDD10BATCH<FNC1>21SERIAL<FNC1>[11MFG<FNC1>][91MRP<FNC1>][92SKU]
  * 
- * Order: Fixed-length AIs first (01, 17, 11), then variable-length AIs (10, 21, 91, 92)
+ * Order: Fixed-length AIs first (01, 17, 11 when present), then variable-length AIs (10, 21, 91, 92)
  * 
  * @param params - GS1 generation parameters
  * @returns GS1 machine-format string (no parentheses, with FNC1 separators)
@@ -190,9 +190,6 @@ export function generateCanonicalGS1(params: GS1GenerationParams): string {
   if (!params.expiry) {
     throw new Error("Expiry date (17) is required");
   }
-  if (!params.mfgDate) {
-    throw new Error("Manufacturing date (11) is required");
-  }
   if (!params.batch) {
     throw new Error("Batch number (10) is required");
   }
@@ -205,7 +202,7 @@ export function generateCanonicalGS1(params: GS1GenerationParams): string {
   
   // Format dates
   const expiryYYMMDD = formatDateYYMMDD(params.expiry);
-  const mfgYYMMDD = formatDateYYMMDD(params.mfgDate);
+  const mfgYYMMDD = params.mfgDate ? formatDateYYMMDD(params.mfgDate) : null;
   
   // Validate and normalize variable-length AIs
   const batch = validateVariableLengthAI(params.batch, "batch", "10");
@@ -214,11 +211,14 @@ export function generateCanonicalGS1(params: GS1GenerationParams): string {
   // Build payload: Fixed-length AIs first
   let payload = `01${gtin14}`;
   payload += `17${expiryYYMMDD}`;
-  payload += `11${mfgYYMMDD}`;
-  
+
   // Variable-length AIs with FNC1 termination
   payload += `10${batch}${FNC1}`;
   payload += `21${serial}${FNC1}`;
+
+  if (mfgYYMMDD) {
+    payload += `11${mfgYYMMDD}${FNC1}`;
+  }
   
   // Optional internal AIs
   if (params.mrp !== undefined) {

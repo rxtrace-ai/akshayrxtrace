@@ -12,7 +12,22 @@ import { generateUnitSerial } from "@/lib/serial/unitSerial";
 // ---------- utils ----------
 const MAX_UNITS_PER_REQUEST = 10000;
 const DB_INSERT_BATCH_SIZE = 1000;
+const MAX_SERIAL_RETRY_ATTEMPTS = 5;
 const SKU_NOT_FOUND_ERROR = "SKU not found. Create SKU in SKU Master first.";
+
+type UnitLabelRow = {
+  company_id: string;
+  sku_id: string;
+  gtin: string | null;
+  batch: string;
+  mfd: string;
+  expiry: string;
+  mrp: unknown;
+  serial: string;
+  gs1_payload: string;
+  code_mode: "GS1" | "PIC";
+  payload: string;
+};
 
 // ---------- API ----------
 export async function POST(req: Request) {
@@ -90,8 +105,20 @@ export async function POST(req: Request) {
     }
 
     const codeMode = resolveCodeMode({ gtin });
-    const gtinForStorage = typeof gtin === "string" ? gtin.trim() : "";
+    let gtinForStorage = typeof gtin === "string" ? gtin.trim() : "";
     const normalizedSkuCode = String(sku_code).trim().toUpperCase();
+
+    if (codeMode === "GS1") {
+      const { validateGTIN } = await import("@/lib/gs1/gtin");
+      const validation = validateGTIN(gtinForStorage);
+      if (!validation.valid || !validation.normalized) {
+        return NextResponse.json(
+          { error: validation.error || "Invalid GTIN format" },
+          { status: 400 }
+        );
+      }
+      gtinForStorage = validation.normalized;
+    }
 
     // ---------- SKU LOOKUP ----------
     const { data: sku, error: skuErr } = await supabase
@@ -107,69 +134,111 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: SKU_NOT_FOUND_ERROR }, { status: 404 });
     }
 
-    // ---------- UNIT GENERATION ----------
-    // Generate serials locally (no per-serial DB reads). DB uniqueness constraint is the source of truth.
-    const buildRows = () => {
-      const rows: any[] = [];
-      for (let i = 0; i < qty; i++) {
-        const serial = generateUnitSerial(company_id);
+    const expiryYYMMDD = (() => {
+      const dt = new Date(String(expiry));
+      const yy = String(dt.getFullYear()).slice(-2);
+      const mm = String(dt.getMonth() + 1).padStart(2, "0");
+      const dd = String(dt.getDate()).padStart(2, "0");
+      return `${yy}${mm}${dd}`;
+    })();
+    const mfgYYMMDD = (() => {
+      const dt = new Date(String(mfd));
+      const yy = String(dt.getFullYear()).slice(-2);
+      const mm = String(dt.getMonth() + 1).padStart(2, "0");
+      const dd = String(dt.getDate()).padStart(2, "0");
+      return `${yy}${mm}${dd}`;
+    })();
 
-        const payload =
-          codeMode === "GS1"
-            ? generateCanonicalGS1({
-                gtin: gtinForStorage,
-                expiry,
-                mfgDate: mfd,
-                batch,
-                serial,
-                mrp: Number(mrp),
-                sku: normalizedSkuCode,
-              })
-            : buildPicUnitPayload({
-                sku: normalizedSkuCode,
-                batch: String(batch),
-                expiryYYMMDD: (() => {
-                  const dt = new Date(String(expiry));
-                  const yy = String(dt.getFullYear()).slice(-2);
-                  const mm = String(dt.getMonth() + 1).padStart(2, "0");
-                  const dd = String(dt.getDate()).padStart(2, "0");
-                  return `${yy}${mm}${dd}`;
-                })(),
-                mfgYYMMDD: (() => {
-                  const dt = new Date(String(mfd));
-                  const yy = String(dt.getFullYear()).slice(-2);
-                  const mm = String(dt.getMonth() + 1).padStart(2, "0");
-                  const dd = String(dt.getDate()).padStart(2, "0");
-                  return `${yy}${mm}${dd}`;
-                })(),
-                serial,
-                mrp: String(mrp),
-              });
+    const buildPayloadForSerial = (serial: string) =>
+      codeMode === "GS1"
+        ? generateCanonicalGS1({
+            gtin: gtinForStorage,
+            expiry,
+            batch,
+            serial,
+          })
+        : buildPicUnitPayload({
+            sku: normalizedSkuCode,
+            batch: String(batch),
+            expiryYYMMDD,
+            mfgYYMMDD,
+            serial,
+            mrp: String(mrp),
+          });
 
-        rows.push({
-          company_id,
-          sku_id: sku.id,
-          gtin: codeMode === "GS1" ? gtinForStorage : null,
-          batch,
-          mfd,
-          expiry,
-          mrp,
-          serial,
-          gs1_payload: payload,
-          code_mode: codeMode,
-          payload,
-        });
-      }
-      return rows;
+    const allocateUniqueSerial = (usedSerials: Set<string>) => {
+      let serial = "";
+      do {
+        serial = generateUnitSerial();
+      } while (usedSerials.has(serial));
+      usedSerials.add(serial);
+      return serial;
     };
 
-    const rows = buildRows();
+    const createRow = (serial: string): UnitLabelRow => {
+      const payload = buildPayloadForSerial(serial);
+      return {
+        company_id,
+        sku_id: sku.id,
+        gtin: codeMode === "GS1" ? gtinForStorage : null,
+        batch,
+        mfd,
+        expiry,
+        mrp,
+        serial,
+        gs1_payload: payload,
+        code_mode: codeMode,
+        payload,
+      };
+    };
+
+    // ---------- UNIT GENERATION ----------
+    // Keep serials unique within the request; rely on DB uniqueness for cross-request safety.
+    const usedSerials = new Set<string>();
+    const rows: UnitLabelRow[] = [];
+    for (let i = 0; i < qty; i++) {
+      rows.push(createRow(allocateUniqueSerial(usedSerials)));
+    }
+
+    const regenerateBatchSerials = (batchRows: UnitLabelRow[]) => {
+      for (const row of batchRows) {
+        usedSerials.delete(row.serial);
+      }
+      for (const row of batchRows) {
+        const serial = allocateUniqueSerial(usedSerials);
+        const payload = buildPayloadForSerial(serial);
+        row.serial = serial;
+        row.gs1_payload = payload;
+        row.payload = payload;
+      }
+    };
 
     try {
       for (let i = 0; i < rows.length; i += DB_INSERT_BATCH_SIZE) {
         const batch = rows.slice(i, i + DB_INSERT_BATCH_SIZE);
-        const { error } = await supabase.from("labels_units").insert(batch);
-        if (error) throw error;
+        let inserted = false;
+        let attempts = 0;
+
+        while (!inserted) {
+          const { error } = await supabase.from("labels_units").insert(batch);
+          if (!error) {
+            inserted = true;
+            continue;
+          }
+
+          const isUniqueViolation =
+            error.code === "23505" || String(error.message || "").toLowerCase().includes("unique");
+          if (!isUniqueViolation) {
+            throw error;
+          }
+
+          attempts += 1;
+          if (attempts >= MAX_SERIAL_RETRY_ATTEMPTS) {
+            throw error;
+          }
+
+          regenerateBatchSerials(batch);
+        }
       }
     } catch (e: any) {
       await refundEntitlement({ companyId: company_id, usageType: UsageType.UNIT_LABEL, quantity: qty });
@@ -177,7 +246,7 @@ export async function POST(req: Request) {
       const isUniqueViolation =
         e?.code === "23505" || String(e?.message || "").toLowerCase().includes("unique");
       if (isUniqueViolation) {
-        return NextResponse.json({ error: "Duplicate serial detected. Please try again." }, { status: 409 });
+        return NextResponse.json({ error: "Duplicate serial detected after retries. Please try again." }, { status: 409 });
       }
       throw e;
     }
