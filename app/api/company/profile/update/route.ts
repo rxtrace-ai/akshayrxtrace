@@ -15,17 +15,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const { company_name, pan, gst_number, address } = await req.json();
+    const { company_name, phone, pan, gst_number, address } = await req.json();
 
     // Validate: company_id, user_id, and email cannot be changed
-    // Only company_name, pan, gst_number, and address are editable
+    // Only mutable company profile fields are editable here.
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // Get user's company
     const { data: company, error: companyError } = await supabase
       .from('companies')
-      .select('id, user_id, email, company_name, pan, gst_number, address')
+      .select('id, user_id, email, company_name, phone, pan, gst_number:gst, address')
       .eq('user_id', user.id)
       .maybeSingle();
 
@@ -46,12 +46,16 @@ export async function POST(req: NextRequest) {
       updateData.company_name = company_name?.trim() || null;
     }
 
+    if (phone !== undefined) {
+      updateData.phone = phone?.trim() || null;
+    }
+
     if (pan !== undefined) {
       updateData.pan = pan ? pan.toUpperCase().trim() : null;
     }
 
     if (gst_number !== undefined) {
-      updateData.gst_number = gst_number ? gst_number.toUpperCase().trim() : null;
+      updateData.gst = gst_number ? gst_number.toUpperCase().trim() : null;
     }
 
     if (address !== undefined) {
@@ -64,7 +68,7 @@ export async function POST(req: NextRequest) {
       .update(updateData)
       .eq('id', company.id)
       .eq('user_id', user.id) // Ensure user owns this company
-      .select('id, company_name, pan, gst_number, address, email, user_id')
+      .select('id, company_name, phone, pan, gst_number:gst, address, email, user_id')
       .single();
 
     if (updateError) {
@@ -81,6 +85,7 @@ export async function POST(req: NextRequest) {
       company: {
         id: updatedCompany.id,
         company_name: updatedCompany.company_name,
+        phone: updatedCompany.phone,
         pan: updatedCompany.pan,
         gst_number: updatedCompany.gst_number,
         address: updatedCompany.address,

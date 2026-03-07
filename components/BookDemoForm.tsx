@@ -22,25 +22,13 @@ export default function BookDemoForm({ className }: Props) {
     setSuccess('');
 
     try {
-      const res = await fetch('/api/book-demo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          companyName,
-          email,
-          phone,
-          source: 'landing',
-        }),
-      });
-
-      const out = await res.json().catch(() => ({}));
-
-      if (!res.ok || !out?.success) {
-        setError(out?.error || 'Failed to submit. Please try again.');
-        setLoading(false);
-        return;
-      }
+      // Backend demo-request endpoint removed as part of legacy API cleanup.
+      // Route users to email instead of storing in DB.
+      const subject = encodeURIComponent('RxTrace Demo Request');
+      const body = encodeURIComponent(
+        `Name: ${name}\nCompany: ${companyName}\nEmail: ${email}\nPhone: ${phone}\nSource: landing`
+      );
+      window.location.href = `mailto:support@rxtrace.in?subject=${subject}&body=${body}`;
 
       setSuccess('your request submitted successfully team will contact you in 24 hours');
       setName('');

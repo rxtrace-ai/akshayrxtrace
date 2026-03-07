@@ -11,7 +11,74 @@ import { supabaseClient } from "@/lib/supabase/client";
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { trialSummary, loading: trialLoading, error: trialError } = useSubscription();
+  const { trialSummary, loading: trialLoading, error: trialError, refresh: refreshTrial } = useSubscription();
+  const [trialActivating, setTrialActivating] = useState(false);
+  const [trialActivateError, setTrialActivateError] = useState<string | null>(null);
+
+  async function loadRazorpayScript(): Promise<void> {
+    if (typeof window === "undefined") return;
+    if ((window as any).Razorpay) return;
+    await new Promise<void>((resolve, reject) => {
+      const existing = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+      if (existing) {
+        existing.addEventListener("load", () => resolve());
+        existing.addEventListener("error", () => reject(new Error("RAZORPAY_SCRIPT_LOAD_FAILED")));
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("RAZORPAY_SCRIPT_LOAD_FAILED"));
+      document.body.appendChild(script);
+    });
+    if (!(window as any).Razorpay) throw new Error("RAZORPAY_SDK_NOT_AVAILABLE");
+  }
+
+  async function handleActivateTrial() {
+    setTrialActivateError(null);
+    setTrialActivating(true);
+    try {
+      const idempotencyKey = crypto.randomUUID();
+      const res = await fetch("/api/user/trial/activate/initiate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({ idempotency_key: idempotencyKey }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.error || "TRIAL_ACTIVATION_INIT_FAILED");
+      }
+
+      await loadRazorpayScript();
+      const RazorpayCtor = (window as any).Razorpay;
+
+      await new Promise<void>((resolve) => {
+        const rzp = new RazorpayCtor({
+          key: payload?.razorpay?.key_id,
+          order_id: payload?.razorpay?.order_id,
+          amount: payload?.razorpay?.amount_paise,
+          currency: payload?.razorpay?.currency || "INR",
+          name: "RxTrace",
+          description: "Trial activation (₹1)",
+          handler: () => resolve(),
+          modal: { ondismiss: () => resolve() },
+        });
+        rzp.open();
+      });
+
+      // Webhook activates the trial. Refresh the page state after user returns.
+      await refreshTrial();
+      router.refresh();
+    } catch (err: any) {
+      setTrialActivateError(err?.message || "TRIAL_ACTIVATION_FAILED");
+    } finally {
+      setTrialActivating(false);
+    }
+  }
 
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [companyProfile, setCompanyProfile] = useState<{
@@ -53,7 +120,7 @@ export default function SettingsPage() {
 
         const { data } = await supabase
           .from("companies")
-          .select("id, company_name, phone, address, pan, gst_number, email")
+          .select("id, company_name, phone, address, pan, gst_number:gst, email")
           .eq("user_id", user.id)
           .maybeSingle();
 
@@ -334,7 +401,7 @@ export default function SettingsPage() {
           <div>
             <h2 className="text-xl font-medium">Trial</h2>
             <p className="text-sm text-gray-500">
-              The 15-day trial runs automatically after company setup.
+              Activate your 10-day trial by completing a ₹1 Razorpay payment. Trial starts only after webhook confirmation.
             </p>
           </div>
           <Badge
@@ -355,6 +422,9 @@ export default function SettingsPage() {
         {trialError && (
           <div className="text-red-600 text-sm">{trialError}</div>
         )}
+        {trialActivateError && (
+          <div className="text-red-600 text-sm">{trialActivateError}</div>
+        )}
 
         {trialSummary ? (
           <div className="space-y-4">
@@ -365,6 +435,22 @@ export default function SettingsPage() {
                 ? "Trial has ended."
                 : "Trial window not yet available."}
             </div>
+
+            {!trialSummary.trial_active && !trialSummary.trial_expires_at && (
+              <div className="flex items-center gap-3">
+                <Button
+                  type="button"
+                  onClick={handleActivateTrial}
+                  disabled={trialActivating}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {trialActivating ? "Opening payment..." : "Activate Trial (₹1)"}
+                </Button>
+                <span className="text-xs text-gray-500">
+                  Payment is verified by webhook; activation may take a few seconds after payment.
+                </span>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               {[

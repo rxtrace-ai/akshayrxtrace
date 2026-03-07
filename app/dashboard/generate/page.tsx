@@ -191,18 +191,18 @@ async function csvToRows(csvText: string): Promise<BatchRow[]> {
       }
     }
 
-    const res = await fetch('/api/issues', {
+    const res = await fetch('/api/unit/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        compliance_ack: true,
         gtin,
+        sku_code: sku,
         batch,
-        mfd: mfdISO || null,
-        exp: expISO,
+        mfd: mfdISO || expISO,
+        expiry: expISO,
         quantity: qty,
         mrp: mrp || undefined,
-        sku: sku || undefined,
-        company: companyName || undefined
       })
     });
 

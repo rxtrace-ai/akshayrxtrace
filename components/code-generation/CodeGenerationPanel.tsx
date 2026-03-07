@@ -110,18 +110,19 @@ export default function CodeGenerationPanel({
     setLoading(true);
 
     try {
-      const res = await fetch('/api/issues', {
+      const res = await fetch('/api/unit/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          compliance_ack: true,
           gtin: finalGtin,
+          sku_code: sku,
+          sku_name: skus.find((s) => s.sku_code === sku)?.sku_name ?? null,
           batch,
-          mfd: mfdDate || null,
-          exp: expiryDate,
+          mfd: mfdDate || expiryDate, // fallback to avoid invalid payloads; UI should collect MFD explicitly
+          expiry: expiryDate,
           quantity,
           mrp: mrp || undefined,
-          sku: sku || undefined,
-          company: companyName || undefined,
         }),
       });
 

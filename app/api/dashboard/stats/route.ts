@@ -53,18 +53,16 @@ export async function GET() {
       return NextResponse.json({ error: skuErr.message }, { status: 500 });
     }
 
-    // Units generated (best-effort): sum(total_strips) from generation_jobs.
+    // Units generated: count of labels_units (authoritative store of generated unit labels).
     // If you use a different “formula” in Supabase (view/RPC), we can swap this.
-    const { data: jobs, error: jobsErr } = await supabase
-      .from('generation_jobs')
-      .select('total_strips')
+    const { count: unitsGenerated, error: unitsErr } = await supabase
+      .from('labels_units')
+      .select('id', { count: 'exact', head: true })
       .eq('company_id', companyId);
 
-    if (jobsErr) {
-      return NextResponse.json({ error: jobsErr.message }, { status: 500 });
+    if (unitsErr) {
+      return NextResponse.json({ error: unitsErr.message }, { status: 500 });
     }
-
-    const unitsGenerated = (jobs ?? []).reduce((acc, row) => acc + toNumber((row as any).total_strips), 0);
 
     // SSCC generated: pallets count
     const { count: ssccGenerated, error: palletsErr } = await supabase

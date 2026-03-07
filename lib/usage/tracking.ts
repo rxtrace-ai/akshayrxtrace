@@ -113,7 +113,7 @@ export async function getUsageLimits(
  * - Quota usage (analytics): usage_counters table (monthly aggregates)
  * 
  * QUOTA TYPE MAPPING:
- * - UNIT → Unit label generation API (/api/issues/route.ts)
+ * - UNIT → Unit label generation API (/api/unit/create/route.ts)
  * - BOX → Box-level SSCC generation (/api/sscc/generate/route.ts, when generate_box=true)
  * - CARTON → Carton-level SSCC generation (/api/sscc/generate/route.ts, when generate_carton=true)
  * - PALLET → Pallet-level SSCC generation (/api/sscc/generate/route.ts, when generate_pallet=true)

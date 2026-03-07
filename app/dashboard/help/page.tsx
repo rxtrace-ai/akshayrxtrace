@@ -21,7 +21,7 @@ const faqData = {
     },
     {
       question: 'Where do I find my Company ID?',
-      answer: 'Your Company ID is available in the web dashboard:\n\n1. Log in to your RxTrace dashboard at rxtrace.in\n2. Navigate to "Handsets" section (Dashboard → Handsets)\n3. Click "Copy Company ID" button\n4. Paste it into the activation field in the scanner app\n\nFormat: UUID (e.g., 944eb06e-f544-43bc-a8b4-f181fda68d21)',
+      answer: 'Your Company ID is available in the web dashboard:\n\n1. Log in to your RxTrace dashboard at rxtrace.in\n2. Open Settings or your company profile area\n3. Copy the Company ID shown for your account\n4. Paste it into the activation field in the scanner app\n\nFormat: UUID (e.g., 944eb06e-f544-43bc-a8b4-f181fda68d21)',
     },
     {
       question: 'What\'s the difference between Unit and SSCC scanning?',
@@ -37,7 +37,7 @@ const faqData = {
     },
     {
       question: 'How does handset registration work?',
-      answer: 'When you activate with Company ID:\n\n1. The app generates a unique device fingerprint\n2. Sends registration request to /api/handset/register-lite\n3. Server creates handset record linked to your company\n4. Returns JWT token for authenticated SSCC scanning\n5. Token is stored securely on your device\n\nThis is a one-time process per device. The device fingerprint ensures each handset is uniquely identified.',
+      answer: 'When you activate with Company ID:\n\n1. The app generates a unique device fingerprint\n2. Sends a device registration request to the active scanner backend\n3. The backend links the device to your company\n4. The app stores the returned authentication token securely on the device\n5. SSCC scanning is enabled for that handset\n\nThis is a one-time process per device. The device fingerprint ensures each handset is uniquely identified.',
     },
     {
       question: 'Do I need to activate for unit label scanning?',
@@ -153,19 +153,13 @@ export default function HelpSupportPage() {
     setError('');
 
     try {
-      const res = await fetch('/api/support/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
-
-      const result = await res.json().catch(() => ({}));
-
-      if (!res.ok || !result?.success) {
-        setError(result?.error || 'Failed to submit request. Please try again.');
-        setSubmitting(false);
-        return;
-      }
+      // Backend support endpoint removed as part of legacy API cleanup.
+      // Route users to email instead of storing in DB.
+      const subject = encodeURIComponent(`RxTrace Support: ${formData.category || 'request'}`);
+      const body = encodeURIComponent(
+        `Name: ${formData.fullName}\nCompany: ${formData.companyName}\nEmail: ${formData.email}\nPriority: ${formData.priority}\n\nMessage:\n${formData.message}`
+      );
+      window.location.href = `mailto:support@rxtrace.in?subject=${subject}&body=${body}`;
 
       // Success - reset form and show success message
       setSubmitted(true);

@@ -282,7 +282,6 @@ export default function DashboardPage() {
           title="Active Handsets"
           value={kpi.activeHandsets}
           icon={Smartphone}
-          href="/dashboard/handsets"
         />
       </div>
 

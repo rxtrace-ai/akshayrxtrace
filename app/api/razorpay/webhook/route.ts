@@ -47,6 +47,15 @@ function extractOrderId(parsedBody: any): string | null {
   return out ? out : null;
 }
 
+function extractPayment(parsedBody: any): { id: string | null; status: string | null; amount: number | null } {
+  const entity = parsedBody?.payload?.payment?.entity ?? null;
+  const id = typeof entity?.id === "string" ? entity.id.trim() : null;
+  const status = typeof entity?.status === "string" ? entity.status.trim().toLowerCase() : null;
+  const amountRaw = entity?.amount;
+  const amount = typeof amountRaw === "number" ? amountRaw : Number(amountRaw);
+  return { id, status, amount: Number.isFinite(amount) ? amount : null };
+}
+
 function parseTrialPurpose(purpose: string): string | null {
   const match = String(purpose || "").match(/^trial_activation_company_(.+)$/);
   if (!match) return null;
@@ -105,17 +114,37 @@ export async function POST(req: Request) {
   try {
     // Trial activation side effect (₹1 order) - idempotent and webhook-driven.
     // We do it here (app layer) to avoid coupling to DB RPC versions.
-    if (eventType === "order.paid" || eventType === "payment.captured") {
+    if (eventType === "payment.captured") {
       const orderId = extractOrderId(parsedBody);
+      const payment = extractPayment(parsedBody);
       if (orderId) {
         const { data: orderRow } = await supabase
           .from("razorpay_orders")
-          .select("order_id, purpose, payment_id, status")
+          .select("order_id, purpose, payment_id, status, amount_paise")
           .eq("order_id", orderId)
           .maybeSingle();
 
         const companyId = orderRow?.purpose ? parseTrialPurpose(String((orderRow as any).purpose)) : null;
         if (companyId) {
+          const purposeMatches = Boolean(orderRow?.purpose && parseTrialPurpose(String(orderRow.purpose)) === companyId);
+          const paymentCaptured = payment.status === "captured";
+          const orderAmountPaise = Number((orderRow as any)?.amount_paise ?? 0);
+          const amountMatches = orderAmountPaise === 100 && payment.amount === 100;
+
+          if (!purposeMatches || !paymentCaptured || !amountMatches) {
+            logWithContext("info", "Trial activation validation failed; skipping activation", {
+              correlationId,
+              route: "/api/razorpay/webhook",
+              eventId,
+              eventType,
+              orderId,
+              companyId,
+              purposeMatches,
+              paymentCaptured,
+              orderAmountPaise,
+              paymentAmountPaise: payment.amount,
+            });
+          } else {
           // One trial per company: activate only if no legacy trial window exists and no activation marker exists.
           const { data: companyRow } = await supabase
             .from("companies")
@@ -133,7 +162,7 @@ export async function POST(req: Request) {
             const end = new Date(now);
             end.setUTCDate(end.getUTCDate() + 10);
 
-            await supabase
+            const { error: trialUpdateErr } = await supabase
               .from("companies")
               .update({
                 // legacy fields used by current app logic
@@ -143,10 +172,29 @@ export async function POST(req: Request) {
                 trial_start_at: now.toISOString(),
                 trial_end_at: end.toISOString(),
                 trial_activated_at: now.toISOString(),
-                trial_activated_payment_id: String(parsedBody?.payload?.payment?.entity?.id || "").trim() || null,
+                trial_activated_payment_id: payment.id || null,
                 updated_at: now.toISOString(),
               })
               .eq("id", companyId);
+
+            if (!trialUpdateErr) {
+              // Policy A: trial starts with a clean quota slate for this trial window.
+              const periodStart = now.toISOString().slice(0, 10); // YYYY-MM-DD
+              const periodEnd = end.toISOString().slice(0, 10); // YYYY-MM-DD
+              const counters = ["UNIT", "BOX", "CARTON", "SSCC"].map((metricType) => ({
+                company_id: companyId,
+                metric_type: metricType,
+                period_start: periodStart,
+                period_end: periodEnd,
+                used_quantity: 0,
+                updated_at: now.toISOString(),
+              }));
+
+              await supabase.from("usage_counters").upsert(counters, {
+                onConflict: "company_id,metric_type,period_start",
+              });
+            }
+          }
           }
         }
       }

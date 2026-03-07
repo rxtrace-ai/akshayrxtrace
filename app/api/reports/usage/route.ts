@@ -48,25 +48,25 @@ export async function GET(req: Request) {
   } as const;
 
   /* =====================================================
-     FETCH SCAN EVENTS
+     FETCH SCAN LOGS
      ===================================================== */
 
   let query = supabase
-    .from("scan_events")
+    .from("scan_logs")
     .select(
       `
       id,
-      scanned_code,
-      scan_level,
+      raw_scan,
+      metadata,
       handset_id,
-      created_at
+      scanned_at
       `
     )
     .eq("company_id", companyId)
-    .order("created_at", { ascending: false });
+    .order("scanned_at", { ascending: false });
 
-  if (from) query = query.gte("created_at", `${from}T00:00:00`);
-  if (to) query = query.lte("created_at", `${to}T23:59:59`);
+  if (from) query = query.gte("scanned_at", `${from}T00:00:00`);
+  if (to) query = query.lte("scanned_at", `${to}T23:59:59`);
 
   const { data, error } = await query;
 
@@ -91,10 +91,10 @@ export async function GET(req: Request) {
      ===================================================== */
 
   const rows = (data || []).map((r) => ({
-    scanned_code: r.scanned_code,
-    scan_level: r.scan_level,     // unit | box | carton | pallet
+    scanned_code: r.raw_scan,
+    scan_level: r.metadata?.level || "unknown",
     handset_id: r.handset_id,
-    scanned_at: r.created_at,
+    scanned_at: r.scanned_at,
   }));
 
   /* =====================================================

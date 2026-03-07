@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { writeAuditLog } from '@/lib/audit';
+import { enforceEntitlement, refundEntitlement } from '@/lib/entitlement/enforce';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -86,6 +87,35 @@ export async function POST(req: Request) {
       invalid: 0,
       errors: [] as Array<{ row: number; error: string }>,
     };
+
+    const requestId =
+      req.headers.get('Idempotency-Key') ||
+      req.headers.get('Idempotency-key') ||
+      req.headers.get('idempotency-key') ||
+      crypto.randomUUID();
+
+    const palletsToInsert: Array<{
+      company_id: string;
+      sku_id: string;
+      sscc: string;
+      sscc_with_ai: string;
+    }> = [];
+
+    const cartonsToInsert: Array<{
+      company_id: string;
+      sku_id: string;
+      pallet_id: string | null;
+      sscc: string;
+      sscc_with_ai: string;
+    }> = [];
+
+    const boxesToInsert: Array<{
+      company_id: string;
+      sku_id: string;
+      carton_id: string | null;
+      sscc: string;
+      sscc_with_ai: string;
+    }> = [];
 
     // Process each row
     for (let idx = 0; idx < rows.length; idx++) {
@@ -221,68 +251,95 @@ export async function POST(req: Request) {
         const ssccWithAI = `(00)${sscc}`;
 
         if (hierarchyLevel === 'PALLET') {
-          const { error: insertError } = await admin.from('pallets').insert({
+          palletsToInsert.push({
             company_id: companyId,
             sku_id: skuId,
             sscc,
             sscc_with_ai: ssccWithAI,
           });
-
-          if (insertError) {
-            if (insertError.code === '23505') {
-              results.duplicates++;
-              results.skipped++;
-            } else {
-              results.errors.push({ row: rowNum, error: `Failed to insert pallet: ${insertError.message}` });
-              results.invalid++;
-            }
-          } else {
-            results.imported++;
-          }
         } else if (hierarchyLevel === 'CARTON') {
-          const { error: insertError } = await admin.from('cartons').insert({
+          cartonsToInsert.push({
             company_id: companyId,
             sku_id: skuId,
             pallet_id: parentId,
             sscc,
             sscc_with_ai: ssccWithAI,
           });
-
-          if (insertError) {
-            if (insertError.code === '23505') {
-              results.duplicates++;
-              results.skipped++;
-            } else {
-              results.errors.push({ row: rowNum, error: `Failed to insert carton: ${insertError.message}` });
-              results.invalid++;
-            }
-          } else {
-            results.imported++;
-          }
         } else if (hierarchyLevel === 'BOX') {
-          const { error: insertError } = await admin.from('boxes').insert({
+          boxesToInsert.push({
             company_id: companyId,
             sku_id: skuId,
             carton_id: parentId,
             sscc,
             sscc_with_ai: ssccWithAI,
           });
-
-          if (insertError) {
-            if (insertError.code === '23505') {
-              results.duplicates++;
-              results.skipped++;
-            } else {
-              results.errors.push({ row: rowNum, error: `Failed to insert box: ${insertError.message}` });
-              results.invalid++;
-            }
-          } else {
-            results.imported++;
-          }
         }
       } catch (rowError: any) {
         results.errors.push({ row: rowNum, error: rowError.message || 'Row processing failed' });
         results.invalid++;
+      }
+    }
+
+    const totalToInsert = palletsToInsert.length + cartonsToInsert.length + boxesToInsert.length;
+
+    // Enforce SSCC quota for ERP ingestion (one SSCC code = one SSCC consumption)
+    if (totalToInsert > 0) {
+      const decision = await enforceEntitlement({
+        supabase: admin,
+        companyId,
+        metric: 'pallet',
+        qty: totalToInsert,
+        requestId: `erp:sscc_ingest:${requestId}`,
+        source: 'api',
+      });
+
+      if (!decision.ok) {
+        return NextResponse.json(
+          { error: 'QUOTA_EXCEEDED', code: 'quota_exceeded', results },
+          { status: 403 }
+        );
+      }
+
+      const BATCH_SIZE = 1000;
+      try {
+        for (let i = 0; i < palletsToInsert.length; i += BATCH_SIZE) {
+          const batch = palletsToInsert.slice(i, i + BATCH_SIZE);
+          const { error } = await admin.from('pallets').insert(batch);
+          if (error) throw error;
+          results.imported += batch.length;
+        }
+
+        for (let i = 0; i < cartonsToInsert.length; i += BATCH_SIZE) {
+          const batch = cartonsToInsert.slice(i, i + BATCH_SIZE);
+          const { error } = await admin.from('cartons').insert(batch);
+          if (error) throw error;
+          results.imported += batch.length;
+        }
+
+        for (let i = 0; i < boxesToInsert.length; i += BATCH_SIZE) {
+          const batch = boxesToInsert.slice(i, i + BATCH_SIZE);
+          const { error } = await admin.from('boxes').insert(batch);
+          if (error) throw error;
+          results.imported += batch.length;
+        }
+      } catch (insertError: any) {
+        try {
+          await refundEntitlement({
+            supabase: admin,
+            companyId,
+            metric: 'pallet',
+            qty: totalToInsert,
+            requestId: `erp:sscc_ingest:${requestId}`,
+            source: 'api',
+          });
+        } catch {
+          // best-effort
+        }
+
+        return NextResponse.json(
+          { error: `Failed to import SSCCs: ${insertError?.message || String(insertError)}`, results },
+          { status: 500 }
+        );
       }
     }
 

@@ -245,19 +245,18 @@ async function processUnitCSV(csvText: string, companyId: string, companyName: s
     }
 
     // Generate unit codes via API
-    const res = await fetch('/api/issues', {
+    const res = await fetch('/api/unit/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         compliance_ack: true,
         gtin: modeRaw === 'PIC' ? undefined : (gtin || undefined),
+        sku_code: sku || undefined,
         batch,
-        mfd: mfdISO || null,
-        exp: expISO,
+        mfd: mfdISO || expISO,
+        expiry: expISO,
         quantity: qty,
         mrp: mrp || undefined,
-        sku: sku || undefined,
-        company: companyName || undefined
       })
     });
 
@@ -485,19 +484,18 @@ export default function UnitCodeGenerationPage() {
         gtin = validation.normalized!;
       }
       
-      const res = await fetch('/api/issues', {
+      const res = await fetch('/api/unit/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           compliance_ack: true,
           gtin: form.mode === 'PIC' ? undefined : (gtin || undefined),
+          sku_code: form.sku || undefined,
           batch: form.batch,
-          mfd: form.mfdDate || null,
-          exp: form.expiryDate,
+          mfd: form.mfdDate || form.expiryDate,
+          expiry: form.expiryDate,
           quantity: form.quantity,
           mrp: form.mrp || undefined,
-          sku: form.sku || undefined,
-          company: company || undefined
         })
       });
 

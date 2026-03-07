@@ -11,6 +11,7 @@ import { generateUnitSerial } from "@/lib/serial/unitSerial";
 
 // ---------- utils ----------
 const MAX_UNITS_PER_REQUEST = 10000;
+const DB_INSERT_BATCH_SIZE = 1000;
 
 // ---------- API ----------
 export async function POST(req: Request) {
@@ -163,26 +164,29 @@ export async function POST(req: Request) {
       return rows;
     };
 
-    const maxInsertRetries = 3;
-    let rows: any[] = [];
-    for (let attempt = 0; attempt < maxInsertRetries; attempt++) {
-      rows = buildRows();
-      const { error } = await supabase.from("labels_units").insert(rows);
-      if (!error) break;
+    const rows = buildRows();
 
-      const isUniqueViolation = error.code === "23505" || String(error.message || "").toLowerCase().includes("unique");
-      if (!isUniqueViolation || attempt === maxInsertRetries - 1) {
-        await refundEntitlement({ companyId: company_id, usageType: UsageType.UNIT_LABEL, quantity: qty });
-        if (isUniqueViolation) {
-          return NextResponse.json({ error: "Duplicate serial detected. Please try again." }, { status: 409 });
-        }
-        throw error;
+    try {
+      for (let i = 0; i < rows.length; i += DB_INSERT_BATCH_SIZE) {
+        const batch = rows.slice(i, i + DB_INSERT_BATCH_SIZE);
+        const { error } = await supabase.from("labels_units").insert(batch);
+        if (error) throw error;
       }
+    } catch (e: any) {
+      await refundEntitlement({ companyId: company_id, usageType: UsageType.UNIT_LABEL, quantity: qty });
+
+      const isUniqueViolation =
+        e?.code === "23505" || String(e?.message || "").toLowerCase().includes("unique");
+      if (isUniqueViolation) {
+        return NextResponse.json({ error: "Duplicate serial detected. Please try again." }, { status: 409 });
+      }
+      throw e;
     }
 
     return NextResponse.json({
       success: true,
-      generated: rows.length
+      generated: rows.length,
+      items: rows.map((r) => ({ serial: r.serial, gs1: r.payload ?? r.gs1_payload, payload: r.payload ?? r.gs1_payload })),
     });
   } catch (err: any) {
     if (err?.code === 'PAST_DUE' || err?.code === 'SUBSCRIPTION_INACTIVE') {

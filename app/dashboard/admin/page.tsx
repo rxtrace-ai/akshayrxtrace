@@ -16,7 +16,6 @@ import {
   TrendingUp,
   Database
 } from 'lucide-react';
-import HandsetManagementPanel from './DevicesSeatsPanel';
 
 /* ---------------- TYPES ---------------- */
 
@@ -201,16 +200,11 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* HANDSET MANAGEMENT PANEL */}
-      {userCompanyId ? (
-        <HandsetManagementPanel companyId={userCompanyId} />
-      ) : (
-        <Card>
-          <CardContent className="p-6 text-center text-gray-500">
-            No company linked to this user
-          </CardContent>
-        </Card>
-      )}
+      <Card>
+        <CardContent className="p-6 text-sm text-gray-600">
+          Legacy handset token management has been removed from this workspace. Active handset administration now depends on the current device-registration backend.
+        </CardContent>
+      </Card>
     </div>
   );
 }

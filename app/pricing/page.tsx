@@ -30,7 +30,7 @@ export default function PricingPage() {
       <section className="bg-blue-600 text-white text-center py-16">
         <h1 className="text-4xl font-bold">Start Free - No Credit Card Required</h1>
         <p className="mt-4 text-blue-100 text-lg max-w-2xl mx-auto">
-          Get 15 days of full access to all RxTrace features. Generate GS1-compliant labels, 
+          Activate a 10-day trial with a â‚¹1 Razorpay verification payment. Generate GS1-compliant labels,
           trace your products through the supply chain, and more.
         </p>
         <div className="mt-8">
@@ -42,7 +42,7 @@ export default function PricingPage() {
           </Link>
         </div>
         <p className="mt-4 text-sm text-blue-200">
-          No payment required • Full feature access • Cancel anytime
+          â‚¹1 activation • Full feature access • Cancel anytime
         </p>
       </section>
 
@@ -110,7 +110,7 @@ export default function PricingPage() {
           <div className="space-y-6">
             <FAQItem 
               question="Is the trial really free?"
-              answer="Yes! The 15-day trial is completely free. No credit card required, no charges will be made during or after the trial period unless you choose to subscribe."
+              answer="The trial requires a â‚¹1 Razorpay activation payment for verification. No recurring charges are applied unless you choose to subscribe."
             />
             <FAQItem 
               question="What happens after the trial ends?"

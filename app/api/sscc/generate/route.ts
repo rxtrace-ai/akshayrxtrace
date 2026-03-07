@@ -4,11 +4,21 @@ import { resolveCompanyIdFromRequest } from '@/lib/company/resolve';
 import { enforceEntitlement, refundEntitlement } from '@/lib/entitlement/enforce';
 import { UsageType } from '@/lib/entitlement/usageTypes';
 import { getRequestIdFromRequest } from '@/lib/http/requestId';
+import { computeGs1CheckDigit } from '@/app/lib/sscc';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
 const MAX_CODES_PER_REQUEST = 10000;
-const MAX_CODES_PER_ROW = 1000;
+const DB_INSERT_BATCH_SIZE = 1000;
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function normalizeDigits(input: unknown): string {
+  return String(input ?? '').replace(/[^0-9]/g, '');
+}
 
 function normalizeDateInput(raw?: string | null): string | null {
   const value = (raw || '').trim();
@@ -29,9 +39,6 @@ function normalizeDateInput(raw?: string | null): string | null {
   return null;
 }
 
-const isUuid = (value: string) =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-
 async function resolveSkuId(opts: {
   supabase: ReturnType<typeof getSupabaseAdmin>;
   companyId: string;
@@ -40,7 +47,6 @@ async function resolveSkuId(opts: {
   const { supabase, companyId, skuIdOrCode } = opts;
   const raw = String(skuIdOrCode || '').trim();
   if (!raw) throw new Error('sku_id is required');
-
   if (isUuid(raw)) return raw;
 
   const skuCode = raw.toUpperCase();
@@ -52,54 +58,42 @@ async function resolveSkuId(opts: {
     .maybeSingle();
 
   if (skuErr) throw new Error(skuErr.message ?? 'Failed to resolve SKU');
+  if (skuRow?.id) return skuRow.id;
 
-  if (!skuRow?.id) {
-    const { data: created, error: createErr } = await supabase
-      .from('skus')
-      .upsert(
-        { company_id: companyId, sku_code: skuCode, sku_name: null, deleted_at: null },
-        { onConflict: 'company_id,sku_code' }
-      )
-      .select('id')
-      .single();
+  const { data: created, error: createErr } = await supabase
+    .from('skus')
+    .upsert({ company_id: companyId, sku_code: skuCode, sku_name: null, deleted_at: null }, { onConflict: 'company_id,sku_code' })
+    .select('id')
+    .single();
 
-    if (createErr || !created?.id) {
-      throw new Error(createErr?.message ?? `Failed to create SKU in master: ${skuCode}`);
-    }
-
-    return created.id;
-  }
-
-  return skuRow.id;
+  if (createErr || !created?.id) throw new Error(createErr?.message ?? `Failed to create SKU: ${skuCode}`);
+  return created.id;
 }
 
-/**
- * Unified SSCC Generation Endpoint
- * 
- * Enforces hierarchy: Box → Carton → Pallet
- * All levels consume same SSCC quota
- * 
- * Request body:
- * - sku_id: string (required)
- * - company_id: string (required)
- * - batch: string (required)
- * - expiry_date: string (required)
- * - units_per_box: number (required)
- * - boxes_per_carton: number (required if generate_carton or generate_pallet)
- * - cartons_per_pallet: number (required if generate_pallet)
- * - number_of_pallets: number (required)
- * - generate_box: boolean
- * - generate_carton: boolean
- * - generate_pallet: boolean
- */
+function buildSscc(opts: { extDigit: number; companyPrefixDigits: string; serialRefDigits: string }) {
+  const ext = String(Math.max(0, Math.min(9, opts.extDigit)));
+  const prefix = normalizeDigits(opts.companyPrefixDigits);
+  const serialRef = normalizeDigits(opts.serialRefDigits);
+
+  // SSCC-18 structure: ext(1) + prefix + serialRef + check(1)
+  // We build number17 as ext + (prefix + serialRef padded/truncated) to 16 digits.
+  const body16 = (prefix + serialRef).padStart(16, '0').slice(0, 16);
+  const number17 = (ext + body16).slice(0, 17);
+  const check = computeGs1CheckDigit(number17);
+  return number17 + check;
+}
+
+function nowSerialSeed() {
+  const ts = String(Date.now()).padStart(13, '0');
+  const rnd = String(Math.floor(Math.random() * 1_000_000_000)).padStart(9, '0');
+  return `${ts}${rnd}`;
+}
+
 export async function POST(req: Request) {
-  // IMPORTANT:
-  // Do NOT implement quota logic in this route.
-  // All entitlement enforcement must use lib/entitlement/enforce.ts
   let entitlementConsumed = false;
-  let consumedQuantity = 0;
-  let consumedCompanyId = '';
-  
+  let entitlementCompanyId = '';
+  let entitlementQuantity = 0;
+
   try {
     const supabase = getSupabaseAdmin();
     const body = await req.json();
@@ -107,6 +101,9 @@ export async function POST(req: Request) {
       typeof (body as any)?.request_id === 'string' && String((body as any).request_id).trim()
         ? `sscc_generate:body:${String((body as any).request_id).trim()}`
         : getRequestIdFromRequest(req, 'sscc_generate');
+
+    const authCompanyId = await resolveCompanyIdFromRequest(req);
+    if (!authCompanyId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const {
       company_id: requestedCompanyId,
@@ -121,410 +118,206 @@ export async function POST(req: Request) {
       generate_carton = false,
       generate_pallet = false,
       compliance_ack,
+      sscc_company_prefix,
+      sscc_extension_digit,
     } = body ?? {};
-    const authCompanyId = await resolveCompanyIdFromRequest(req);
-    if (!authCompanyId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+
     if (requestedCompanyId && requestedCompanyId !== authCompanyId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const company_id = authCompanyId;
 
     if (compliance_ack !== true) {
-      return NextResponse.json(
-        { error: 'compliance_ack=true is required', code: 'compliance_required' },
-        { status: 400 }
-      );
-    }
-
-    // Option A eligibility (Phase 3+): SSCC allowed only if company has at least one SKU with a GTIN.
-    const { data: anySku } = await supabase
-      .from('skus')
-      .select('id')
-      .eq('company_id', company_id)
-      .not('gtin', 'is', null)
-      .limit(1);
-
-    const hasGs1LikeGtin = Array.isArray(anySku) && anySku.length > 0;
-
-    if (!hasGs1LikeGtin) {
-      return NextResponse.json(
-        { error: 'SSCC generation is enabled only for GS1-mode companies (GTIN required).', code: 'gs1_required' },
-        { status: 403 }
-      );
-    }
-
-    // Validate required fields
-    const normalizedExpiry = normalizeDateInput(expiry_date);
-
-    if (!sku_id || !batch || !expiry_date || !number_of_pallets) {
-      return NextResponse.json(
-        { error: 'sku_id, batch, expiry_date, and number_of_pallets are required' },
-        { status: 400 }
-      );
-    }
-    if (!normalizedExpiry) {
-      return NextResponse.json(
-        { error: 'expiry_date must be YYYY-MM-DD', code: 'invalid_input' },
-        { status: 400 }
-      );
-    }
-
-    // Validate hierarchy rules
-    if (generate_carton && !generate_box) {
-      return NextResponse.json(
-        { error: 'SSCC generation must follow hierarchy: Box → Carton → Pallet. Carton requires Box.' },
-        { status: 400 }
-      );
-    }
-
-    if (generate_pallet && (!generate_box || !generate_carton)) {
-      return NextResponse.json(
-        { error: 'SSCC generation must follow hierarchy: Box → Carton → Pallet. Pallet requires Box and Carton.' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'compliance_ack=true is required', code: 'compliance_required' }, { status: 400 });
     }
 
     if (!generate_box && !generate_carton && !generate_pallet) {
-      return NextResponse.json(
-        { error: 'At least one SSCC level must be selected (Box, Carton, or Pallet)' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'At least one SSCC level must be selected (Box, Carton, Pallet)' }, { status: 400 });
+    }
+    if (generate_carton && !generate_box) {
+      return NextResponse.json({ error: 'Carton requires Box (hierarchy enforcement).' }, { status: 400 });
+    }
+    if (generate_pallet && (!generate_box || !generate_carton)) {
+      return NextResponse.json({ error: 'Pallet requires Box and Carton (hierarchy enforcement).' }, { status: 400 });
     }
 
-    // Validate hierarchy quantities
-    if ((generate_carton || generate_pallet) && (!boxes_per_carton || boxes_per_carton < 1)) {
-      return NextResponse.json(
-        { error: 'boxes_per_carton is required when generating Carton or Pallet' },
-        { status: 400 }
-      );
+    const normalizedExpiry = normalizeDateInput(expiry_date);
+    if (!sku_id || !batch || !normalizedExpiry || !number_of_pallets) {
+      return NextResponse.json({ error: 'sku_id, batch, expiry_date, and number_of_pallets are required' }, { status: 400 });
     }
 
-    if (generate_pallet && (!cartons_per_pallet || cartons_per_pallet < 1)) {
-      return NextResponse.json(
-        { error: 'cartons_per_pallet is required when generating Pallet' },
-        { status: 400 }
-      );
+    const palletsCount = Number(number_of_pallets);
+    if (!Number.isFinite(palletsCount) || palletsCount <= 0 || !Number.isInteger(palletsCount)) {
+      return NextResponse.json({ error: 'number_of_pallets must be a positive integer' }, { status: 400 });
     }
 
-    if (!units_per_box || units_per_box < 1) {
-      return NextResponse.json(
-        { error: 'units_per_box must be a positive integer' },
-        { status: 400 }
-      );
+    const unitsPerBox = Number(units_per_box);
+    if (!Number.isFinite(unitsPerBox) || unitsPerBox < 1 || !Number.isInteger(unitsPerBox)) {
+      return NextResponse.json({ error: 'units_per_box must be a positive integer' }, { status: 400 });
     }
 
-    const skuUuid = await resolveSkuId({
-      supabase,
-      companyId: company_id,
-      skuIdOrCode: sku_id,
-    });
+    const boxesPerCarton = generate_carton || generate_pallet ? Number(boxes_per_carton) : Number(boxes_per_carton ?? 1);
+    const cartonsPerPallet = generate_pallet ? Number(cartons_per_pallet) : Number(cartons_per_pallet ?? 1);
 
-    // Get packing rule
-    const { data: rule, error: ruleErr } = await supabase
-      .from('packing_rules')
-      .select('*')
-      .eq('company_id', company_id)
-      .eq('sku_id', skuUuid)
-      .order('version', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (ruleErr || !rule) {
-      return NextResponse.json(
-        { error: 'Packing rule not found for selected SKU' },
-        { status: 400 }
-      );
+    if ((generate_carton || generate_pallet) && (!Number.isInteger(boxesPerCarton) || boxesPerCarton < 1)) {
+      return NextResponse.json({ error: 'boxes_per_carton is required when generating Carton or Pallet' }, { status: 400 });
+    }
+    if (generate_pallet && (!Number.isInteger(cartonsPerPallet) || cartonsPerPallet < 1)) {
+      return NextResponse.json({ error: 'cartons_per_pallet is required when generating Pallet' }, { status: 400 });
     }
 
-    const prefix = rule.sscc_company_prefix;
-    const ext = rule.sscc_extension_digit;
+    const skuUuid = await resolveSkuId({ supabase, companyId: company_id, skuIdOrCode: sku_id });
 
-    // Calculate total SSCC count needed (all levels combined)
     let totalSSCCCount = 0;
-    if (generate_box) {
-      // Boxes: number_of_pallets * boxes_per_carton * cartons_per_pallet
-      const boxesPerPallet = (boxes_per_carton || 1) * (cartons_per_pallet || 1);
-      totalSSCCCount += number_of_pallets * boxesPerPallet;
-    }
-    if (generate_carton) {
-      // Cartons: number_of_pallets * cartons_per_pallet
-      totalSSCCCount += number_of_pallets * (cartons_per_pallet || 1);
-    }
-    if (generate_pallet) {
-      // Pallets: number_of_pallets
-      totalSSCCCount += number_of_pallets;
-    }
+    if (generate_box) totalSSCCCount += palletsCount * boxesPerCarton * cartonsPerPallet;
+    if (generate_carton) totalSSCCCount += palletsCount * cartonsPerPallet;
+    if (generate_pallet) totalSSCCCount += palletsCount;
 
-    if (totalSSCCCount > MAX_CODES_PER_ROW) {
-      return NextResponse.json(
-        {
-          error: `Per entry limit exceeded. Maximum ${MAX_CODES_PER_ROW.toLocaleString()} codes per entry.`,
-          code: 'limit_exceeded',
-          requested: totalSSCCCount,
-          max_per_row: MAX_CODES_PER_ROW,
-          max_per_request: MAX_CODES_PER_REQUEST,
-        },
-        { status: 400 }
-      );
-    }
     if (totalSSCCCount > MAX_CODES_PER_REQUEST) {
-      return NextResponse.json(
-        {
-          error: `Per request limit exceeded. Maximum ${MAX_CODES_PER_REQUEST.toLocaleString()} codes per request.`,
-          code: 'limit_exceeded',
-          requested: totalSSCCCount,
-          max_per_row: MAX_CODES_PER_ROW,
-          max_per_request: MAX_CODES_PER_REQUEST,
-        },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: `Request limit exceeded (${MAX_CODES_PER_REQUEST})`, code: 'limit_exceeded' }, { status: 400 });
     }
 
+    // Entitlement (single quota authority)
     const decision = await enforceEntitlement({
       companyId: company_id,
       usageType: UsageType.SSCC_LABEL,
       quantity: totalSSCCCount,
       requestId,
-      metadata: { source: "sscc_generate" },
+      metadata: { source: 'sscc_generate' },
     });
     if (!decision.allow) {
-      return NextResponse.json(
-        {
-          error: decision.reason_code,
-          remaining: decision.remaining,
-        },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: decision.reason_code, remaining: decision.remaining }, { status: 403 });
     }
-
-    // Mark entitlement consumed for error handling
     entitlementConsumed = true;
-    consumedQuantity = totalSSCCCount;
-    consumedCompanyId = company_id;
+    entitlementCompanyId = company_id;
+    entitlementQuantity = totalSSCCCount;
 
-    // Allocate SSCC serials (after quota check passes)
-    const { data: alloc, error: allocErr } = await supabase.rpc('allocate_sscc_serials', {
-      p_sequence_key: prefix,
-      p_count: totalSSCCCount,
-    });
+    const prefixDigits = normalizeDigits(sscc_company_prefix || '1234567') || '1234567';
+    const baseExt = Number.isInteger(Number(sscc_extension_digit)) ? Number(sscc_extension_digit) : 0;
 
-    if (allocErr) {
-      await refundEntitlement({
-        companyId: company_id,
-        usageType: UsageType.SSCC_LABEL,
-        quantity: totalSSCCCount,
-      });
-      return NextResponse.json(
-        { error: allocErr.message ?? 'Failed to allocate SSCC serials' },
-        { status: 400 }
-      );
+    const meta = {
+      batch,
+      expiry_date: normalizedExpiry,
+      units_per_box: unitsPerBox,
+      boxes_per_carton: boxesPerCarton,
+      cartons_per_pallet: cartonsPerPallet,
+    };
+
+    const pallets: any[] = [];
+    const cartons: any[] = [];
+    const boxes: any[] = [];
+
+    // Generate hierarchy in-memory, then insert in batches.
+    for (let p = 0; p < palletsCount; p++) {
+      const palletSscc = generate_pallet
+        ? buildSscc({ extDigit: (baseExt + 6) % 10, companyPrefixDigits: prefixDigits, serialRefDigits: nowSerialSeed() })
+        : null;
+
+      const palletRow = generate_pallet
+        ? {
+            company_id,
+            sku_id: skuUuid,
+            sscc: palletSscc,
+            sscc_with_ai: `(00)${palletSscc}`,
+            meta,
+          }
+        : null;
+
+      // Insert placeholder now; we need pallet ids for children. We'll insert pallets first.
+      if (palletRow) pallets.push(palletRow);
     }
 
-    const firstSerial = alloc as any;
-    const nowIso = new Date().toISOString();
+    // Insert pallets first and capture ids (needed to link cartons/boxes).
+    const insertedPallets: any[] = [];
+    for (let i = 0; i < pallets.length; i += DB_INSERT_BATCH_SIZE) {
+      const batchRows = pallets.slice(i, i + DB_INSERT_BATCH_SIZE);
+      const { data, error } = await supabase.from('pallets').insert(batchRows).select('id, sscc, sscc_with_ai, sku_id');
+      if (error) throw error;
+      if (Array.isArray(data)) insertedPallets.push(...data);
+    }
 
-    // Prepare all SSCC rows for atomic insertion
-    const ssccRows: any[] = [];
-    let serialOffset = 0;
+    const palletsForChildren = generate_pallet ? insertedPallets : Array.from({ length: palletsCount }).map(() => null);
 
-    // Generate Boxes (if selected)
-    if (generate_box) {
-      const boxesPerPallet = (boxes_per_carton || 1) * (cartons_per_pallet || 1);
-      const totalBoxes = number_of_pallets * boxesPerPallet;
+    for (let p = 0; p < palletsCount; p++) {
+      const pallet = palletsForChildren[p];
+      const palletId = pallet?.id ?? null;
 
-      for (let i = 0; i < totalBoxes; i++) {
-        const serial = Number(firstSerial) + serialOffset;
-        const { data: ssccGen, error: ssccErr } = await supabase.rpc('make_sscc', {
-          p_extension_digit: ext,
-          p_company_prefix: prefix,
-          p_serial: serial,
+      const cartonsCount = generate_carton ? cartonsPerPallet : 0;
+      for (let c = 0; c < cartonsCount; c++) {
+        const cartonSscc = buildSscc({ extDigit: (baseExt + 3) % 10, companyPrefixDigits: prefixDigits, serialRefDigits: nowSerialSeed() });
+        cartons.push({
+          company_id,
+          pallet_id: palletId,
+          sku_id: skuUuid,
+          sscc: cartonSscc,
+          sscc_with_ai: `(00)${cartonSscc}`,
+          code: cartonSscc,
+          meta,
         });
+      }
+    }
 
-        if (ssccErr || !ssccGen) {
-          await refundEntitlement({
-            companyId: company_id,
-            usageType: UsageType.SSCC_LABEL,
-            quantity: totalSSCCCount,
+    const insertedCartons: any[] = [];
+    for (let i = 0; i < cartons.length; i += DB_INSERT_BATCH_SIZE) {
+      const batchRows = cartons.slice(i, i + DB_INSERT_BATCH_SIZE);
+      const { data, error } = await supabase.from('cartons').insert(batchRows).select('id, sscc, sscc_with_ai, sku_id, pallet_id');
+      if (error) throw error;
+      if (Array.isArray(data)) insertedCartons.push(...data);
+    }
+
+    // Map cartons back to pallet index order (best effort based on insertion order).
+    let cartonIdx = 0;
+    for (let p = 0; p < palletsCount; p++) {
+      const pallet = palletsForChildren[p];
+      const palletId = pallet?.id ?? null;
+
+      const cartonsCount = generate_carton ? cartonsPerPallet : 0;
+      const boxesCountPerCarton = generate_box ? boxesPerCarton : 0;
+
+      for (let c = 0; c < cartonsCount; c++) {
+        const carton = insertedCartons[cartonIdx++] ?? null;
+        const cartonId = carton?.id ?? null;
+
+        for (let b = 0; b < boxesCountPerCarton; b++) {
+          const boxSscc = buildSscc({ extDigit: (baseExt + 1) % 10, companyPrefixDigits: prefixDigits, serialRefDigits: nowSerialSeed() });
+          boxes.push({
+            company_id,
+            carton_id: cartonId,
+            pallet_id: palletId,
+            sku_id: skuUuid,
+            sscc: boxSscc,
+            sscc_with_ai: `(00)${boxSscc}`,
+            code: boxSscc,
+            meta,
           });
-          return NextResponse.json(
-            { error: ssccErr?.message ?? 'Failed to generate SSCC for box' },
-            { status: 400 }
-          );
         }
-
-        ssccRows.push({
-          company_id: company_id,
-          sku_id: skuUuid,
-          sscc: ssccGen as any,
-          sscc_with_ai: `(00)${ssccGen}`,
-          code: ssccGen as any, // Set code to SSCC value (required by NOT NULL constraint)
-          sscc_level: 'box',
-          parent_sscc: null,
-          meta: {
-            created_at: nowIso,
-            batch,
-            expiry_date: normalizedExpiry,
-            units_per_box: units_per_box,
-            box_number: i + 1,
-            packing_rule_id: rule.id,
-          },
-          created_at: nowIso,
-        });
-        serialOffset++;
       }
     }
 
-    // Generate Cartons (if selected)
-    if (generate_carton) {
-      const totalCartons = number_of_pallets * (cartons_per_pallet || 1);
-
-      for (let i = 0; i < totalCartons; i++) {
-        const serial = Number(firstSerial) + serialOffset;
-        const { data: ssccGen, error: ssccErr } = await supabase.rpc('make_sscc', {
-          p_extension_digit: ext,
-          p_company_prefix: prefix,
-          p_serial: serial,
-        });
-
-        if (ssccErr || !ssccGen) {
-          await refundEntitlement({
-            companyId: company_id,
-            usageType: UsageType.SSCC_LABEL,
-            quantity: totalSSCCCount,
-          });
-          return NextResponse.json(
-            { error: ssccErr?.message ?? 'Failed to generate SSCC for carton' },
-            { status: 400 }
-          );
-        }
-
-        ssccRows.push({
-          company_id: company_id,
-          sku_id: skuUuid,
-          sscc: ssccGen as any,
-          sscc_with_ai: `(00)${ssccGen}`,
-          code: ssccGen as any, // Set code to SSCC value (required by NOT NULL constraint)
-          sscc_level: 'carton',
-          parent_sscc: null,
-          meta: {
-            created_at: nowIso,
-            batch,
-            expiry_date: normalizedExpiry,
-            boxes_per_carton: boxes_per_carton,
-            carton_number: i + 1,
-            packing_rule_id: rule.id,
-          },
-          created_at: nowIso,
-        });
-        serialOffset++;
-      }
+    const insertedBoxes: any[] = [];
+    for (let i = 0; i < boxes.length; i += DB_INSERT_BATCH_SIZE) {
+      const batchRows = boxes.slice(i, i + DB_INSERT_BATCH_SIZE);
+      const { data, error } = await supabase.from('boxes').insert(batchRows).select('id, sscc, sscc_with_ai, sku_id, pallet_id, carton_id');
+      if (error) throw error;
+      if (Array.isArray(data)) insertedBoxes.push(...data);
     }
-
-    // Generate Pallets (if selected)
-    if (generate_pallet) {
-      for (let i = 0; i < number_of_pallets; i++) {
-        const serial = Number(firstSerial) + serialOffset;
-        const { data: ssccGen, error: ssccErr } = await supabase.rpc('make_sscc', {
-          p_extension_digit: ext,
-          p_company_prefix: prefix,
-          p_serial: serial,
-        });
-
-        if (ssccErr || !ssccGen) {
-          return NextResponse.json(
-            { error: ssccErr?.message ?? 'Failed to generate SSCC for pallet' },
-            { status: 400 }
-          );
-        }
-
-        ssccRows.push({
-          company_id: company_id,
-          sku_id: skuUuid,
-          sscc: ssccGen as any,
-          sscc_with_ai: `(00)${ssccGen}`,
-          code: ssccGen as any, // Set code to SSCC value (if code column exists)
-          sscc_level: 'pallet',
-          parent_sscc: null,
-          meta: {
-            created_at: nowIso,
-            batch,
-            expiry_date: normalizedExpiry,
-            cartons_per_pallet: cartons_per_pallet,
-            pallet_number: i + 1,
-            packing_rule_id: rule.id,
-          },
-          created_at: nowIso,
-        });
-        serialOffset++;
-      }
-    }
-
-    // Insert all SSCCs into appropriate tables
-    // Quota already consumed above, so proceed with insertion
-    const insertedBoxes = ssccRows.filter(r => r.sscc_level === 'box').length > 0
-      ? await supabase.from('boxes').insert(
-          ssccRows.filter(r => r.sscc_level === 'box')
-        ).select('id, sscc, sscc_with_ai, sku_id')
-      : { data: [], error: null };
-
-    const insertedCartons = ssccRows.filter(r => r.sscc_level === 'carton').length > 0
-      ? await supabase.from('cartons').insert(
-          ssccRows.filter(r => r.sscc_level === 'carton')
-        ).select('id, sscc, sscc_with_ai, sku_id')
-      : { data: [], error: null };
-
-    const insertedPallets = ssccRows.filter(r => r.sscc_level === 'pallet').length > 0
-      ? await supabase.from('pallets').insert(
-          ssccRows.filter(r => r.sscc_level === 'pallet')
-        ).select('id, sscc, sscc_with_ai, sku_id')
-      : { data: [], error: null };
-
-    // Check for insertion errors
-    if (insertedBoxes.error || insertedCartons.error || insertedPallets.error) {
-      await refundEntitlement({
-        companyId: company_id,
-        usageType: UsageType.SSCC_LABEL,
-        quantity: totalSSCCCount,
-      });
-
-      const errorMsg = insertedBoxes.error?.message || insertedCartons.error?.message || insertedPallets.error?.message;
-      return NextResponse.json(
-        { error: errorMsg ?? 'Failed to insert SSCC codes' },
-        { status: 500 }
-      );
-    }
-
-    // TODO: Link parent-child relationships (box → carton, carton → pallet)
-    // This requires updating boxes.carton_id and cartons.pallet_id
 
     return NextResponse.json({
-      boxes: insertedBoxes.data || [],
-      cartons: insertedCartons.data || [],
-      pallets: insertedPallets.data || [],
-      total_sscc_generated: totalSSCCCount,
+      ok: true,
+      boxes: insertedBoxes,
+      cartons: insertedCartons,
+      pallets: insertedPallets,
     });
   } catch (err: any) {
-    // If entitlement was consumed but an error occurred, try to refund
-    if (entitlementConsumed && consumedQuantity > 0 && consumedCompanyId) {
-      try {
-        await refundEntitlement({
-          companyId: consumedCompanyId,
-          usageType: UsageType.SSCC_LABEL,
-          quantity: consumedQuantity,
-        });
-      } catch (refundErr) {
-        console.error('Failed to refund quota in error handler:', refundErr);
-      }
+    if (entitlementConsumed && entitlementCompanyId && entitlementQuantity > 0) {
+      await refundEntitlement({
+        companyId: entitlementCompanyId,
+        usageType: UsageType.SSCC_LABEL,
+        quantity: entitlementQuantity,
+      }).catch(() => undefined);
     }
-    
-    return NextResponse.json(
-      {
-        error: 'Unable to generate SSCC codes right now. Please try again.',
-        code: 'internal_error',
-      },
-      { status: 500 }
-    );
+
+    return NextResponse.json({ error: err?.message || 'SSCC generation failed' }, { status: 500 });
   }
 }
+

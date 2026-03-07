@@ -6,6 +6,7 @@ import { generateCanonicalGS1 } from '@/lib/gs1Canonical';
 import { parseGS1 } from '@/lib/parseGS1';
 import { resolveCodeMode } from '@/lib/codeMode';
 import { buildPicUnitPayload } from '@/lib/picPayload';
+import { enforceEntitlement, refundEntitlement } from '@/lib/entitlement/enforce';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -84,6 +85,12 @@ export async function POST(req: Request) {
       invalid: 0,
       errors: [] as Array<{ row: number; error: string }>,
     };
+
+    const requestId =
+      req.headers.get('Idempotency-Key') ||
+      req.headers.get('Idempotency-key') ||
+      req.headers.get('idempotency-key') ||
+      crypto.randomUUID();
 
     const validRows: Array<{
       company_id: string;
@@ -282,24 +289,66 @@ export async function POST(req: Request) {
       }
     }
 
-    // Insert valid rows
+    // Enforce unit quota for ERP ingestion (one row = one UNIT consumption)
     if (validRows.length > 0) {
-      const { error: insertError } = await admin.from('labels_units').insert(validRows);
+      const decision = await enforceEntitlement({
+        supabase: admin,
+        companyId,
+        metric: 'unit',
+        qty: validRows.length,
+        requestId: `erp:unit_ingest:${requestId}`,
+        source: 'api',
+      });
 
-      if (insertError) {
-        // Check if it's a duplicate key error
-        if (insertError.code === '23505' || insertError.message?.includes('unique')) {
-          results.duplicates += validRows.length;
-          results.skipped += validRows.length;
-        } else {
+      if (!decision.ok) {
+        return NextResponse.json(
+          { error: 'QUOTA_EXCEEDED', code: 'quota_exceeded', results },
+          { status: 403 }
+        );
+      }
+    }
+
+    // Insert valid rows (batched)
+    if (validRows.length > 0) {
+      const BATCH_SIZE = 1000;
+      let insertedCount = 0;
+
+      for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
+        const batch = validRows.slice(i, i + BATCH_SIZE);
+        const { error: insertError } = await admin.from('labels_units').insert(batch);
+
+        if (insertError) {
+          // Refund quota if we already consumed it and insert failed.
+          try {
+            await refundEntitlement({
+              supabase: admin,
+              companyId,
+              metric: 'unit',
+              qty: validRows.length,
+              requestId: `erp:unit_ingest:${requestId}`,
+              source: 'api',
+            });
+          } catch {
+            // best-effort; do not mask primary error
+          }
+
+          // Check if it's a duplicate key error
+          if (insertError.code === '23505' || insertError.message?.includes('unique')) {
+            results.duplicates += batch.length;
+            results.skipped += batch.length;
+            continue;
+          }
+
           return NextResponse.json(
             { error: `Failed to import units: ${insertError.message}`, results },
             { status: 500 }
           );
         }
-      } else {
-        results.imported = validRows.length;
+
+        insertedCount += batch.length;
       }
+
+      results.imported = insertedCount;
     }
 
     // Audit log
@@ -342,4 +391,3 @@ export async function POST(req: Request) {
     );
   }
 }
-

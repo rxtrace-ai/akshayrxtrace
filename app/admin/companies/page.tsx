@@ -78,10 +78,7 @@ export default function CompaniesManagement() {
     contact_phone: '',
     address: ''
   });
-  const [resetModalOpen, setResetModalOpen] = useState(false);
-  const [resetReason, setResetReason] = useState('');
-  const [resetTarget, setResetTarget] = useState<Company | null>(null);
-  const [resetLoading, setResetLoading] = useState(false);
+  // Trials are webhook-only; admin trial reset is intentionally disabled.
 
   // PHASE-2: Two-step confirmation for freeze/unfreeze
   const [freezeConfirming, setFreezeConfirming] = useState(false);
@@ -197,36 +194,6 @@ export default function CompaniesManagement() {
     setFormData({ company_name: '', gst_number: '', contact_email: '', contact_phone: '', address: '' });
   }
 
-  async function handleResetTrial() {
-    if (!resetTarget) return;
-    setResetLoading(true);
-    try {
-      const response = await fetch(`/api/admin/companies/${resetTarget.id}/reset-trial`, {
-        method: 'PUT',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': createIdempotencyKey()
-        },
-        body: JSON.stringify({
-          reason: resetReason.trim() || undefined
-        })
-      });
-      const result = await parseApiJson(response);
-      if (!response.ok) throw new Error(result.message || result.error || 'Failed to reset trial');
-      alert('Trial reset successfully');
-      setResetModalOpen(false);
-      setResetReason('');
-      setResetTarget(null);
-      fetchCompanies();
-    } catch (error: any) {
-      console.error('Error resetting trial:', error);
-      alert('Failed to reset trial: ' + error.message);
-    } finally {
-      setResetLoading(false);
-    }
-  }
-
   async function handleToggleFreeze(company: Company) {
     const currentStatus = company.wallet_status || 'ACTIVE';
     const newStatus = currentStatus === 'ACTIVE' ? 'FROZEN' : 'ACTIVE';
@@ -330,11 +297,6 @@ export default function CompaniesManagement() {
             onToggleFreeze={handleToggleFreeze}
             onEdit={openEditForm}
             onDelete={handleDelete}
-            onResetTrial={(c) => {
-              setResetTarget(c);
-              setResetReason('');
-              setResetModalOpen(true);
-            }}
           />
         ))}
 
@@ -432,51 +394,6 @@ export default function CompaniesManagement() {
         </div>
       )}
 
-      {/* Reset Trial Modal */}
-      {resetModalOpen && resetTarget && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-lg">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Reset Trial</CardTitle>
-              <Button variant="ghost" size="sm" onClick={() => setResetModalOpen(false)}>
-                <X className="w-4 h-4" />
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-gray-600">
-                Reset trial for <strong>{resetTarget.company_name}</strong>. This will remove the current
-                trial row so the company can start a new trial.
-              </p>
-              <div>
-                <Label htmlFor="reset_reason">Reason (optional)</Label>
-                <Input
-                  id="reset_reason"
-                  value={resetReason}
-                  onChange={(e) => setResetReason(e.target.value)}
-                  placeholder="Support case or justification"
-                />
-              </div>
-              <div className="flex gap-2 pt-4">
-                <Button
-                  variant="outline"
-                  onClick={() => setResetModalOpen(false)}
-                  disabled={resetLoading}
-                  className="flex-1"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleResetTrial}
-                  disabled={resetLoading}
-                  className="flex-1 bg-red-600 hover:bg-red-700"
-                >
-                  {resetLoading ? 'Resetting...' : 'Reset Trial'}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
     </div>
   );
 }
@@ -486,14 +403,12 @@ function CompanyCard({
   company, 
   onToggleFreeze, 
   onEdit, 
-  onDelete,
-  onResetTrial
+  onDelete
 }: { 
   company: Company; 
   onToggleFreeze: (c: Company) => void;
   onEdit: (c: Company) => void;
   onDelete: (c: Company) => void;
-  onResetTrial: (c: Company) => void;
 }) {
   const status: 'ACTIVE' | 'FROZEN' = company.wallet_status === 'FROZEN' ? 'FROZEN' : 'ACTIVE';
 
@@ -575,15 +490,7 @@ function CompanyCard({
             <Trash2 className="w-3 h-3 mr-1" /> Delete
           </Button>
         </div>
-        <div className="grid grid-cols-1 gap-3 pt-3 md:grid-cols-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => onResetTrial(company)}
-            className="w-full"
-          >
-            <RefreshCw className="w-3 h-3 mr-1" /> Reset Trial
-          </Button>
+        <div className="grid grid-cols-1 gap-3 pt-3 md:grid-cols-1">
           <Button
             size="sm"
             variant="outline"

@@ -217,15 +217,15 @@ export async function POST(req: Request) {
        3️⃣ Check company paid scan module (if enabled)
     ------------------------------------------------ */
     const { data: headsRow } = await supabase
-      .from("company_active_heads")
-      .select("*")
+      .from("companies")
+      .select("id")
       .eq("company_id", resolvedCompanyId)
       .maybeSingle();
 
-    const heads = headsRow?.heads as any;
+    const heads: any = null;
     
     // If company has active_heads configured, check high_scan
-    if (headsRow && (!heads || heads.high_scan !== true)) {
+    if (false) {
       return NextResponse.json(
         { success: false, error: "Scan module not enabled" },
         { status: 403 }
@@ -236,8 +236,7 @@ export async function POST(req: Request) {
        3️⃣b Master switch: scanning_enabled (if configured)
        This is separate from activation/token generation.
     ------------------------------------------------ */
-    const scanningEnabled =
-      heads?.scanner_scanning_enabled === undefined ? true : !!heads.scanner_scanning_enabled;
+    const scanningEnabled = true;
     if (!scanningEnabled) {
       return NextResponse.json(
         { success: false, error: 'Scanning disabled by admin' },

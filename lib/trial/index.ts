@@ -145,52 +145,16 @@ export async function startTrialForCompany(
   companyId: string,
   opts?: { force?: boolean; reason?: string; now?: Date }
 ) {
-  const now = opts?.now ?? new Date();
-  const expires = new Date(now);
-  expires.setUTCDate(expires.getUTCDate() + TRIAL_CONFIG.duration_days);
-
-  const { data: existing, error: fetchErr } = await supabase
-    .from('companies')
-    .select('trial_started_at, trial_start_at')
-    .eq('id', companyId)
-    .maybeSingle();
-
-  if (fetchErr) {
-    throw fetchErr;
-  }
-
-  if (!opts?.force && (existing?.trial_start_at || existing?.trial_started_at)) {
-    return {
-      ok: false,
-      error: 'TRIAL_ALREADY_STARTED',
-      trial: {
-        started_at: existing.trial_start_at ?? existing.trial_started_at,
-        expires_at: null,
-      },
-    };
-  }
-
-  const { error: updateErr } = await supabase
-    .from('companies')
-    .update({
-      trial_started_at: now.toISOString(),
-      trial_expires_at: expires.toISOString(),
-      trial_start_at: now.toISOString(),
-      trial_end_at: expires.toISOString(),
-      updated_at: now.toISOString(),
-    })
-    .eq('id', companyId);
-
-  if (updateErr) {
-    throw updateErr;
-  }
-
+  // Trials must ONLY be activated by verified Razorpay webhooks.
+  // This function is kept to avoid breaking imports in older branches,
+  // but it is intentionally disabled.
+  void supabase;
+  void companyId;
+  void opts;
   return {
-    ok: true,
-    trial: {
-      started_at: now.toISOString(),
-      expires_at: expires.toISOString(),
-    },
+    ok: false,
+    error: 'TRIAL_ACTIVATION_WEBHOOK_ONLY',
+    trial: { started_at: null, expires_at: null },
   };
 }
 
