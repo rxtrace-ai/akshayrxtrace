@@ -75,10 +75,25 @@ function buildSscc(opts: { extDigit: number; companyPrefixDigits: string; serial
   return number17 + check;
 }
 
-function nowSerialSeed() {
-  const ts = String(Date.now()).padStart(13, '0');
-  const rnd = String(Math.floor(Math.random() * 1_000_000_000)).padStart(9, '0');
-  return `${ts}${rnd}`;
+async function fetchSsccSerialRefs(supabase: ReturnType<typeof getSupabaseAdmin>, count: number): Promise<string[]> {
+  if (count <= 0) return [];
+
+  const { data, error } = await supabase.rpc('next_sscc_serial_refs', { p_count: count });
+  if (error) {
+    throw new Error(error.message ?? 'Failed to allocate SSCC serial references');
+  }
+
+  const refs = Array.isArray(data)
+    ? data
+        .map((row: any) => String(row?.serial_ref_digits ?? '').trim())
+        .filter((value) => value.length > 0)
+    : [];
+
+  if (refs.length !== count) {
+    throw new Error('Failed to allocate the required number of SSCC serial references');
+  }
+
+  return refs;
 }
 
 export async function POST(req: Request) {
@@ -165,9 +180,21 @@ export async function POST(req: Request) {
     const skuUuid = sku.id;
 
     let totalSSCCCount = 0;
-    if (generate_box) totalSSCCCount += palletsCount * boxesPerCarton * cartonsPerPallet;
-    if (generate_carton) totalSSCCCount += palletsCount * cartonsPerPallet;
-    if (generate_pallet) totalSSCCCount += palletsCount;
+
+    if (generate_box) {
+      const cartons = generate_carton ? cartonsPerPallet : 1;
+      const boxes = boxesPerCarton || 1;
+      totalSSCCCount += palletsCount * cartons * boxes;
+    }
+
+    if (generate_carton) {
+      const cartons = cartonsPerPallet || 1;
+      totalSSCCCount += palletsCount * cartons;
+    }
+
+    if (generate_pallet) {
+      totalSSCCCount += palletsCount;
+    }
 
     const usageType = generate_pallet
       ? UsageType.PALLET_LABEL
@@ -205,6 +232,16 @@ export async function POST(req: Request) {
       boxes_per_carton: boxesPerCarton,
       cartons_per_pallet: cartonsPerPallet,
     };
+    const serialRefs = await fetchSsccSerialRefs(supabase, totalSSCCCount);
+    let serialRefIndex = 0;
+    const takeSerialRef = () => {
+      const serialRef = serialRefs[serialRefIndex];
+      serialRefIndex += 1;
+      if (!serialRef) {
+        throw new Error('SSCC serial reference allocation exhausted');
+      }
+      return serialRef;
+    };
 
     const pallets: any[] = [];
     const cartons: any[] = [];
@@ -213,7 +250,7 @@ export async function POST(req: Request) {
     // Generate hierarchy in-memory, then insert in batches.
     for (let p = 0; p < palletsCount; p++) {
       const palletSscc = generate_pallet
-        ? buildSscc({ extDigit: (baseExt + 6) % 10, companyPrefixDigits: prefixDigits, serialRefDigits: nowSerialSeed() })
+        ? buildSscc({ extDigit: (baseExt + 6) % 10, companyPrefixDigits: prefixDigits, serialRefDigits: takeSerialRef() })
         : null;
 
       const palletRow = generate_pallet
@@ -247,7 +284,7 @@ export async function POST(req: Request) {
 
       const cartonsCount = generate_carton ? cartonsPerPallet : 0;
       for (let c = 0; c < cartonsCount; c++) {
-        const cartonSscc = buildSscc({ extDigit: (baseExt + 3) % 10, companyPrefixDigits: prefixDigits, serialRefDigits: nowSerialSeed() });
+        const cartonSscc = buildSscc({ extDigit: (baseExt + 3) % 10, companyPrefixDigits: prefixDigits, serialRefDigits: takeSerialRef() });
         cartons.push({
           company_id,
           pallet_id: palletId,
@@ -282,7 +319,7 @@ export async function POST(req: Request) {
         const cartonId = carton?.id ?? null;
 
         for (let b = 0; b < boxesCountPerCarton; b++) {
-          const boxSscc = buildSscc({ extDigit: (baseExt + 1) % 10, companyPrefixDigits: prefixDigits, serialRefDigits: nowSerialSeed() });
+          const boxSscc = buildSscc({ extDigit: (baseExt + 1) % 10, companyPrefixDigits: prefixDigits, serialRefDigits: takeSerialRef() });
           boxes.push({
             company_id,
             carton_id: cartonId,
