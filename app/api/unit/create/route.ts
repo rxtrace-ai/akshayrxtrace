@@ -12,6 +12,7 @@ import { generateUnitSerial } from "@/lib/serial/unitSerial";
 // ---------- utils ----------
 const MAX_UNITS_PER_REQUEST = 10000;
 const DB_INSERT_BATCH_SIZE = 1000;
+const SKU_NOT_FOUND_ERROR = "SKU not found. Create SKU in SKU Master first.";
 
 // ---------- API ----------
 export async function POST(req: Request) {
@@ -90,23 +91,21 @@ export async function POST(req: Request) {
 
     const codeMode = resolveCodeMode({ gtin });
     const gtinForStorage = typeof gtin === "string" ? gtin.trim() : "";
+    const normalizedSkuCode = String(sku_code).trim().toUpperCase();
 
-    // ---------- SKU UPSERT ----------
+    // ---------- SKU LOOKUP ----------
     const { data: sku, error: skuErr } = await supabase
       .from("skus")
-      .upsert(
-        {
-          company_id,
-          sku_code,
-          sku_name,
-          gtin: codeMode === "GS1" && gtinForStorage ? gtinForStorage : null,
-        },
-        { onConflict: "company_id,sku_code" }
-      )
       .select("id")
-      .single();
+      .eq("company_id", company_id)
+      .eq("sku_code", normalizedSkuCode)
+      .is("deleted_at", null)
+      .maybeSingle();
 
-    if (skuErr || !sku) throw skuErr;
+    if (skuErr) throw skuErr;
+    if (!sku?.id) {
+      return NextResponse.json({ error: SKU_NOT_FOUND_ERROR }, { status: 404 });
+    }
 
     // ---------- UNIT GENERATION ----------
     // Generate serials locally (no per-serial DB reads). DB uniqueness constraint is the source of truth.
@@ -124,10 +123,10 @@ export async function POST(req: Request) {
                 batch,
                 serial,
                 mrp: Number(mrp),
-                sku: sku_code,
+                sku: normalizedSkuCode,
               })
             : buildPicUnitPayload({
-                sku: String(sku_code).trim().toUpperCase(),
+                sku: normalizedSkuCode,
                 batch: String(batch),
                 expiryYYMMDD: (() => {
                   const dt = new Date(String(expiry));

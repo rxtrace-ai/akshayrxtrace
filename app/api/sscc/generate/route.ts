@@ -11,6 +11,7 @@ export const dynamic = 'force-dynamic';
 
 const MAX_CODES_PER_REQUEST = 10000;
 const DB_INSERT_BATCH_SIZE = 1000;
+const SKU_NOT_FOUND_ERROR = 'SKU not found. Create SKU in SKU Master first.';
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -47,27 +48,26 @@ async function resolveSkuId(opts: {
   const { supabase, companyId, skuIdOrCode } = opts;
   const raw = String(skuIdOrCode || '').trim();
   if (!raw) throw new Error('sku_id is required');
-  if (isUuid(raw)) return raw;
+  const lookup = isUuid(raw)
+    ? supabase
+        .from('skus')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('id', raw)
+        .is('deleted_at', null)
+        .maybeSingle()
+    : supabase
+        .from('skus')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('sku_code', raw.toUpperCase())
+        .is('deleted_at', null)
+        .maybeSingle();
 
-  const skuCode = raw.toUpperCase();
-  const { data: skuRow, error: skuErr } = await supabase
-    .from('skus')
-    .select('id')
-    .eq('company_id', companyId)
-    .eq('sku_code', skuCode)
-    .maybeSingle();
-
+  const { data: skuRow, error: skuErr } = await lookup;
   if (skuErr) throw new Error(skuErr.message ?? 'Failed to resolve SKU');
-  if (skuRow?.id) return skuRow.id;
-
-  const { data: created, error: createErr } = await supabase
-    .from('skus')
-    .upsert({ company_id: companyId, sku_code: skuCode, sku_name: null, deleted_at: null }, { onConflict: 'company_id,sku_code' })
-    .select('id')
-    .single();
-
-  if (createErr || !created?.id) throw new Error(createErr?.message ?? `Failed to create SKU: ${skuCode}`);
-  return created.id;
+  if (!skuRow?.id) throw new Error(SKU_NOT_FOUND_ERROR);
+  return skuRow.id;
 }
 
 function buildSscc(opts: { extDigit: number; companyPrefixDigits: string; serialRefDigits: string }) {
@@ -317,7 +317,10 @@ export async function POST(req: Request) {
       }).catch(() => undefined);
     }
 
+    if (err?.message === SKU_NOT_FOUND_ERROR) {
+      return NextResponse.json({ error: SKU_NOT_FOUND_ERROR }, { status: 404 });
+    }
+
     return NextResponse.json({ error: err?.message || 'SSCC generation failed' }, { status: 500 });
   }
 }
-
