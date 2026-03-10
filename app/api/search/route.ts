@@ -1,97 +1,293 @@
 import { NextResponse } from "next/server";
+import { Pool } from "pg";
 import { parseGS1 } from "@/lib/parseGS1";
-import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function extractIdentifiers(input: string): { sscc?: string; serial?: string } {
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const connectionString = process.env.DATABASE_URL;
+
+const pool = connectionString
+  ? new Pool({
+      connectionString,
+      max: 3,
+    })
+  : null;
+
+type ExtractedIdentifiers = {
+  raw: string;
+  sscc: string | null;
+  serial: string | null;
+};
+
+type TraceabilityRow = {
+  match_type: "UNIT" | "BOX" | "CARTON" | "PALLET";
+  serial: string | null;
+  box_sscc: string | null;
+  carton_sscc: string | null;
+  pallet_sscc: string | null;
+  box_id: string | null;
+  carton_id: string | null;
+  pallet_id: string | null;
+  units_in_box: number | null;
+  boxes_in_carton: number | null;
+  cartons_in_pallet: number | null;
+  units_in_carton: number | null;
+  boxes_in_pallet: number | null;
+  units_in_pallet: number | null;
+};
+
+function extractIdentifiers(input: string): ExtractedIdentifiers {
   const raw = String(input || "").trim();
-  if (!raw) return {};
-
-  // Fast-path: plain 18-digit SSCC.
-  if (/^\d{18}$/.test(raw)) return { sscc: raw };
-
-  // If it looks like GS1 (human-readable or raw with AIs), parse it.
-  if (raw.includes("(00)") || raw.includes("(21)") || raw.startsWith("00") || raw.startsWith("01")) {
-    const parsed = parseGS1(raw);
-    const sscc = parsed?.sscc;
-    const serial = parsed?.serialNo;
-    if (sscc || serial) return { sscc: sscc || undefined, serial: serial || undefined };
+  if (!raw) {
+    return { raw: "", sscc: null, serial: null };
   }
 
-  // Otherwise treat as a unit serial (our unit generator uses a serial like "Uxxxx...").
-  return { serial: raw };
+  if (/^\d{18}$/.test(raw)) {
+    return { raw, sscc: raw, serial: raw };
+  }
+
+  try {
+    if (
+      raw.includes("(00)") ||
+      raw.includes("(21)") ||
+      raw.startsWith("00") ||
+      raw.startsWith("01")
+    ) {
+      const parsed = parseGS1(raw);
+      return {
+        raw,
+        sscc: parsed?.sscc || null,
+        serial: parsed?.serialNo || raw,
+      };
+    }
+  } catch {
+    // Fall back to raw input matching below.
+  }
+
+  return { raw, sscc: null, serial: raw };
 }
 
-async function buildHierarchyForPallet(opts: {
-  supabase: ReturnType<typeof getSupabaseAdmin>;
-  palletId: string;
-  companyId: string;  // Priority 2 fix: Add company_id parameter for multi-tenant isolation
-}) {
-  const { supabase, palletId, companyId } = opts;
-
-  const { data: pallet, error: palletErr } = await supabase
-    .from("pallets")
-    .select("id, sscc, sscc_with_ai, sku_id, created_at, meta")
-    .eq("id", palletId)
-    .eq("company_id", companyId)  // Priority 2 fix: Add company filter
-    .single();
-  if (palletErr || !pallet) return null;
-
-  const { data: cartons } = await supabase
-    .from("cartons")
-    .select("id, pallet_id, sscc, sscc_with_ai, code, sku_id, created_at, meta")
-    .eq("company_id", companyId)  // Priority 2 fix: Add company filter
-    .eq("pallet_id", palletId)
-    .order("created_at", { ascending: true });
-
-  const cartonIds = (cartons ?? []).map((c: any) => c.id).filter(Boolean);
-  const { data: boxes } = cartonIds.length
-    ? await supabase
-        .from("boxes")
-        .select("id, carton_id, pallet_id, sscc, sscc_with_ai, code, sku_id, created_at, meta")
-        .eq("company_id", companyId)  // Priority 2 fix: Add company filter
-        .in("carton_id", cartonIds)
-        .order("created_at", { ascending: true })
-    : { data: [] as any[] };
-
-  const boxIds = (boxes ?? []).map((b: any) => b.id).filter(Boolean);
-  const { data: units } = boxIds.length
-    ? await supabase
-        .from("labels_units")
-        .select("id, box_id, serial, created_at")
-        .eq("company_id", companyId)  // Priority 2 fix: Add company filter for security
-        .in("box_id", boxIds)
-        .order("created_at", { ascending: true })
-    : { data: [] as any[] };
-
-  const unitsByBox = new Map<string, any[]>();
-  for (const u of units ?? []) {
-    const key = (u as any).box_id;
-    if (!key) continue;
-    const list = unitsByBox.get(key) ?? [];
-    list.push({ uid: (u as any).serial, id: (u as any).id, created_at: (u as any).created_at });
-    unitsByBox.set(key, list);
-  }
-
-  const boxesByCarton = new Map<string, any[]>();
-  for (const b of boxes ?? []) {
-    const key = (b as any).carton_id;
-    if (!key) continue;
-    const list = boxesByCarton.get(key) ?? [];
-    list.push({ ...(b as any), units: unitsByBox.get((b as any).id) ?? [] });
-    boxesByCarton.set(key, list);
-  }
-
-  const cartonsWithChildren = (cartons ?? []).map((c: any) => ({
-    ...(c as any),
-    boxes: boxesByCarton.get((c as any).id) ?? [],
-  }));
-
-  return { ...(pallet as any), cartons: cartonsWithChildren };
+function toInt(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
+
+function buildTraceability(row: TraceabilityRow) {
+  const counts: Record<string, number> = {};
+
+  if (row.match_type === "UNIT") {
+    if (row.units_in_box !== null) counts.units_in_box = row.units_in_box;
+    if (row.boxes_in_carton !== null) counts.boxes_in_carton = row.boxes_in_carton;
+    if (row.cartons_in_pallet !== null) counts.cartons_in_pallet = row.cartons_in_pallet;
+  }
+
+  if (row.match_type === "BOX") {
+    if (row.units_in_box !== null) counts.units_in_box = row.units_in_box;
+  }
+
+  if (row.match_type === "CARTON") {
+    if (row.boxes_in_carton !== null) counts.boxes_in_carton = row.boxes_in_carton;
+    if (row.units_in_carton !== null) counts.units_in_carton = row.units_in_carton;
+  }
+
+  if (row.match_type === "PALLET") {
+    if (row.cartons_in_pallet !== null) counts.cartons_in_pallet = row.cartons_in_pallet;
+    if (row.boxes_in_pallet !== null) counts.boxes_in_pallet = row.boxes_in_pallet;
+    if (row.units_in_pallet !== null) counts.units_in_pallet = row.units_in_pallet;
+  }
+
+  const response: Record<string, unknown> = {
+    type: row.match_type,
+  };
+
+  if (row.serial) response.serial = row.serial;
+  if (row.box_sscc) response.box_sscc = row.box_sscc;
+  if (row.carton_sscc) response.carton_sscc = row.carton_sscc;
+  if (row.pallet_sscc) response.pallet_sscc = row.pallet_sscc;
+  if (Object.keys(counts).length > 0) response.counts = counts;
+
+  return response;
+}
+
+const TRACEABILITY_QUERY = `
+WITH matched_unit AS (
+  SELECT
+    1 AS match_priority,
+    'UNIT'::text AS match_type,
+    u.serial,
+    b.sscc AS box_sscc,
+    c.sscc AS carton_sscc,
+    p.sscc AS pallet_sscc,
+    u.box_id,
+    b.carton_id,
+    p.id AS pallet_id
+  FROM labels_units u
+  LEFT JOIN boxes b
+    ON b.id = u.box_id
+   AND b.company_id = $4
+  LEFT JOIN cartons c
+    ON c.id = b.carton_id
+   AND c.company_id = $4
+  LEFT JOIN pallets p
+    ON p.id = COALESCE(c.pallet_id, b.pallet_id)
+   AND p.company_id = $4
+  WHERE u.company_id = $4
+    AND ($3 IS NOT NULL AND u.serial = $3)
+),
+matched_box AS (
+  SELECT
+    2 AS match_priority,
+    'BOX'::text AS match_type,
+    NULL::text AS serial,
+    b.sscc AS box_sscc,
+    c.sscc AS carton_sscc,
+    p.sscc AS pallet_sscc,
+    b.id AS box_id,
+    b.carton_id,
+    p.id AS pallet_id
+  FROM boxes b
+  LEFT JOIN cartons c
+    ON c.id = b.carton_id
+   AND c.company_id = $4
+  LEFT JOIN pallets p
+    ON p.id = COALESCE(c.pallet_id, b.pallet_id)
+   AND p.company_id = $4
+  WHERE b.company_id = $4
+    AND (
+      ($2 IS NOT NULL AND b.sscc = $2)
+      OR b.code = $1
+    )
+),
+matched_carton AS (
+  SELECT
+    3 AS match_priority,
+    'CARTON'::text AS match_type,
+    NULL::text AS serial,
+    NULL::text AS box_sscc,
+    c.sscc AS carton_sscc,
+    p.sscc AS pallet_sscc,
+    NULL::uuid AS box_id,
+    c.id AS carton_id,
+    p.id AS pallet_id
+  FROM cartons c
+  LEFT JOIN pallets p
+    ON p.id = c.pallet_id
+   AND p.company_id = $4
+  WHERE c.company_id = $4
+    AND (
+      ($2 IS NOT NULL AND c.sscc = $2)
+      OR c.code = $1
+    )
+),
+matched_pallet AS (
+  SELECT
+    4 AS match_priority,
+    'PALLET'::text AS match_type,
+    NULL::text AS serial,
+    NULL::text AS box_sscc,
+    NULL::text AS carton_sscc,
+    p.sscc AS pallet_sscc,
+    NULL::uuid AS box_id,
+    NULL::uuid AS carton_id,
+    p.id AS pallet_id
+  FROM pallets p
+  WHERE p.company_id = $4
+    AND ($2 IS NOT NULL AND p.sscc = $2)
+),
+matched AS (
+  SELECT * FROM matched_unit
+  UNION ALL
+  SELECT * FROM matched_box
+  UNION ALL
+  SELECT * FROM matched_carton
+  UNION ALL
+  SELECT * FROM matched_pallet
+  ORDER BY match_priority
+  LIMIT 1
+)
+SELECT
+  m.match_type,
+  m.serial,
+  m.box_sscc,
+  m.carton_sscc,
+  m.pallet_sscc,
+  m.box_id,
+  m.carton_id,
+  m.pallet_id,
+  CASE
+    WHEN m.box_id IS NOT NULL THEN (
+      SELECT COUNT(*)::int
+      FROM labels_units u
+      WHERE u.company_id = $4
+        AND u.box_id = m.box_id
+    )
+    ELSE NULL
+  END AS units_in_box,
+  CASE
+    WHEN m.carton_id IS NOT NULL THEN (
+      SELECT COUNT(*)::int
+      FROM boxes b
+      WHERE b.company_id = $4
+        AND b.carton_id = m.carton_id
+    )
+    ELSE NULL
+  END AS boxes_in_carton,
+  CASE
+    WHEN m.pallet_id IS NOT NULL THEN (
+      SELECT COUNT(*)::int
+      FROM cartons c
+      WHERE c.company_id = $4
+        AND c.pallet_id = m.pallet_id
+    )
+    ELSE NULL
+  END AS cartons_in_pallet,
+  CASE
+    WHEN m.carton_id IS NOT NULL THEN (
+      SELECT COUNT(*)::int
+      FROM labels_units u
+      INNER JOIN boxes b
+        ON b.id = u.box_id
+       AND b.company_id = $4
+      WHERE u.company_id = $4
+        AND b.carton_id = m.carton_id
+    )
+    ELSE NULL
+  END AS units_in_carton,
+  CASE
+    WHEN m.pallet_id IS NOT NULL THEN (
+      SELECT COUNT(*)::int
+      FROM boxes b
+      LEFT JOIN cartons c
+        ON c.id = b.carton_id
+       AND c.company_id = $4
+      WHERE b.company_id = $4
+        AND COALESCE(c.pallet_id, b.pallet_id) = m.pallet_id
+    )
+    ELSE NULL
+  END AS boxes_in_pallet,
+  CASE
+    WHEN m.pallet_id IS NOT NULL THEN (
+      SELECT COUNT(*)::int
+      FROM labels_units u
+      INNER JOIN boxes b
+        ON b.id = u.box_id
+       AND b.company_id = $4
+      LEFT JOIN cartons c
+        ON c.id = b.carton_id
+       AND c.company_id = $4
+      WHERE u.company_id = $4
+        AND COALESCE(c.pallet_id, b.pallet_id) = m.pallet_id
+    )
+    ELSE NULL
+  END AS units_in_pallet
+FROM matched m;
+`;
 
 export async function GET(req: Request) {
   try {
@@ -100,7 +296,6 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const supabase = getSupabaseAdmin();
     const { searchParams } = new URL(req.url);
     const code = searchParams.get("code")?.trim();
     const requestedCompanyId = searchParams.get("company_id")?.trim();
@@ -108,176 +303,54 @@ export async function GET(req: Request) {
     if (!code) {
       return NextResponse.json({ error: "code required" }, { status: 400 });
     }
-    if (requestedCompanyId && requestedCompanyId !== authCompanyId) {
+
+    if (!requestedCompanyId) {
+      return NextResponse.json({ error: "company_id required" }, { status: 400 });
+    }
+
+    if (!UUID_RE.test(requestedCompanyId)) {
+      return NextResponse.json({ error: "invalid company_id" }, { status: 400 });
+    }
+
+    if (requestedCompanyId !== authCompanyId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const companyId = authCompanyId;
-
-    const { sscc, serial } = extractIdentifiers(code);
-
-    if (sscc) {
-      // Pallet
-      const { data: pallet } = await supabase
-        .from("pallets")
-        .select("id")
-        .eq("company_id", companyId)
-        .eq("sscc", sscc)
-        .maybeSingle();
-      if (pallet?.id) {
-        const hierarchy = await buildHierarchyForPallet({ supabase, palletId: pallet.id, companyId });
-        return NextResponse.json({ type: "pallet", level: "pallet", data: hierarchy });
-      }
-
-      // Carton
-      const { data: carton } = await supabase
-        .from("cartons")
-        .select("id, pallet_id, sscc, sscc_with_ai, code, sku_id, created_at, meta")
-        .eq("company_id", companyId)
-        .or(`sscc.eq.${sscc},code.eq.${sscc}`)
-        .maybeSingle();
-      if (carton?.id) {
-        const { data: boxes } = await supabase
-          .from("boxes")
-          .select("id, carton_id, pallet_id, sscc, sscc_with_ai, code, sku_id, created_at, meta")
-          .eq("company_id", companyId)  // Priority 2 fix: Add company filter
-          .eq("carton_id", carton.id)
-          .order("created_at", { ascending: true });
-
-        const boxIds = (boxes ?? []).map((b: any) => b.id).filter(Boolean);
-        const { data: units } = boxIds.length
-          ? await supabase
-              .from("labels_units")
-              .select("id, box_id, serial, created_at")
-              .eq("company_id", companyId)  // Priority 2 fix: Add company filter for security
-              .in("box_id", boxIds)
-              .order("created_at", { ascending: true })
-          : { data: [] as any[] };
-
-        const unitsByBox = new Map<string, any[]>();
-        for (const u of units ?? []) {
-          const key = (u as any).box_id;
-          if (!key) continue;
-          const list = unitsByBox.get(key) ?? [];
-          list.push({ uid: (u as any).serial, id: (u as any).id, created_at: (u as any).created_at });
-          unitsByBox.set(key, list);
-        }
-
-        const boxesWithUnits = (boxes ?? []).map((b: any) => ({
-          ...(b as any),
-          units: unitsByBox.get((b as any).id) ?? [],
-        }));
-
-        const palletNode = carton.pallet_id
-          ? await buildHierarchyForPallet({ supabase, palletId: carton.pallet_id, companyId })
-          : null;
-
-        return NextResponse.json({
-          type: "carton",
-          level: "carton",
-          data: { ...(carton as any), pallet: palletNode ? { id: palletNode.id, sscc: palletNode.sscc, sscc_with_ai: palletNode.sscc_with_ai } : null, boxes: boxesWithUnits },
-        });
-      }
-
-      // Box
-      const { data: box } = await supabase
-        .from("boxes")
-        .select("id, carton_id, pallet_id, sscc, sscc_with_ai, code, sku_id, created_at, meta")
-        .eq("company_id", companyId)
-        .or(`sscc.eq.${sscc},code.eq.${sscc}`)
-        .maybeSingle();
-
-      if (box?.id) {
-        const { data: units } = await supabase
-          .from("labels_units")
-          .select("id, box_id, serial, created_at")
-          .eq("company_id", companyId)  // Priority 2 fix: Add company filter for security
-          .eq("box_id", box.id)
-          .order("created_at", { ascending: true });
-
-        const cartonNode = box.carton_id
-          ? await supabase
-              .from("cartons")
-              .select("id, pallet_id, sscc, sscc_with_ai, code, created_at")
-              .eq("id", box.carton_id)
-              .maybeSingle()
-          : { data: null as any };
-
-        const palletId = (cartonNode as any)?.data?.pallet_id ?? box.pallet_id ?? null;
-        const palletNode = palletId ? await buildHierarchyForPallet({ supabase, palletId, companyId }) : null;
-
-        return NextResponse.json({
-          type: "box",
-          level: "box",
-          data: {
-            ...(box as any),
-            units: (units ?? []).map((u: any) => ({ uid: u.serial, id: u.id, created_at: u.created_at })),
-            carton: (cartonNode as any)?.data ?? null,
-            pallet: palletNode ? { id: palletNode.id, sscc: palletNode.sscc, sscc_with_ai: palletNode.sscc_with_ai } : null,
-          },
-        });
-      }
-
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!pool) {
+      return NextResponse.json(
+        { error: "DATABASE_URL not configured" },
+        { status: 500 }
+      );
     }
 
-    if (serial) {
-      const { data: unit } = await supabase
-        .from("labels_units")
-        .select("id, company_id, sku_id, box_id, serial, gs1_payload, payload, code_mode, created_at")
-        .eq("company_id", companyId)
-        .eq("serial", serial)
-        .maybeSingle();
+    const identifiers = extractIdentifiers(code);
+    const result = await pool.query<TraceabilityRow>(TRACEABILITY_QUERY, [
+      identifiers.raw,
+      identifiers.sscc,
+      identifiers.serial,
+      requestedCompanyId,
+    ]);
 
-      if (!unit?.id) {
-        return NextResponse.json({ error: "Not found" }, { status: 404 });
-      }
+    const row = result.rows[0];
 
-      const boxNode = unit.box_id
-        ? await supabase
-            .from("boxes")
-            .select("id, carton_id, pallet_id, sscc, sscc_with_ai, code, created_at")
-            .eq("id", unit.box_id)
-            .maybeSingle()
-        : { data: null as any };
-
-      const cartonId = (boxNode as any)?.data?.carton_id ?? null;
-      const cartonNode = cartonId
-        ? await supabase
-            .from("cartons")
-            .select("id, pallet_id, sscc, sscc_with_ai, code, created_at")
-            .eq("id", cartonId)
-            .maybeSingle()
-        : { data: null as any };
-
-      const palletId = (cartonNode as any)?.data?.pallet_id ?? (boxNode as any)?.data?.pallet_id ?? null;
-      const palletNode = palletId ? await supabase
-        .from("pallets")
-        .select("id, sscc, sscc_with_ai, created_at")
-        .eq("id", palletId)
-        .maybeSingle() : { data: null as any };
-
-      return NextResponse.json({
-        type: "unit",
-        level: "unit",
-        data: {
-          uid: unit.serial,
-          id: unit.id,
-          created_at: unit.created_at,
-          gs1_payload: unit.gs1_payload,
-          payload: (unit as any).payload ?? unit.gs1_payload,
-          code_mode: (unit as any).code_mode ?? null,
-          box: (boxNode as any)?.data ?? null,
-          carton: (cartonNode as any)?.data ?? null,
-          pallet: (palletNode as any)?.data ?? null,
-        },
-      });
+    if (!row) {
+      return NextResponse.json({ error: "CODE_NOT_FOUND" }, { status: 404 });
     }
 
-    return NextResponse.json({ error: "Invalid code" }, { status: 400 });
-  } catch (err: any) {
     return NextResponse.json(
-      { error: err?.message ?? String(err) },
+      buildTraceability({
+        ...row,
+        units_in_box: toInt(row.units_in_box),
+        boxes_in_carton: toInt(row.boxes_in_carton),
+        cartons_in_pallet: toInt(row.cartons_in_pallet),
+        units_in_carton: toInt(row.units_in_carton),
+        boxes_in_pallet: toInt(row.boxes_in_pallet),
+        units_in_pallet: toInt(row.units_in_pallet),
+      })
+    );
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error?.message ?? "Internal server error" },
       { status: 500 }
     );
   }
