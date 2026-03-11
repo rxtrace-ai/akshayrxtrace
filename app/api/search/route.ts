@@ -9,14 +9,36 @@ export const dynamic = "force-dynamic";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const connectionString = process.env.DATABASE_URL;
+const rawConnectionString = process.env.DATABASE_URL?.trim();
+const parsedConnectionString = rawConnectionString
+  ? new URL(rawConnectionString)
+  : null;
 
-const pool = connectionString
-  ? new Pool({
+if (parsedConnectionString) {
+  parsedConnectionString.searchParams.delete("sslmode");
+  parsedConnectionString.searchParams.delete("ssl");
+  parsedConnectionString.searchParams.delete("sslcert");
+  parsedConnectionString.searchParams.delete("sslkey");
+  parsedConnectionString.searchParams.delete("sslrootcert");
+}
+
+const connectionString = parsedConnectionString?.toString();
+
+let pool: Pool | null = null;
+
+if (connectionString) {
+  if (!(global as any)._rxtrace_pool) {
+    (global as any)._rxtrace_pool = new Pool({
       connectionString,
       max: 3,
-    })
-  : null;
+      ssl: {
+        rejectUnauthorized: false,
+      },
+    });
+  }
+
+  pool = (global as any)._rxtrace_pool;
+}
 
 type ExtractedIdentifiers = {
   raw: string;
@@ -65,9 +87,7 @@ function extractIdentifiers(input: string): ExtractedIdentifiers {
         serial: parsed?.serialNo || raw,
       };
     }
-  } catch {
-    // Fall back to raw input matching below.
-  }
+  } catch {}
 
   return { raw, sscc: null, serial: raw };
 }
@@ -130,15 +150,15 @@ WITH matched_unit AS (
   FROM labels_units u
   LEFT JOIN boxes b
     ON b.id = u.box_id
-   AND b.company_id = $4
+   AND b.company_id = $4::uuid
   LEFT JOIN cartons c
     ON c.id = b.carton_id
-   AND c.company_id = $4
+   AND c.company_id = $4::uuid
   LEFT JOIN pallets p
     ON p.id = COALESCE(c.pallet_id, b.pallet_id)
-   AND p.company_id = $4
-  WHERE u.company_id = $4
-    AND ($3 IS NOT NULL AND u.serial = $3)
+   AND p.company_id = $4::uuid
+  WHERE u.company_id = $4::uuid
+    AND ($3::text IS NOT NULL AND u.serial = $3::text)
 ),
 matched_box AS (
   SELECT
@@ -154,14 +174,14 @@ matched_box AS (
   FROM boxes b
   LEFT JOIN cartons c
     ON c.id = b.carton_id
-   AND c.company_id = $4
+   AND c.company_id = $4::uuid
   LEFT JOIN pallets p
     ON p.id = COALESCE(c.pallet_id, b.pallet_id)
-   AND p.company_id = $4
-  WHERE b.company_id = $4
+   AND p.company_id = $4::uuid
+  WHERE b.company_id = $4::uuid
     AND (
-      ($2 IS NOT NULL AND b.sscc = $2)
-      OR b.code = $1
+      ($2::text IS NOT NULL AND b.sscc = $2::text)
+      OR b.code = $1::text
     )
 ),
 matched_carton AS (
@@ -178,11 +198,11 @@ matched_carton AS (
   FROM cartons c
   LEFT JOIN pallets p
     ON p.id = c.pallet_id
-   AND p.company_id = $4
-  WHERE c.company_id = $4
+   AND p.company_id = $4::uuid
+  WHERE c.company_id = $4::uuid
     AND (
-      ($2 IS NOT NULL AND c.sscc = $2)
-      OR c.code = $1
+      ($2::text IS NOT NULL AND c.sscc = $2::text)
+      OR c.code = $1::text
     )
 ),
 matched_pallet AS (
@@ -197,8 +217,8 @@ matched_pallet AS (
     NULL::uuid AS carton_id,
     p.id AS pallet_id
   FROM pallets p
-  WHERE p.company_id = $4
-    AND ($2 IS NOT NULL AND p.sscc = $2)
+  WHERE p.company_id = $4::uuid
+    AND ($2::text IS NOT NULL AND p.sscc = $2::text)
 ),
 matched AS (
   SELECT * FROM matched_unit
@@ -224,7 +244,7 @@ SELECT
     WHEN m.box_id IS NOT NULL THEN (
       SELECT COUNT(*)::int
       FROM labels_units u
-      WHERE u.company_id = $4
+      WHERE u.company_id = $4::uuid
         AND u.box_id = m.box_id
     )
     ELSE NULL
@@ -233,7 +253,7 @@ SELECT
     WHEN m.carton_id IS NOT NULL THEN (
       SELECT COUNT(*)::int
       FROM boxes b
-      WHERE b.company_id = $4
+      WHERE b.company_id = $4::uuid
         AND b.carton_id = m.carton_id
     )
     ELSE NULL
@@ -242,7 +262,7 @@ SELECT
     WHEN m.pallet_id IS NOT NULL THEN (
       SELECT COUNT(*)::int
       FROM cartons c
-      WHERE c.company_id = $4
+      WHERE c.company_id = $4::uuid
         AND c.pallet_id = m.pallet_id
     )
     ELSE NULL
@@ -253,8 +273,8 @@ SELECT
       FROM labels_units u
       INNER JOIN boxes b
         ON b.id = u.box_id
-       AND b.company_id = $4
-      WHERE u.company_id = $4
+       AND b.company_id = $4::uuid
+      WHERE u.company_id = $4::uuid
         AND b.carton_id = m.carton_id
     )
     ELSE NULL
@@ -265,8 +285,8 @@ SELECT
       FROM boxes b
       LEFT JOIN cartons c
         ON c.id = b.carton_id
-       AND c.company_id = $4
-      WHERE b.company_id = $4
+       AND c.company_id = $4::uuid
+      WHERE b.company_id = $4::uuid
         AND COALESCE(c.pallet_id, b.pallet_id) = m.pallet_id
     )
     ELSE NULL
@@ -277,11 +297,11 @@ SELECT
       FROM labels_units u
       INNER JOIN boxes b
         ON b.id = u.box_id
-       AND b.company_id = $4
+       AND b.company_id = $4::uuid
       LEFT JOIN cartons c
         ON c.id = b.carton_id
-       AND c.company_id = $4
-      WHERE u.company_id = $4
+       AND c.company_id = $4::uuid
+      WHERE u.company_id = $4::uuid
         AND COALESCE(c.pallet_id, b.pallet_id) = m.pallet_id
     )
     ELSE NULL
@@ -324,6 +344,7 @@ export async function GET(req: Request) {
     }
 
     const identifiers = extractIdentifiers(code);
+
     const result = await pool.query<TraceabilityRow>(TRACEABILITY_QUERY, [
       identifiers.raw,
       identifiers.sscc,
@@ -349,8 +370,14 @@ export async function GET(req: Request) {
       })
     );
   } catch (error: any) {
+    console.error("TRACEABILITY ERROR:", error);
+    console.error("STACK:", error?.stack);
+
     return NextResponse.json(
-      { error: error?.message ?? "Internal server error" },
+      {
+        error: error?.message ?? "Internal server error",
+        stack: error?.stack,
+      },
       { status: 500 }
     );
   }

@@ -1,52 +1,50 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { supabaseClient } from "@/lib/supabase/client";
 
-type NodeRecord = {
-  sscc?: string;
-  created_at?: string;
-} | null;
-
-type SearchResponse = {
-  type: string;
-  level: string;
-  data: {
-    pallet: NodeRecord;
-    carton: NodeRecord;
-    box: NodeRecord;
-    uid: string | null;
-  };
+type TraceCounts = {
+  units_in_box?: number;
+  boxes_in_carton?: number;
+  cartons_in_pallet?: number;
+  units_in_carton?: number;
+  boxes_in_pallet?: number;
+  units_in_pallet?: number;
 };
 
-function formatDate(value?: string) {
-  if (!value) return "-";
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return "-";
-  }
-}
+type SearchResponse = {
+  type: "UNIT" | "BOX" | "CARTON" | "PALLET";
+  serial?: string;
+  box_sscc?: string;
+  carton_sscc?: string;
+  pallet_sscc?: string;
+  counts?: TraceCounts;
+};
 
 function HierarchyCard({
   title,
   identifier,
-  created,
+  highlight,
 }: {
   title: string;
   identifier?: string | null;
-  created?: string;
+  highlight?: boolean;
 }) {
   return (
-    <div className="bg-white border rounded-xl shadow-sm p-5 w-full max-w-md">
-      <div className="text-sm font-semibold text-gray-600">{title}</div>
+    <div
+      className={`bg-white border rounded-xl shadow-sm p-5 w-full max-w-md ${
+        highlight ? "border-blue-400" : ""
+      }`}
+    >
+      <div className="text-sm font-semibold text-gray-600">
+        {title}
+        {highlight ? (
+          <span className="ml-2 text-xs text-blue-600">MATCH</span>
+        ) : null}
+      </div>
 
       <div className="font-mono text-lg mt-2 break-all">
         {identifier || "-"}
-      </div>
-
-      <div className="text-xs text-gray-400 mt-2">
-        Created: {formatDate(created)}
       </div>
     </div>
   );
@@ -57,6 +55,24 @@ export default function Page() {
   const [result, setResult] = useState<SearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const chain = useMemo(() => {
+    if (!result) return null;
+    return [
+      { key: "UNIT", label: "Unit", value: result.serial ?? null },
+      { key: "BOX", label: "Box", value: result.box_sscc ?? null },
+      { key: "CARTON", label: "Carton", value: result.carton_sscc ?? null },
+      { key: "PALLET", label: "Pallet", value: result.pallet_sscc ?? null },
+    ].filter((item) => item.value);
+  }, [result]);
+
+  const countEntries = useMemo(() => {
+    if (!result?.counts) return [];
+    return Object.entries(result.counts).map(([key, value]) => ({
+      key,
+      value,
+    }));
+  }, [result]);
 
   async function handleSearch() {
     const trimmed = code.trim();
@@ -113,7 +129,6 @@ export default function Page() {
 
   return (
     <div className="max-w-5xl mx-auto p-8 space-y-8">
-
       {/* Header */}
 
       <div>
@@ -129,7 +144,6 @@ export default function Page() {
       {/* Search Box */}
 
       <div className="bg-white border rounded-xl shadow-sm p-6 flex gap-4">
-
         <input
           value={code}
           onChange={(e) => setCode(e.target.value)}
@@ -145,7 +159,6 @@ export default function Page() {
         >
           {loading ? "Searching..." : "Search"}
         </button>
-
       </div>
 
       {/* Error */}
@@ -160,50 +173,34 @@ export default function Page() {
 
       {result && (
         <div className="flex flex-col items-center space-y-4">
-
-          {result.data?.pallet && (
-            <HierarchyCard
-              title="Pallet"
-              identifier={result.data.pallet?.sscc}
-              created={result.data.pallet?.created_at}
-            />
-          )}
-
-          {result.data?.carton && (
-            <>
-              <div className="text-gray-400">↓</div>
+          {chain?.map((item, index) => (
+            <div key={item.key} className="flex flex-col items-center space-y-4">
+              {index > 0 && <div className="text-gray-400">v</div>}
               <HierarchyCard
-                title="Carton"
-                identifier={result.data.carton?.sscc}
-                created={result.data.carton?.created_at}
+                title={item.label}
+                identifier={item.value}
+                highlight={result.type === item.key}
               />
-            </>
-          )}
+            </div>
+          ))}
 
-          {result.data?.box && (
-            <>
-              <div className="text-gray-400">↓</div>
-              <HierarchyCard
-                title="Box"
-                identifier={result.data.box?.sscc}
-                created={result.data.box?.created_at}
-              />
-            </>
+          {countEntries.length > 0 && (
+            <div className="bg-white border rounded-xl shadow-sm p-5 w-full max-w-md">
+              <div className="text-sm font-semibold text-gray-600">
+                Aggregated Counts
+              </div>
+              <div className="text-sm text-gray-700 mt-2 space-y-1">
+                {countEntries.map((entry) => (
+                  <div key={entry.key} className="flex justify-between">
+                    <span className="font-mono">{entry.key}</span>
+                    <span>{entry.value ?? "-"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
-
-          {result.data?.uid && (
-            <>
-              <div className="text-gray-400">↓</div>
-              <HierarchyCard
-                title="Unit"
-                identifier={result.data.uid}
-              />
-            </>
-          )}
-
         </div>
       )}
-
     </div>
   );
 }
