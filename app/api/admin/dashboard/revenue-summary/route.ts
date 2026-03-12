@@ -17,10 +17,10 @@ export async function GET() {
   const supabase = getSupabaseAdmin();
 
   const { data: invoiceRows, error: invoiceError } = await supabase
-    .from("invoices")
-    .select("amount, status, metadata")
-    .in("status", ["paid", "PAID", "captured", "CAPTURED"]);
-
+  .from("billing_invoices")
+  .select("amount, status, metadata")
+  .in("status", ["paid", "PAID", "captured", "CAPTURED"]);
+  
   if (invoiceError) {
     return errorResponse(500, "INTERNAL_ERROR", invoiceError.message, correlationId);
   }
