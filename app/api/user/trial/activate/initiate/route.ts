@@ -1,3 +1,4 @@
+import Razorpay from "razorpay";
 import { NextRequest, NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
@@ -17,9 +18,8 @@ function buildPurpose(companyId: string) {
   return `trial_activation_company_${companyId}`;
 }
 
-function basicAuthHeader(keyId: string, keySecret: string) {
-  const token = Buffer.from(`${keyId}:${keySecret}`, "utf8").toString("base64");
-  return `Basic ${token}`;
+function buildRazorpayClient(keyId: string, keySecret: string) {
+  return new Razorpay({ key_id: keyId, key_secret: keySecret });
 }
 
 export async function POST(req: NextRequest) {
@@ -86,45 +86,43 @@ export async function POST(req: NextRequest) {
 
   // Create Razorpay order (server-side)
   const receipt = `trial:${idempotencyKey}`;
-  const createRes = await fetch("https://api.razorpay.com/v1/orders", {
-    method: "POST",
-    headers: {
-      authorization: basicAuthHeader(keyId, keySecret),
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
+  let created: any;
+  try {
+    const razorpay = buildRazorpayClient(keyId, keySecret);
+    created = await razorpay.orders.create({
       amount: TRIAL_AMOUNT_PAISE,
       currency: "INR",
       receipt,
       notes: {
         purpose,
+        plan: "10_day_trial",
         company_id: owner.companyId,
         owner_user_id: owner.userId,
         correlation_id: correlationId,
       },
-    }),
-  });
-
-  const createBodyText = await createRes.text();
-  if (!createRes.ok) {
+    });
+  } catch (error: any) {
+    console.error("RAZORPAY ORDER ERROR:", {
+      error: error?.message || String(error),
+      correlation_id: correlationId,
+      company_id: owner.companyId,
+      receipt,
+    });
     return NextResponse.json(
-      { error: "RAZORPAY_ORDER_CREATE_FAILED", detail: createBodyText, correlation_id: correlationId },
-      { status: 502 }
-    );
-  }
-
-  let created: any;
-  try {
-    created = JSON.parse(createBodyText);
-  } catch {
-    return NextResponse.json(
-      { error: "RAZORPAY_ORDER_CREATE_FAILED", detail: "Invalid Razorpay response", correlation_id: correlationId },
+      { error: "RAZORPAY_ORDER_CREATE_FAILED", correlation_id: correlationId },
       { status: 502 }
     );
   }
 
   const orderId = String(created?.id || "").trim();
   if (!orderId) {
+    console.error("RAZORPAY ORDER ERROR:", {
+      error: "Missing order id",
+      correlation_id: correlationId,
+      company_id: owner.companyId,
+      receipt,
+      response: created,
+    });
     return NextResponse.json(
       { error: "RAZORPAY_ORDER_CREATE_FAILED", detail: "Missing order id", correlation_id: correlationId },
       { status: 502 }
