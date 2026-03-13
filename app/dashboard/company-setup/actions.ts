@@ -3,6 +3,7 @@
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { supabaseServer } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
+import { isIndustryOption } from '@/lib/companies/industry';
 
 export type CompanySetupResult = 
   | { success: true; companyId: string; message: string }
@@ -22,6 +23,7 @@ export type CompanySetupResult =
  */
 export async function createOrUpdateCompanyProfile(
   data: {
+    name?: string;
     company_name: string;
     contact_person?: string;
     phone: string;
@@ -32,6 +34,7 @@ export async function createOrUpdateCompanyProfile(
     business_category?: string;
     gst_number?: string;
     pan?: string;
+    created_at?: string;
   }
 ): Promise<CompanySetupResult> {
   try {
@@ -49,7 +52,8 @@ export async function createOrUpdateCompanyProfile(
     }
 
     // 2. Validate required fields
-    if (!data.company_name?.trim()) {
+    const resolvedCompanyName = String(data.company_name || data.name || '').trim();
+    if (!resolvedCompanyName) {
       return {
         success: false,
         error: 'Company name is required'
@@ -77,10 +81,17 @@ export async function createOrUpdateCompanyProfile(
         error: 'Address is required'
       };
     }
-    if (!data.industry?.trim()) {
+    const normalizedIndustry = String(data.industry || '').trim();
+    if (!normalizedIndustry) {
       return {
         success: false,
         error: 'Industry is required'
+      };
+    }
+    if (!isIndustryOption(normalizedIndustry)) {
+      return {
+        success: false,
+        error: 'Invalid industry selection'
       };
     }
     if (!data.business_type?.trim()) {
@@ -112,11 +123,11 @@ export async function createOrUpdateCompanyProfile(
     // 5. Prepare company data
     const companyData = {
       user_id: user.id,
-      company_name: data.company_name.trim(),
+      company_name: resolvedCompanyName,
       contact_person: contactPerson,
       phone: data.phone.trim(),
       address: data.address.trim(),
-      industry: data.industry.trim(),
+      industry: normalizedIndustry,
       business_type: data.business_type.toLowerCase().trim(),
       firm_type: data.firm_type ? data.firm_type.toLowerCase().trim() : null,
       business_category: data.business_category ? data.business_category.toLowerCase().trim() : null,
@@ -161,7 +172,7 @@ export async function createOrUpdateCompanyProfile(
         .from('companies')
         .insert({
           ...companyData,
-          created_at: new Date().toISOString(),
+          created_at: data.created_at ? new Date(data.created_at) : new Date(),
         })
         .select('id')
         .single();

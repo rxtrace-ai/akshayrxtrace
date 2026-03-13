@@ -11,11 +11,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, CheckCircle } from 'lucide-react';
 import { createOrUpdateCompanyProfile } from './actions';
+import { industries, IndustryOption, isIndustryOption } from '@/lib/companies/industry';
 
 // Type definitions
 type LegalStructure = 'proprietorship' | 'partnership' | 'llp' | 'pvt_ltd';
 type BusinessType = 'manufacturer' | 'distributor' | 'brand_owner' | 'wholesaler' | 'exporter' | 'importer' | 'cf_agent';
-type Industry = 'pharma' | 'medical_devices' | 'fmcg' | 'cosmetics' | 'food' | 'packaging' | 'printing' | 'logistics' | 'dairy';
+type Industry = IndustryOption;
 type BusinessCategory = Industry;
 
 function CompanySetupContent() {
@@ -62,8 +63,8 @@ function CompanySetupContent() {
         setContactPerson(existingCompany.contact_person || '');
         setPhone(existingCompany.phone || '');
         setAddress(existingCompany.address || '');
-        if (existingCompany.industry) {
-          setIndustry(existingCompany.industry as Industry);
+        if (existingCompany.industry && isIndustryOption(existingCompany.industry)) {
+          setIndustry(existingCompany.industry);
         }
         if (existingCompany.business_type) {
           setBusinessType(existingCompany.business_type as BusinessType);
@@ -71,8 +72,8 @@ function CompanySetupContent() {
         if (existingCompany.firm_type) {
           setLegalStructure(existingCompany.firm_type as LegalStructure);
         }
-        if (existingCompany.business_category) {
-          setBusinessCategory(existingCompany.business_category as BusinessCategory);
+        if (existingCompany.business_category && isIndustryOption(existingCompany.business_category)) {
+          setBusinessCategory(existingCompany.business_category);
         }
         if (existingCompany.gst_number) {
           setGstNumber(existingCompany.gst_number);
@@ -127,6 +128,7 @@ function CompanySetupContent() {
     // Call server action (backend-first execution path)
     const result = await createOrUpdateCompanyProfile({
       company_name: companyName.trim(),
+      name: companyName.trim(),
       contact_person: contactPerson.trim(),
       phone: phone.trim(),
       address: address.trim(),
@@ -136,6 +138,7 @@ function CompanySetupContent() {
       business_category: businessCategory || undefined,
       gst_number: gstNumber.trim() || undefined,
       pan: pan.trim() || undefined,
+      created_at: new Date().toISOString(),
     });
 
     if (!result.success) {
@@ -322,15 +325,11 @@ function CompanySetupContent() {
                   <SelectValue placeholder="Select your industry" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="pharma">Pharma</SelectItem>
-                  <SelectItem value="medical_devices">Medical Devices</SelectItem>
-                  <SelectItem value="fmcg">FMCG</SelectItem>
-                  <SelectItem value="cosmetics">Cosmetics</SelectItem>
-                  <SelectItem value="food">Food</SelectItem>
-                  <SelectItem value="dairy">Dairy</SelectItem>
-                  <SelectItem value="packaging">Packaging</SelectItem>
-                  <SelectItem value="printing">Printing</SelectItem>
-                  <SelectItem value="logistics">Logistics</SelectItem>
+                  {industries.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -401,15 +400,11 @@ function CompanySetupContent() {
                   <SelectValue placeholder="Select business category" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="pharma">Pharma</SelectItem>
-                  <SelectItem value="medical_devices">Medical Devices</SelectItem>
-                  <SelectItem value="fmcg">FMCG</SelectItem>
-                  <SelectItem value="cosmetics">Cosmetics</SelectItem>
-                  <SelectItem value="food">Food</SelectItem>
-                  <SelectItem value="dairy">Dairy</SelectItem>
-                  <SelectItem value="packaging">Packaging</SelectItem>
-                  <SelectItem value="printing">Printing</SelectItem>
-                  <SelectItem value="logistics">Logistics</SelectItem>
+                  {industries.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

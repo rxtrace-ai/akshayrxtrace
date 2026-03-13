@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
+import { isIndustryOption } from '@/lib/companies/industry';
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
 
     const {
       company_name,
+      name,
       contact_person,
       contact_person_name,
       firm_type,
@@ -28,6 +30,7 @@ export async function POST(req: NextRequest) {
       industry,
       business_category,
       business_type,
+      created_at,
     } = await req.json();
 
     const fallbackContactPerson = String(
@@ -36,7 +39,8 @@ export async function POST(req: NextRequest) {
     const resolvedContactPerson = String(contact_person || contact_person_name || '').trim() || fallbackContactPerson;
 
     // Validate required fields
-    if (!company_name || !resolvedContactPerson || !address || !phone || !industry || !business_type) {
+    const resolvedCompanyName = String(company_name || name || '').trim();
+    if (!resolvedCompanyName || !resolvedContactPerson || !address || !phone || !industry || !business_type) {
       return NextResponse.json(
         { error: 'Missing required fields.' },
         { status: 400 }
@@ -46,7 +50,13 @@ export async function POST(req: NextRequest) {
     // Validate firm type
     const normalizedFirmType = String(firm_type || '').trim().toLowerCase();
     const normalizedBusinessType = String(business_type || '').trim().toLowerCase();
-    const normalizedIndustry = String(industry || '').trim().toLowerCase();
+    const normalizedIndustry = String(industry || '').trim();
+    if (!isIndustryOption(normalizedIndustry)) {
+      return NextResponse.json(
+        { error: 'Invalid industry selection.' },
+        { status: 400 }
+      );
+    }
 
     // Check if company already exists for this user
     const { data: existingCompany } = await supabase
@@ -67,7 +77,7 @@ export async function POST(req: NextRequest) {
       .from('companies')
       .insert({
         user_id: user.id,
-        company_name: company_name.trim(),
+        company_name: resolvedCompanyName,
         contact_person: resolvedContactPerson,
         firm_type: normalizedFirmType || null,
         address: address.trim(),
@@ -77,7 +87,7 @@ export async function POST(req: NextRequest) {
         industry: normalizedIndustry,
         business_category: business_category ? String(business_category).trim().toLowerCase() : null,
         business_type: normalizedBusinessType,
-        created_at: new Date().toISOString(),
+        created_at: created_at ? new Date(created_at) : new Date(),
         profile_completed: true,
       })
       .select('id, company_name')

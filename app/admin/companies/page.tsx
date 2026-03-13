@@ -6,10 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Building2, Edit2, Trash2, Search, RefreshCw, X, Ban, CheckCircle, FileText } from 'lucide-react';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { useDestructiveAction } from '@/lib/admin/useDestructiveAction';
+import { INDUSTRY_OPTIONS, isIndustryOption } from '@/lib/companies/industry';
 
 type Company = {
   id: string;
@@ -365,11 +367,21 @@ export default function CompaniesManagement() {
 
                 <div>
                   <Label htmlFor="industry">Industry</Label>
-                  <Input
-                    id="industry"
-                    value={formData.industry}
-                    onChange={(e) => setFormData({ ...formData, industry: e.target.value })}
-                  />
+                  <Select
+                    value={isIndustryOption(formData.industry) ? formData.industry : ''}
+                    onValueChange={(value) => setFormData({ ...formData, industry: value })}
+                  >
+                    <SelectTrigger id="industry">
+                      <SelectValue placeholder="Select industry" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {INDUSTRY_OPTIONS.map((option) => (
+                        <SelectItem key={option} value={option}>
+                          {option}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div>
