@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
 
     const {
       company_name,
+      contact_person,
       contact_person_name,
       firm_type,
       address,
@@ -29,8 +30,13 @@ export async function POST(req: NextRequest) {
       business_type,
     } = await req.json();
 
+    const fallbackContactPerson = String(
+      user.user_metadata?.full_name || user.email || email || ''
+    ).trim();
+    const resolvedContactPerson = String(contact_person || contact_person_name || '').trim() || fallbackContactPerson;
+
     // Validate required fields
-    if (!company_name || !contact_person_name || !firm_type || !address || !email || !phone || !pan || !business_category || !business_type) {
+    if (!company_name || !resolvedContactPerson || !firm_type || !address || !email || !phone || !pan || !business_category || !business_type) {
       return NextResponse.json(
         { error: 'Missing required fields. PAN card is mandatory.' },
         { status: 400 }
@@ -92,7 +98,8 @@ export async function POST(req: NextRequest) {
       .insert({
         user_id: user.id,
         company_name: company_name.trim(),
-        contact_person_name: contact_person_name.trim(),
+        contact_person: resolvedContactPerson,
+        contact_person_name: resolvedContactPerson,
         firm_type,
         address: address.trim(),
         email: email.toLowerCase().trim(),

@@ -23,6 +23,7 @@ export type CompanySetupResult =
 export async function createOrUpdateCompanyProfile(
   data: {
     company_name: string;
+    contact_person?: string;
     phone: string;
     address: string;
     firm_type: string;
@@ -49,6 +50,16 @@ export async function createOrUpdateCompanyProfile(
       return {
         success: false,
         error: 'Company name is required'
+      };
+    }
+    const fallbackContactPerson = String(
+      user.user_metadata?.full_name || user.email || ''
+    ).trim();
+    const contactPerson = String(data.contact_person || '').trim() || fallbackContactPerson;
+    if (!contactPerson) {
+      return {
+        success: false,
+        error: 'Contact person is required'
       };
     }
     if (!data.phone?.trim()) {
@@ -127,6 +138,7 @@ export async function createOrUpdateCompanyProfile(
     const companyData = {
       user_id: user.id,
       company_name: data.company_name.trim(),
+      contact_person: contactPerson,
       phone: data.phone.trim(),
       address: data.address.trim(),
       email: user.email || null,

@@ -29,6 +29,7 @@ function CompanySetupContent() {
 
   // Form state - ALL required fields
   const [companyName, setCompanyName] = useState('');
+  const [contactPerson, setContactPerson] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [legalStructure, setLegalStructure] = useState<LegalStructure | ''>('');
@@ -49,13 +50,18 @@ function CompanySetupContent() {
       // Check if company exists (always allow editing, even if profile_completed === true)
       const { data: existingCompany } = await supabase
         .from('companies')
-        .select('id, company_name, phone, address, firm_type, business_category, business_type, profile_completed')
+        .select('id, company_name, contact_person, contact_person_name, phone, address, firm_type, business_category, business_type, profile_completed')
         .eq('user_id', user.id)
         .maybeSingle();
 
       // Load existing data if available
       if (existingCompany?.id) {
         setCompanyName(existingCompany.company_name || '');
+        setContactPerson(
+          existingCompany.contact_person ||
+          existingCompany.contact_person_name ||
+          ''
+        );
         setPhone(existingCompany.phone || '');
         setAddress(existingCompany.address || '');
         if (existingCompany.firm_type) {
@@ -101,6 +107,11 @@ function CompanySetupContent() {
       setSubmitting(false);
       return;
     }
+    if (!contactPerson.trim()) {
+      setError('Contact Person is required');
+      setSubmitting(false);
+      return;
+    }
     if (!phone.trim()) {
       setError('Phone Number is required');
       setSubmitting(false);
@@ -141,6 +152,7 @@ function CompanySetupContent() {
     // Call server action (backend-first execution path)
     const result = await createOrUpdateCompanyProfile({
       company_name: companyName.trim(),
+      contact_person: contactPerson.trim(),
       phone: phone.trim(),
       address: address.trim(),
       firm_type: legalStructure,
@@ -195,6 +207,13 @@ function CompanySetupContent() {
   const handlePhoneChange = (value: string) => {
     setPhone(value);
     if (error && error.includes('Phone')) {
+      setError('');
+    }
+  };
+
+  const handleContactPersonChange = (value: string) => {
+    setContactPerson(value);
+    if (error && error.includes('Contact Person')) {
       setError('');
     }
   };
@@ -280,7 +299,23 @@ function CompanySetupContent() {
               />
             </div>
 
-            {/* 2. Phone Number */}
+            {/* 2. Contact Person */}
+            <div>
+              <Label htmlFor="contactPerson" className="text-sm font-medium">
+                Contact Person *
+              </Label>
+              <Input
+                id="contactPerson"
+                value={contactPerson}
+                onChange={(e) => handleContactPersonChange(e.target.value)}
+                placeholder="Enter contact person name"
+                required
+                disabled={submitting}
+                className="mt-1.5"
+              />
+            </div>
+
+            {/* 3. Phone Number */}
             <div>
               <Label htmlFor="phone" className="text-sm font-medium">
                 Phone Number *
@@ -297,7 +332,7 @@ function CompanySetupContent() {
               />
             </div>
 
-            {/* 3. Address */}
+            {/* 4. Address */}
             <div>
               <Label htmlFor="address" className="text-sm font-medium">
                 Address *
@@ -314,7 +349,7 @@ function CompanySetupContent() {
               />
             </div>
 
-            {/* 4. Type of Company (Legal Structure) */}
+            {/* 5. Type of Company (Legal Structure) */}
             <div>
               <Label htmlFor="legalStructure" className="text-sm font-medium">
                 Type of Company (Legal Structure) *
@@ -342,7 +377,7 @@ function CompanySetupContent() {
               </Select>
             </div>
 
-            {/* 5. Type of Business */}
+            {/* 6. Type of Business */}
             <div>
               <Label htmlFor="businessType" className="text-sm font-medium">
                 Type of Business *
@@ -371,7 +406,7 @@ function CompanySetupContent() {
               </Select>
             </div>
 
-            {/* 6. Type of Operation (Multi-select) */}
+            {/* 7. Type of Operation (Multi-select) */}
             <div>
               <Label className="text-sm font-medium">
                 Type of Operation (Select all that apply) *
@@ -394,7 +429,7 @@ function CompanySetupContent() {
               </div>
             </div>
 
-            {/* 7. Industries (Multi-select) */}
+            {/* 8. Industries (Multi-select) */}
             <div>
               <Label className="text-sm font-medium">
                 Industries (Select all that apply) *
@@ -436,7 +471,7 @@ function CompanySetupContent() {
               </Button>
               <Button
                 type="submit"
-                disabled={submitting || !companyName.trim() || !phone.trim() || !address.trim() || !legalStructure || !businessType || operationTypes.length === 0 || industries.length === 0}
+                disabled={submitting || !companyName.trim() || !contactPerson.trim() || !phone.trim() || !address.trim() || !legalStructure || !businessType || operationTypes.length === 0 || industries.length === 0}
                 className="bg-blue-600 hover:bg-blue-700"
               >
                 {submitting ? 'Saving...' : 'Complete Setup'}
