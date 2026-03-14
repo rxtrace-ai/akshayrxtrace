@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
-import { sendInvitationEmail } from "@/lib/email";
+import { sendInviteEmail } from "@/lib/email";
 
 function normalizeRole(raw: unknown): "admin" | "operator" | "viewer" {
   const value = String(raw || "operator").trim().toLowerCase();
@@ -93,25 +93,29 @@ export async function POST(req: Request) {
   }
 
   const rpcPayload = Array.isArray(data) ? data[0] : data;
+  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+  const normalizedAppUrl = appUrl.replace(/\/+$/, "");
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
   const rpcInviteUrl = typeof rpcPayload?.invite_url === "string" ? rpcPayload.invite_url : null;
   const rpcToken = typeof rpcPayload?.token === "string" ? rpcPayload.token : null;
   const inviteUrl =
     rpcInviteUrl ||
     (rpcToken ? `${baseUrl}/invite/accept?token=${encodeURIComponent(rpcToken)}` : null);
+  const emailInviteUrl =
+    (rpcToken ? `${normalizedAppUrl}/accept-invite?token=${encodeURIComponent(rpcToken)}` : null) ||
+    inviteUrl;
 
   let emailSent = false;
   let emailError: string | null = null;
-  if (!inviteUrl) {
+  if (!emailInviteUrl) {
     emailError = "INVITE_LINK_UNAVAILABLE";
+    console.error("Invite email failed:", new Error("INVITE_LINK_UNAVAILABLE"));
   } else {
     try {
-      const mailResult = await sendInvitationEmail({
+      const mailResult = await sendInviteEmail({
         to: email,
         companyName: String((resolved.company as any)?.company_name || "Your Company"),
-        role,
-        inviterName: String(user.email || user.id),
-        inviteUrl,
+        inviteUrl: emailInviteUrl,
       });
       emailSent = Boolean((mailResult as any)?.success);
       if (!emailSent) {
@@ -120,11 +124,14 @@ export async function POST(req: Request) {
     } catch (err: any) {
       emailSent = false;
       emailError = err?.message || "EMAIL_SEND_FAILED";
+      console.error("Invite email failed:", err);
     }
   }
 
   return NextResponse.json({
     success: true,
+    inviteCreated: true,
+    emailSent: emailSent,
     invite: {
       email,
       role,
