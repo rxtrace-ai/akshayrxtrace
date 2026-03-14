@@ -22,8 +22,30 @@ export async function POST(req: Request) {
   }
 
   const resolved = await resolveCompanyForUser(supabase, user.id, "id, company_name");
-  if (!resolved || !resolved.isOwner) {
+  if (!resolved) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  let canInvite = resolved.isOwner;
+  if (!canInvite) {
+    const { data: inviterSeat, error: inviterSeatError } = await supabase
+      .from("seats")
+      .select("id")
+      .eq("company_id", resolved.companyId)
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .eq("role", "admin")
+      .maybeSingle();
+
+    if (inviterSeatError) {
+      return NextResponse.json({ error: inviterSeatError.message }, { status: 500 });
+    }
+
+    canInvite = Boolean(inviterSeat?.id);
+  }
+
+  if (!canInvite) {
+    return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   }
 
   const body = await req.json().catch(() => ({}));
@@ -43,7 +65,7 @@ export async function POST(req: Request) {
 
   const rawToken = createSeatInviteToken();
   const tokenHash = hashSeatInviteToken(rawToken);
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
 
   const { data, error } = await supabase.rpc("create_seat_invitation_atomic", {
     p_company_id: resolved.companyId,
@@ -104,6 +126,13 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     success: true,
+    invite: {
+      email,
+      role,
+      plant_ids: plantIds,
+      status: "pending",
+      expires_at: expiresAt,
+    },
     seat: rpcPayload?.seat || null,
     invitation_id: rpcPayload?.invitation_id || null,
     invite_url: inviteUrl,

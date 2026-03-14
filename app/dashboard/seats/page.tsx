@@ -128,7 +128,7 @@ export default function SeatsManagementPage() {
     setSuccess(null);
     setInviteUrl(null);
     try {
-      const res = await fetch("/api/user/seats/invite", {
+      const res = await fetch("/api/company/invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),

@@ -47,9 +47,15 @@ export async function POST(req: Request) {
     if (message.includes("INVITATION_EMAIL_MISMATCH")) {
       return NextResponse.json({ error: "INVITATION_EMAIL_MISMATCH" }, { status: 403 });
     }
+    if (message.includes("USER_ALREADY_MEMBER")) {
+      return NextResponse.json({ error: "USER_ALREADY_MEMBER" }, { status: 409 });
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
   const payload = Array.isArray(data) ? data[0] : data;
-  return NextResponse.json(payload ?? { success: true });
+  return NextResponse.json({
+    ...(payload ?? { success: true }),
+    seat_status: "active",
+  });
 }

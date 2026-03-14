@@ -22,7 +22,7 @@ function AcceptSeatInviteInner() {
     setError(null);
     setMessage(null);
     try {
-      const res = await fetch("/api/user/seats/invitations/accept", {
+      const res = await fetch("/api/company/invite/accept", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token }),
