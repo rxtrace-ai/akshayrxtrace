@@ -14,6 +14,8 @@ export default function SettingsPage() {
   const { trialSummary, loading: trialLoading, error: trialError, refresh: refreshTrial } = useSubscription();
   const [trialActivating, setTrialActivating] = useState(false);
   const [trialActivateError, setTrialActivateError] = useState<string | null>(null);
+  const [trialCancelling, setTrialCancelling] = useState(false);
+  const [trialCancelError, setTrialCancelError] = useState<string | null>(null);
 
   async function loadRazorpayScript(): Promise<void> {
     if (typeof window === "undefined") return;
@@ -77,6 +79,28 @@ export default function SettingsPage() {
       setTrialActivateError(err?.message || "TRIAL_ACTIVATION_FAILED");
     } finally {
       setTrialActivating(false);
+    }
+  }
+
+  async function handleCancelTrial() {
+    setTrialCancelError(null);
+    setTrialCancelling(true);
+    try {
+      const res = await fetch("/api/company/trial/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.error || "TRIAL_CANCEL_FAILED");
+      }
+
+      await refreshTrial();
+      router.refresh();
+    } catch (err: any) {
+      setTrialCancelError(err?.message || "TRIAL_CANCEL_FAILED");
+    } finally {
+      setTrialCancelling(false);
     }
   }
 
@@ -398,13 +422,17 @@ export default function SettingsPage() {
           </div>
           <Badge
             className={`px-3 py-1 text-sm ${
-              trialSummary?.trial_active
+              trialSummary?.trial_status === "active"
                 ? "bg-green-600 text-white"
+                : trialSummary?.trial_status === "cancelled"
+                ? "bg-red-100 text-red-700"
                 : "bg-gray-100 text-gray-700"
             }`}
           >
-            {trialSummary?.trial_active
+            {trialSummary?.trial_status === "active"
               ? "Active"
+              : trialSummary?.trial_status === "cancelled"
+              ? "Cancelled"
               : trialSummary?.trial_expires_at
               ? "Expired"
               : "Not started"}
@@ -417,18 +445,23 @@ export default function SettingsPage() {
         {trialActivateError && (
           <div className="text-red-600 text-sm">{trialActivateError}</div>
         )}
+        {trialCancelError && (
+          <div className="text-red-600 text-sm">{trialCancelError}</div>
+        )}
 
         {trialSummary ? (
           <div className="space-y-4">
             <div className="text-sm text-gray-600">
-              {trialSummary.trial_active
+              {trialSummary.trial_status === "cancelled"
+                ? "Trial cancelled."
+                : trialSummary.trial_active
                 ? `${trialSummary.days_remaining} ${trialSummary.days_remaining === 1 ? "day" : "days"} remaining`
                 : trialSummary.trial_expires_at
                 ? "Trial has ended."
                 : "Trial window not yet available."}
             </div>
 
-            {!trialSummary.trial_active && !trialSummary.trial_expires_at && (
+            {!trialSummary.trial_active && !trialSummary.trial_expires_at && trialSummary.trial_status !== "cancelled" && (
               <div className="flex items-center gap-3">
                 <Button
                   type="button"
@@ -444,6 +477,33 @@ export default function SettingsPage() {
               </div>
             )}
 
+            {trialSummary.trial_status === "active" && (
+              <div className="flex items-center gap-3">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={handleCancelTrial}
+                  disabled={trialCancelling}
+                >
+                  {trialCancelling ? "Cancelling..." : "Cancel Trial"}
+                </Button>
+                <span className="text-xs text-gray-500">
+                  Cancelling removes trial quotas and ends access immediately.
+                </span>
+              </div>
+            )}
+
+            {(trialSummary.trial_status === "cancelled" || trialSummary.trial_status === "expired") && (
+              <div>
+                <Button
+                  asChild
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  <Link href="/dashboard/subscription">Upgrade Plan</Link>
+                </Button>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               {[
                 { label: "Unit", key: "unit" },
@@ -452,6 +512,7 @@ export default function SettingsPage() {
                 { label: "Pallet", key: "pallet" },
                 { label: "Seats", key: "seat" },
                 { label: "Plants", key: "plant" },
+                { label: "Handsets", key: "handset" },
               ].map((metric) => {
                 const usage = trialSummary.usage[metric.key as keyof typeof trialSummary.usage];
                 const limit = trialSummary.limits[metric.key as keyof typeof trialSummary.limits];

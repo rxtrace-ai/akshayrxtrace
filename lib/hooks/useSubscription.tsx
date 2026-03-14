@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import type { TrialDashboardSummary } from '@/lib/trial';
 
-type SubscriptionStatus = 'trialing' | 'expired' | null;
+type SubscriptionStatus = 'trialing' | 'expired' | 'cancelled' | null;
 
 type Subscription = {
   status: SubscriptionStatus;
@@ -40,7 +40,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       const payload: TrialDashboardSummary = await res.json();
       setTrialSummary(payload);
 
-      const newStatus: SubscriptionStatus = payload.trial_active
+      const newStatus: SubscriptionStatus = payload.trial_status === 'cancelled'
+        ? 'cancelled'
+        : payload.trial_active
         ? 'trialing'
         : payload.trial_expires_at
         ? 'expired'

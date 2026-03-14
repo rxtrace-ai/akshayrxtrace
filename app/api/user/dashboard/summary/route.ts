@@ -21,6 +21,13 @@ function blockReason(state: string, remaining: number): "TRIAL_EXPIRED" | "TRIAL
   return null;
 }
 
+function trialStatusFromSnapshot(snapshot: Awaited<ReturnType<typeof getCompanyEntitlementSnapshot>>) {
+  if (snapshot.state === "TRIAL_CANCELLED") return "cancelled" as const;
+  if (snapshot.trial_active) return "active" as const;
+  if (snapshot.trial_expires_at) return "expired" as const;
+  return "not_started" as const;
+}
+
 export async function GET() {
   try {
     const supabase = await supabaseServer();
@@ -54,6 +61,7 @@ export async function GET() {
     return NextResponse.json({
       trial_active: snapshot.trial_active,
       trial_expires_at: snapshot.trial_expires_at,
+      trial_status: trialStatusFromSnapshot(snapshot),
       days_remaining: computeDaysRemaining(snapshot.trial_expires_at),
       limits: {
         unit: snapshot.limits.unit || 0,
@@ -62,6 +70,7 @@ export async function GET() {
         pallet: snapshot.limits.pallet || 0,
         seat: snapshot.limits.seat || 0,
         plant: snapshot.limits.plant || 0,
+        handset: snapshot.limits.handset || 0,
       },
       usage: {
         unit: snapshot.usage.unit || 0,
@@ -70,6 +79,7 @@ export async function GET() {
         pallet: snapshot.usage.pallet || 0,
         seat: snapshot.usage.seat || 0,
         plant: snapshot.usage.plant || 0,
+        handset: snapshot.usage.handset || 0,
       },
       enforcement: {
         generation: {

@@ -168,6 +168,7 @@ export async function POST(req: Request) {
                   company_id: companyId,
                   trial_start: now.toISOString(),
                   trial_end: end.toISOString(),
+                  status: 'active',
                   created_at: now.toISOString(),
                   updated_at: now.toISOString(),
                 },

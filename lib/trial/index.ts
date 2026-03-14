@@ -11,7 +11,7 @@ export const TRIAL_CONFIG = {
   plant_limit: 2,
 } as const;
 
-export type TrialLimitKey = 'unit' | 'box' | 'carton' | 'pallet' | 'seat' | 'plant';
+export type TrialLimitKey = 'unit' | 'box' | 'carton' | 'pallet' | 'seat' | 'plant' | 'handset';
 
 export type TrialLimits = {
   unit: number;
@@ -20,6 +20,7 @@ export type TrialLimits = {
   pallet: number;
   seat: number;
   plant: number;
+  handset: number;
 };
 
 export const TRIAL_LIMITS: TrialLimits = {
@@ -29,6 +30,7 @@ export const TRIAL_LIMITS: TrialLimits = {
   pallet: TRIAL_CONFIG.pallet_limit,
   seat: TRIAL_CONFIG.seat_limit,
   plant: TRIAL_CONFIG.plant_limit,
+  handset: 0,
 };
 
 export type TrialUsageTotals = {
@@ -236,9 +238,10 @@ export function evaluateTrialEnforcement(params: {
 export type TrialDashboardSummary = {
   trial_active: boolean;
   trial_expires_at: string | null;
+  trial_status?: 'active' | 'expired' | 'cancelled' | 'not_started';
   days_remaining: number;
   limits: TrialLimits;
-  usage: TrialUsageTotals & { seat: number; plant: number };
+  usage: TrialUsageTotals & { seat: number; plant: number; handset: number };
   enforcement: TrialEnforcementSummary;
 };
 
