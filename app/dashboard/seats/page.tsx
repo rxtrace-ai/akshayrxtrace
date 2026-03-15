@@ -128,7 +128,7 @@ export default function SeatsManagementPage() {
     setSuccess(null);
     setInviteUrl(null);
     try {
-      const res = await fetch("/api/company/invite", {
+      const res = await fetch("/api/admin/seats/invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
@@ -138,7 +138,11 @@ export default function SeatsManagementPage() {
         throw new Error(payload.error || "Failed to send invite");
       }
 
-      setSuccess(payload.email_sent ? "Invite sent successfully." : "Invite created. Email sending failed.");
+      setSuccess(
+        payload.email_sent
+          ? "Invite sent successfully."
+          : `Invite created. Email sending failed.${payload.email_error ? ` ${payload.email_error}` : ""}`
+      );
       setInviteUrl(payload.invite_url || null);
       setForm({
         full_name: "",

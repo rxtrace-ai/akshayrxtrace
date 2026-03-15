@@ -1,8 +1,23 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { hashSeatInviteToken } from "@/lib/seats/invitations";
+import { consumeRateLimit } from "@/lib/security/rateLimit";
 
 export async function POST(req: Request) {
+  const forwarded = req.headers.get("x-forwarded-for") || "";
+  const ip = forwarded.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
+  const rateLimit = consumeRateLimit({
+    key: `seat-invite-accept:${ip}`,
+    refillPerMinute: 10,
+    burst: 10,
+  });
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "RATE_LIMITED", retry_after_seconds: rateLimit.retryAfterSeconds },
+      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds ?? 60) } }
+    );
+  }
+
   const supabase = await supabaseServer();
   const {
     data: { user },
@@ -24,7 +39,7 @@ export async function POST(req: Request) {
   }
 
   const tokenHash = hashSeatInviteToken(token);
-  const { data, error } = await supabase.rpc("accept_seat_invitation_atomic", {
+  const { data, error } = await supabase.rpc("accept_seat_invitation", {
     p_token_hash: tokenHash,
     p_user_id: user.id,
     p_email: user.email,
@@ -49,6 +64,9 @@ export async function POST(req: Request) {
     }
     if (message.includes("USER_ALREADY_MEMBER")) {
       return NextResponse.json({ error: "USER_ALREADY_MEMBER" }, { status: 409 });
+    }
+    if (message.includes("SEAT_LIMIT_EXCEEDED")) {
+      return NextResponse.json({ error: "SEAT_LIMIT_EXCEEDED" }, { status: 409 });
     }
     return NextResponse.json({ error: message }, { status: 500 });
   }

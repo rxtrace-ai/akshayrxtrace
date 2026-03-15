@@ -13,7 +13,7 @@ function LoginContent() {
 
   useEffect(() => {
     const redirectTarget = inviteToken
-      ? `/accept-invite?token=${encodeURIComponent(inviteToken)}`
+      ? `/invite/accept?token=${encodeURIComponent(inviteToken)}`
       : "/dashboard";
 
     const signInUrl = `/auth/signin?redirect=${encodeURIComponent(redirectTarget)}`;

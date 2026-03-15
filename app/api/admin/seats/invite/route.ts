@@ -74,7 +74,7 @@ export async function POST(req: Request) {
     if (message.includes("TRIAL_EXPIRED")) {
       return NextResponse.json({ error: "TRIAL_EXPIRED" }, { status: 403 });
     }
-    if (message.includes("SEAT_QUOTA_EXCEEDED")) {
+    if (message.includes("SEAT_QUOTA_EXCEEDED") || message.includes("SEAT_LIMIT_EXCEEDED")) {
       return NextResponse.json({ error: "SEAT_QUOTA_EXCEEDED" }, { status: 403 });
     }
     if (message.includes("PLANT_SELECTION_REQUIRED")) {
@@ -86,8 +86,8 @@ export async function POST(req: Request) {
     if (message.includes("SEAT_ALREADY_EXISTS")) {
       return NextResponse.json({ error: "SEAT_ALREADY_EXISTS" }, { status: 409 });
     }
-    if (message.includes("COMPANY_FROZEN")) {
-      return NextResponse.json({ error: "COMPANY_FROZEN" }, { status: 403 });
+    if (message.includes("FORBIDDEN")) {
+      return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
     }
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -95,43 +95,46 @@ export async function POST(req: Request) {
   const rpcPayload = Array.isArray(data) ? data[0] : data;
   const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
   const normalizedAppUrl = appUrl.replace(/\/+$/, "");
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
   const rpcInviteUrl = typeof rpcPayload?.invite_url === "string" ? rpcPayload.invite_url : null;
   const rpcToken = typeof rpcPayload?.token === "string" ? rpcPayload.token : null;
+
   const inviteUrl =
-    rpcInviteUrl ||
-    (rpcToken ? `${baseUrl}/invite/accept?token=${encodeURIComponent(rpcToken)}` : null);
-  const emailInviteUrl =
-    (rpcToken ? `${normalizedAppUrl}/accept-invite?token=${encodeURIComponent(rpcToken)}` : null) ||
-    inviteUrl;
+    rpcInviteUrl
+      ? (rpcInviteUrl.startsWith("http://") || rpcInviteUrl.startsWith("https://")
+          ? rpcInviteUrl
+          : `${normalizedAppUrl}${rpcInviteUrl.startsWith("/") ? "" : "/"}${rpcInviteUrl}`)
+      : (rpcToken ? `${normalizedAppUrl}/invite/accept?token=${encodeURIComponent(rpcToken)}` : null);
 
   let emailSent = false;
   let emailError: string | null = null;
-  if (!emailInviteUrl) {
+  if (!inviteUrl) {
     emailError = "INVITE_LINK_UNAVAILABLE";
-    console.error("Invite email failed:", new Error("INVITE_LINK_UNAVAILABLE"));
+    console.error("Invite email failed", {
+      reason: "INVITE_LINK_UNAVAILABLE",
+      inviteEmail: email,
+      companyId: resolved.companyId,
+    });
   } else {
     try {
       const mailResult = await sendInviteEmail({
         to: email,
         companyName: String((resolved.company as any)?.company_name || "Your Company"),
-        inviteUrl: emailInviteUrl,
+        inviteUrl,
       });
-      emailSent = Boolean((mailResult as any)?.success);
-      if (!emailSent) {
-        emailError = String((mailResult as any)?.error || "EMAIL_SEND_FAILED");
+      emailSent = Boolean(mailResult?.success);
+      if (!emailSent && mailResult && "error" in mailResult) {
+        emailError = `EMAIL_SEND_FAILED: ${String(mailResult.error || "Unknown provider error")}`;
       }
     } catch (err: any) {
       emailSent = false;
       emailError = err?.message || "EMAIL_SEND_FAILED";
-      console.error("Invite email failed:", err);
     }
   }
 
   return NextResponse.json({
     success: true,
     inviteCreated: true,
-    emailSent: emailSent,
+    emailSent,
     invite: {
       email,
       role,
