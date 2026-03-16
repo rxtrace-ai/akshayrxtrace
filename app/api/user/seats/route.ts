@@ -92,29 +92,21 @@ export async function GET() {
     return NextResponse.json({ error: invitesError.message }, { status: 500 });
   }
 
-  let profiles: any[] = [];
-  if (userIds.length > 0) {
-    const [{ data: profilesById, error: profilesByIdError }, { data: profilesByUserId, error: profilesByUserIdError }] =
-      await Promise.all([
-        supabase.from("user_profiles").select("id, user_id, full_name").in("id", userIds),
-        supabase.from("user_profiles").select("id, user_id, full_name").in("user_id", userIds),
-      ]);
+  const { data: profiles, error: profilesError } =
+    userIds.length > 0
+      ? await supabase
+          .from("user_profiles")
+          .select("user_id, full_name")
+          .in("user_id", userIds)
+      : { data: [], error: null };
 
-    if (profilesByIdError) {
-      return NextResponse.json({ error: profilesByIdError.message }, { status: 500 });
-    }
-    if (profilesByUserIdError) {
-      return NextResponse.json({ error: profilesByUserIdError.message }, { status: 500 });
-    }
-
-    profiles = [...(profilesById || []), ...(profilesByUserId || [])];
+  if (profilesError) {
+    return NextResponse.json({ error: profilesError.message }, { status: 500 });
   }
   const fullNameByUserId = new Map<string, string | null>();
   for (const profile of profiles || []) {
-    const id = (profile as any).id ? String((profile as any).id) : null;
     const userId = (profile as any).user_id ? String((profile as any).user_id) : null;
     const name = (profile as any).full_name ?? null;
-    if (id) fullNameByUserId.set(id, name);
     if (userId) fullNameByUserId.set(userId, name);
   }
 

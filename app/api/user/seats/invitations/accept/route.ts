@@ -38,6 +38,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "EMAIL_REQUIRED" }, { status: 400 });
   }
 
+  // Ensure profile exists so dashboards can resolve member details immediately.
+  await supabase
+    .from("user_profiles")
+    .upsert(
+      {
+        id: user.id,
+        user_id: user.id,
+        email: String(user.email).toLowerCase().trim(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    )
+    .then(() => undefined)
+    .catch(() => undefined);
+
   const tokenHash = hashSeatInviteToken(token);
   const { data, error } = await supabase.rpc("accept_seat_invitation", {
     p_token_hash: tokenHash,

@@ -59,6 +59,9 @@ export default function SignIn() {
       }
       
       if (data?.user) {
+        // Ensure profile row exists for dashboard joins.
+        await fetch('/api/auth/ensure-profile', { method: 'POST' }).catch(() => undefined);
+
         // Honor ?redirect= and legacy ?next= for deep-link flows (e.g. invite accept)
         const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
         const redirectPath = getSafePath(urlParams?.get('redirect') ?? null) ?? getSafePath(urlParams?.get('next') ?? null);
