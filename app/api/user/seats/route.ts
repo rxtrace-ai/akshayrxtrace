@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
 import { getSeatEntitlement } from "@/lib/seats/entitlement";
 
@@ -18,6 +19,7 @@ type SeatRow = {
 
 export async function GET() {
   const supabase = await supabaseServer();
+  const admin = getSupabaseAdmin();
   const {
     data: { user },
     error: authError,
@@ -27,14 +29,14 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const resolved = await resolveCompanyForUser(supabase, user.id, "id");
+  const resolved = await resolveCompanyForUser(admin, user.id, "id");
   if (!resolved || !resolved.isOwner) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const entitlement = await getSeatEntitlement(supabase, resolved.companyId);
+  const entitlement = await getSeatEntitlement(admin, resolved.companyId);
 
-  const { data: seats, error: seatsError } = await supabase
+  const { data: seats, error: seatsError } = await admin
     .from("seats")
     .select(`
       id,
@@ -66,7 +68,7 @@ export async function GET() {
 
   const { data: assignments, error: assignmentsError } =
     seatIds.length > 0
-      ? await supabase
+      ? await admin
           .from("seat_plant_assignments")
           .select("seat_id, plant_id, status, plants(id, name, status)")
           .eq("company_id", resolved.companyId)
@@ -80,7 +82,7 @@ export async function GET() {
 
   const { data: invitations, error: invitesError } =
     seatIds.length > 0
-      ? await supabase
+      ? await admin
           .from("seat_invitations")
           .select("id, seat_id, status, expires_at, consumed_at, created_at")
           .eq("company_id", resolved.companyId)
@@ -94,7 +96,7 @@ export async function GET() {
 
   const { data: profiles, error: profilesError } =
     userIds.length > 0
-      ? await supabase
+      ? await admin
           .from("user_profiles")
           .select("user_id, full_name")
           .in("user_id", userIds)

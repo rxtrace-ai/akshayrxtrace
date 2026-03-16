@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
 
 export async function GET() {
   const supabase = await supabaseServer();
+  const admin = getSupabaseAdmin();
   const {
     data: { user },
     error: authError,
@@ -13,12 +15,12 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const resolved = await resolveCompanyForUser(supabase, user.id, "id");
+  const resolved = await resolveCompanyForUser(admin, user.id, "id");
   if (!resolved || !resolved.isOwner) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await admin
     .from("plants")
     .select("id, name, status")
     .eq("company_id", resolved.companyId)
