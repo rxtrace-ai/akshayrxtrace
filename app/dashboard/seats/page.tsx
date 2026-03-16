@@ -287,7 +287,7 @@ export default function SeatsManagementPage() {
                       </td>
                       <td className="px-2 py-2">
                         {seat.invitation
-                          ? `${seat.invitation.status}${seat.invitation.expires_at ? ` (exp ${new Date(seat.invitation.expires_at).toLocaleDateString()})` : ""}`
+                          ? `${seat.invitation.status}`
                           : "-"}
                       </td>
                       <td className="px-2 py-2">

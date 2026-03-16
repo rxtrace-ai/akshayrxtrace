@@ -76,6 +76,7 @@ export async function sendInviteEmail(params: {
     <h2>You're invited to RxTrace</h2>
     <p>You have been invited to join a company workspace on <b>RxTrace</b>, a product traceability platform.</p>
     <p>Click the button below to accept your invitation.</p>
+    <p><b>Note:</b> This invitation link expires in 7 days.</p>
     <a href="${inviteUrl}" style="padding:12px 18px;background:#2563eb;color:white;border-radius:6px;text-decoration:none;">
       Accept Invite
     </a>
