@@ -37,6 +37,11 @@ export async function POST(req: Request) {
   if (!user.email) {
     return NextResponse.json({ error: "EMAIL_REQUIRED" }, { status: 400 });
   }
+  const normalizedEmail = String(user.email).toLowerCase().trim();
+  const fullName =
+    (typeof user.user_metadata?.full_name === "string" && user.user_metadata.full_name.trim()) ||
+    normalizedEmail ||
+    "";
 
   // Ensure profile exists so dashboards can resolve member details immediately.
   await supabase
@@ -45,7 +50,8 @@ export async function POST(req: Request) {
       {
         id: user.id,
         user_id: user.id,
-        email: String(user.email).toLowerCase().trim(),
+        email: normalizedEmail,
+        full_name: fullName,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "id" }

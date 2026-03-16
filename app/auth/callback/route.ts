@@ -29,6 +29,8 @@ export async function GET(request: Request) {
   }
 
   let userId: string | null = null;
+  let userEmail: string | null = null;
+  let userFullName: string | null = null;
 
   if (code) {
     const cookieStore = await cookies();
@@ -67,6 +69,12 @@ export async function GET(request: Request) {
     }
 
     userId = data.session.user.id;
+    userEmail = data.session.user.email ? String(data.session.user.email).toLowerCase().trim() : null;
+    userFullName =
+      (typeof data.session.user.user_metadata?.full_name === 'string' &&
+        data.session.user.user_metadata.full_name.trim()) ||
+      userEmail ||
+      null;
   }
 
   // Check if there's a next parameter for redirect
@@ -75,6 +83,21 @@ export async function GET(request: Request) {
 
   if (userId) {
     const admin = getSupabaseAdmin();
+    await admin
+      .from('user_profiles')
+      .upsert(
+        {
+          id: userId,
+          user_id: userId,
+          email: userEmail,
+          full_name: userFullName || '',
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      )
+      .then(() => undefined)
+      .catch(() => undefined);
+
     const resolved = await resolveCompanyForUser(admin, userId, 'id');
     const hasCompany = Boolean(resolved?.companyId);
 

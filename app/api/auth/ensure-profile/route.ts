@@ -16,7 +16,8 @@ export async function POST() {
     const normalizedEmail = user.email ? String(user.email).toLowerCase().trim() : null;
     const fullName =
       (typeof user.user_metadata?.full_name === "string" && user.user_metadata.full_name.trim()) ||
-      null;
+      normalizedEmail ||
+      "";
 
     const { error } = await supabase.from("user_profiles").upsert(
       {
