@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
       .from('user_profiles')
       .upsert({
         id: user.id,
+        user_id: user.id,
         full_name: full_name?.trim() || null,
         phone: phone?.trim() || null,
         updated_at: new Date().toISOString(),

@@ -28,7 +28,7 @@ export default async function DashboardLayout({
   }
 
   const company = resolved.company as Record<string, unknown>;
-  if (company.profile_completed === false) {
+  if (resolved.isOwner && company.profile_completed === false) {
     redirect("/onboarding/company-setup?reason=complete_profile");
   }
 

@@ -46,8 +46,7 @@ export async function GET() {
       invited_at,
       activated_at,
       created_at,
-      updated_at,
-      user_profiles ( full_name )
+      updated_at
     `)
     .eq("company_id", resolved.companyId)
     .order("created_at", { ascending: false });
@@ -57,6 +56,13 @@ export async function GET() {
   }
 
   const seatIds = (seats || []).map((seat) => seat.id);
+  const userIds = Array.from(
+    new Set(
+      (seats || [])
+        .map((seat: any) => seat.user_id)
+        .filter((value: unknown): value is string => typeof value === "string" && value.length > 0)
+    )
+  );
 
   const { data: assignments, error: assignmentsError } =
     seatIds.length > 0
@@ -84,6 +90,32 @@ export async function GET() {
 
   if (invitesError) {
     return NextResponse.json({ error: invitesError.message }, { status: 500 });
+  }
+
+  let profiles: any[] = [];
+  if (userIds.length > 0) {
+    const [{ data: profilesById, error: profilesByIdError }, { data: profilesByUserId, error: profilesByUserIdError }] =
+      await Promise.all([
+        supabase.from("user_profiles").select("id, user_id, full_name").in("id", userIds),
+        supabase.from("user_profiles").select("id, user_id, full_name").in("user_id", userIds),
+      ]);
+
+    if (profilesByIdError) {
+      return NextResponse.json({ error: profilesByIdError.message }, { status: 500 });
+    }
+    if (profilesByUserIdError) {
+      return NextResponse.json({ error: profilesByUserIdError.message }, { status: 500 });
+    }
+
+    profiles = [...(profilesById || []), ...(profilesByUserId || [])];
+  }
+  const fullNameByUserId = new Map<string, string | null>();
+  for (const profile of profiles || []) {
+    const id = (profile as any).id ? String((profile as any).id) : null;
+    const userId = (profile as any).user_id ? String((profile as any).user_id) : null;
+    const name = (profile as any).full_name ?? null;
+    if (id) fullNameByUserId.set(id, name);
+    if (userId) fullNameByUserId.set(userId, name);
   }
 
   const plantsBySeat = new Map<
@@ -124,7 +156,7 @@ export async function GET() {
     const assignedPlants = plantsBySeat.get(seat.id) || [];
     const invitation = latestInviteBySeat.get(seat.id) || null;
 
-    const full_name = (seatRaw as any).user_profiles?.full_name ?? null;
+    const full_name = seat.user_id ? fullNameByUserId.get(seat.user_id) ?? null : null;
     return {
       id: seat.id,
       user_id: seat.user_id,

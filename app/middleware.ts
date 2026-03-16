@@ -51,6 +51,7 @@ export async function middleware(request: NextRequest) {
     '/auth/signup',
     '/api/auth/send-otp',
     '/api/auth/verify-otp',
+    '/api/public/seat-invitations/preview',
   ]);
 
   const isPublicRoute =
@@ -120,7 +121,7 @@ export async function middleware(request: NextRequest) {
     }
 
     const company = resolved.company as Record<string, unknown>;
-    if (company.profile_completed === false) {
+    if (resolved.isOwner && company.profile_completed === false) {
       if (isOnboardingCompanySetupRoute || pathname.startsWith('/dashboard/settings/erp-integration')) {
         return supabaseResponse;
       }
