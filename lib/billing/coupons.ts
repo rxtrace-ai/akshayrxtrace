@@ -15,6 +15,7 @@ export type ResolvedCoupon = {
   type: "percentage" | "flat";
   value: number;
   scope: "subscription" | "addons" | "both";
+  maxDiscountPaise: number | null;
 };
 
 export function computeCouponDiscountPaise(
@@ -27,13 +28,20 @@ export function computeCouponDiscountPaise(
   const safeSubtotal = Math.max(0, Math.trunc(addonsSubtotalPaise));
   if (safeSubtotal <= 0) return 0;
 
+  let discount = 0;
   if (coupon.type === "percentage") {
     const pct = Math.min(Math.max(coupon.value, 0), 100);
-    return Math.min(safeSubtotal, Math.round((safeSubtotal * pct) / 100));
+    discount = Math.min(safeSubtotal, Math.round((safeSubtotal * pct) / 100));
+  } else {
+    const flatPaise = Math.max(0, Math.round(coupon.value * 100));
+    discount = Math.min(safeSubtotal, flatPaise);
   }
 
-  const flatPaise = Math.max(0, Math.round(coupon.value * 100));
-  return Math.min(safeSubtotal, flatPaise);
+  if (coupon.maxDiscountPaise !== null) {
+    discount = Math.min(discount, Math.max(0, coupon.maxDiscountPaise));
+  }
+
+  return discount;
 }
 
 export async function resolveActiveCoupon(
@@ -46,7 +54,7 @@ export async function resolveActiveCoupon(
   const now = new Date().toISOString();
   const { data, error } = await supabase
     .from("discounts")
-    .select("id, code, type, value, scope, is_active, valid_from, valid_to, usage_limit, usage_count")
+    .select("id, code, type, value, scope, metadata, is_active, valid_from, valid_to, usage_limit, usage_count")
     .eq("code", code)
     .eq("is_active", true)
     .lte("valid_from", now)
@@ -68,5 +76,9 @@ export async function resolveActiveCoupon(
     type: data.type === "flat" ? "flat" : "percentage",
     value: toNumber(data.value, 0),
     scope: data.scope === "subscription" || data.scope === "addons" ? data.scope : "both",
+    maxDiscountPaise:
+      data?.metadata?.max_discount == null
+        ? null
+        : Math.max(0, Math.round(toNumber(data.metadata.max_discount, 0) * 100)),
   };
 }

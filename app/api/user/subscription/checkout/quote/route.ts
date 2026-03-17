@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const planTemplateId = String((body as any)?.plan_template_id || "").trim();
+    const planTemplateId = String((body as any)?.plan_template_id || (body as any)?.plan_id || "").trim();
     const couponCode = String((body as any)?.coupon_code || "").trim();
     if (!planTemplateId) {
       return NextResponse.json({ error: "plan_template_id is required" }, { status: 400 });
@@ -28,6 +28,15 @@ export async function POST(req: NextRequest) {
     if (couponCode && !coupon) {
       return NextResponse.json({ error: "COUPON_INVALID" }, { status: 400 });
     }
+
+    const genericAddons = Array.isArray((body as any)?.addons) ? (body as any).addons : [];
+    const codeAddonsFromGeneric = genericAddons
+      .map((entry: any) => ({
+        addon_id: String(entry?.addon_id || "").trim(),
+        quantity: Math.max(0, Number(entry?.quantity || 0)),
+      }))
+      .filter((entry: any) => entry.addon_id && entry.quantity > 0);
+
     const quoteInput: CheckoutQuoteInput = {
       companyId: owner.companyId,
       ownerUserId: owner.userId,
@@ -40,12 +49,20 @@ export async function POST(req: NextRequest) {
         : [],
       codeAddons: Array.isArray((body as any)?.code_addons)
         ? (body as any).code_addons
+        : codeAddonsFromGeneric.length
+        ? codeAddonsFromGeneric
         : Array.isArray((body as any)?.variable_topups)
         ? (body as any).variable_topups
         : [],
     };
 
     const quote = buildCheckoutQuote(quoteInput, catalog);
+    console.log("ADDONS:", {
+      capacity_addons: quote.capacity_addons,
+      code_addons: quote.code_addons,
+    });
+    console.log("DISCOUNT:", quote.totals.discount_paise);
+    console.log("QUOTE:", quote);
     const signed = signCheckoutQuote(quote);
 
     return NextResponse.json({

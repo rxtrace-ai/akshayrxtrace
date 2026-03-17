@@ -32,9 +32,14 @@ function normalizeIso(value: unknown): string | null {
 
 function normalizeCouponPayload(body: Record<string, unknown>, isUpdate: boolean): { value?: Record<string, unknown>; error?: string } {
   const code = normalizeText(body.code).toUpperCase();
-  const type = normalizeText(body.type).toLowerCase();
+  const type = normalizeText(body.type ?? body.discount_type).toLowerCase();
   const scope = normalizeText(body.scope).toLowerCase() || "both";
-  const value = Number(body.value);
+  const value = Number(body.value ?? body.discount_value);
+  const maxDiscountRaw = body.max_discount;
+  const maxDiscount =
+    maxDiscountRaw === null || maxDiscountRaw === undefined || maxDiscountRaw === ""
+      ? null
+      : Number(maxDiscountRaw);
   const validFrom = normalizeIso(body.valid_from) || new Date().toISOString();
   const validTo = normalizeIso(body.valid_to);
   const usageLimitRaw = body.usage_limit;
@@ -58,6 +63,9 @@ function normalizeCouponPayload(body: Record<string, unknown>, isUpdate: boolean
   if (usageLimit !== null && (!Number.isFinite(usageLimit) || usageLimit < 0)) {
     return { error: "usage_limit must be null or a non-negative number" };
   }
+  if (maxDiscount !== null && (!Number.isFinite(maxDiscount) || maxDiscount < 0)) {
+    return { error: "max_discount must be null or a non-negative number" };
+  }
 
   const payload: Record<string, unknown> = {
     code,
@@ -68,6 +76,9 @@ function normalizeCouponPayload(body: Record<string, unknown>, isUpdate: boolean
     usage_limit: usageLimit,
     scope,
     razorpay_offer_id: razorpayOfferId,
+    metadata: {
+      max_discount: maxDiscount,
+    },
   };
   if (isActive !== undefined) payload.is_active = isActive;
   return { value: payload };
@@ -126,7 +137,7 @@ export async function POST(req: NextRequest) {
     .from("discounts")
     .insert({
       ...normalized.value,
-      is_active: true,
+      is_active: normalized.value.is_active ?? true,
       usage_count: 0,
     })
     .select()
@@ -215,6 +226,7 @@ export async function PUT(req: NextRequest) {
   if ("is_active" in (body as any)) updates.is_active = normalized.value.is_active;
   if ("scope" in (body as any)) updates.scope = normalized.value.scope;
   if ("razorpay_offer_id" in (body as any)) updates.razorpay_offer_id = normalized.value.razorpay_offer_id;
+  if ("max_discount" in (body as any)) updates.metadata = normalized.value.metadata;
   if (Object.keys(updates).length === 0) {
     return errorResponse(400, "BAD_REQUEST", "No update fields provided", correlationId);
   }

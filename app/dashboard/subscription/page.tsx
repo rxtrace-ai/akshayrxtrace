@@ -302,7 +302,9 @@ export default function SubscriptionCheckoutPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          plan_id: selectedPlanTemplateId,
           plan_template_id: selectedPlanTemplateId,
+          addons: codeSelection.map((entry) => ({ addon_id: entry.addon_id, type: "codes", quantity: entry.quantity })),
           capacity_addons: capacitySelection,
           code_addons: codeSelection,
           coupon_code: appliedCouponCode || undefined,

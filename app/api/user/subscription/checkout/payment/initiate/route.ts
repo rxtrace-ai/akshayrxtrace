@@ -40,6 +40,9 @@ export async function POST(req: NextRequest) {
     const correlationId = getOrGenerateCorrelationId(await headers(), "user");
     const body = await req.json().catch(() => ({}));
     const checkoutSessionId = String((body as any)?.checkout_session_id || "").trim();
+    const requestedPlanId = String((body as any)?.plan_id || "").trim();
+    const requestedAddonAmount = Number((body as any)?.addon_amount || 0);
+    const requestedDiscountAmount = Number((body as any)?.discount_amount || 0);
     if (!checkoutSessionId) {
       return NextResponse.json({ error: "checkout_session_id is required" }, { status: 400 });
     }
@@ -81,6 +84,12 @@ export async function POST(req: NextRequest) {
     }
     console.log("KEY:", keyId);
     console.log("RAZORPAY MODE:", keyId.startsWith("rzp_live_") ? "live" : "test");
+    console.log("PAYMENT REQUEST:", {
+      checkout_session_id: checkoutSessionId,
+      plan_id: requestedPlanId,
+      addon_amount: requestedAddonAmount,
+      discount_amount: requestedDiscountAmount,
+    });
 
     const { data: selectedTemplate, error: selectedTemplateError } = await owner.supabase
       .from("subscription_plan_templates")
