@@ -14,6 +14,7 @@ import { appendAdminMutationAuditEvent } from "@/lib/admin/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+const DEFAULT_RAZORPAY_PLAN_ID = "plan_SS7ZgGfy9sKS2q";
 
 type PlanVersionInput = {
   unit_quota_units: number;
@@ -243,6 +244,18 @@ export async function POST(req: NextRequest) {
   let beforeState: Record<string, unknown> | null = null;
 
   if (!resolvedTemplateId) {
+    const { data: existingLinkedPlan, error: existingLinkedPlanError } = await supabase
+      .from("subscription_plan_templates")
+      .select("id")
+      .eq("razorpay_plan_id", DEFAULT_RAZORPAY_PLAN_ID)
+      .maybeSingle();
+    if (existingLinkedPlanError) {
+      return errorResponse(500, "INTERNAL_ERROR", existingLinkedPlanError.message, correlationId);
+    }
+    if (existingLinkedPlan) {
+      return errorResponse(409, "CONFLICT", "Plan already linked", correlationId);
+    }
+
     const { data: createdTemplate, error: createTemplateError } = await supabase
       .from("subscription_plan_templates")
       .insert({
@@ -250,6 +263,7 @@ export async function POST(req: NextRequest) {
         description,
         billing_cycle: billingCycle,
         plan_price: planPrice,
+        razorpay_plan_id: DEFAULT_RAZORPAY_PLAN_ID,
         pricing_unit_size: pricingUnitSize,
         is_active: true,
       })

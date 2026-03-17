@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -141,8 +141,9 @@ type PaymentInitiateResponse = {
   success: boolean;
   razorpay: {
     key_id: string | null;
-    order_id: string;
-    amount_paise: number;
+    subscription_id?: string;
+    order_id?: string;
+    amount_paise?: number;
     currency: string;
   };
 };
@@ -190,7 +191,7 @@ export default function SubscriptionCheckoutPage() {
   const [submitting, setSubmitting] = useState(false);
   const [checkoutSessionId, setCheckoutSessionId] = useState<string | null>(null);
 
-  async function loadContext() {
+  const loadContext = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -208,9 +209,9 @@ export default function SubscriptionCheckoutPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [selectedPlanTemplateId]);
 
-  async function refreshSummary() {
+  const refreshSummary = useCallback(async () => {
     setSummaryLoading(true);
     try {
       const res = await fetch("/api/user/subscription/summary", { cache: "no-store" });
@@ -224,12 +225,12 @@ export default function SubscriptionCheckoutPage() {
     } finally {
       setSummaryLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     loadContext();
     refreshSummary();
-  }, []);
+  }, [loadContext, refreshSummary]);
 
   const { capacityAddOns, codeAddOns } = useMemo(() => {
     const addOns = context?.add_ons || [];
@@ -265,7 +266,7 @@ export default function SubscriptionCheckoutPage() {
     });
   }, [capacitySelection, codeSelection, selectedPlanTemplateId]);
 
-  async function computeQuote() {
+  const computeQuote = useCallback(async () => {
     if (!selectedPlanTemplateId) return;
     setQuoteLoading(true);
     setError(null);
@@ -292,12 +293,12 @@ export default function SubscriptionCheckoutPage() {
     } finally {
       setQuoteLoading(false);
     }
-  }
+  }, [capacitySelection, codeSelection, selectedPlanTemplateId]);
 
   useEffect(() => {
     if (!context) return;
     computeQuote();
-  }, [context, selectionKey]);
+  }, [context, computeQuote, selectionKey]);
 
   async function cancelSubscription() {
     setSubmitting(true);
@@ -367,15 +368,25 @@ export default function SubscriptionCheckoutPage() {
       const RazorpayCtor = (window as any).Razorpay;
 
       await new Promise<void>((resolve) => {
-        const rzp = new RazorpayCtor({
+        const razorpayOptions: Record<string, unknown> = {
           key: paymentPayload.razorpay.key_id,
-          order_id: paymentPayload.razorpay.order_id,
-          amount: paymentPayload.razorpay.amount_paise,
           currency: paymentPayload.razorpay.currency || "INR",
           name: "RxTrace",
           description: "Subscription checkout",
           handler: () => resolve(),
           modal: { ondismiss: () => resolve() },
+        };
+        if (paymentPayload.razorpay.subscription_id) {
+          razorpayOptions.subscription_id = paymentPayload.razorpay.subscription_id;
+        } else if (paymentPayload.razorpay.order_id) {
+          razorpayOptions.order_id = paymentPayload.razorpay.order_id;
+          razorpayOptions.amount = paymentPayload.razorpay.amount_paise || 0;
+        } else {
+          throw new Error("Missing Razorpay checkout reference");
+        }
+
+        const rzp = new RazorpayCtor({
+          ...razorpayOptions,
         });
         rzp.open();
       });
