@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
     const requestedPlanId = String((body as any)?.plan_id || "").trim();
     const requestedAddonAmount = Number((body as any)?.addon_amount || 0);
     const requestedDiscountAmount = Number((body as any)?.discount_amount || 0);
+    const checkoutMode = String((body as any)?.checkout_mode || "subscription_with_addons").trim().toLowerCase();
     if (!checkoutSessionId) {
       return NextResponse.json({ error: "checkout_session_id is required" }, { status: 400 });
     }
@@ -89,6 +90,7 @@ export async function POST(req: NextRequest) {
       plan_id: requestedPlanId,
       addon_amount: requestedAddonAmount,
       discount_amount: requestedDiscountAmount,
+      checkout_mode: checkoutMode,
     });
 
     const { data: selectedTemplate, error: selectedTemplateError } = await owner.supabase
@@ -120,11 +122,11 @@ export async function POST(req: NextRequest) {
 
     const existingSubscriptionId = String((session as any).provider_subscription_id || "").trim();
     const existingOrderId = String((session as any).provider_topup_order_id || "").trim();
-    if (existingSubscriptionId) {
+    if (existingSubscriptionId || (checkoutMode === "addons_only" && existingOrderId)) {
       return NextResponse.json({
         success: true,
         replay: true,
-        subscription_id: existingSubscriptionId,
+        subscription_id: existingSubscriptionId || undefined,
         plan_id_used: planId,
         order_id: existingOrderId || null,
         correlation_id: correlationId,
@@ -138,7 +140,7 @@ export async function POST(req: NextRequest) {
         },
         razorpay: {
           key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || null,
-          subscription_id: existingSubscriptionId,
+          subscription_id: existingSubscriptionId || undefined,
           order_id: existingOrderId || undefined,
           amount_paise: existingOrderId ? Number((session as any)?.totals_json?.addons_payable_paise || 0) : undefined,
           plan_id_used: planId,
@@ -149,30 +151,33 @@ export async function POST(req: NextRequest) {
 
     try {
       const razorpay = getRazorpayClient(keyId, keySecret);
-      const created = await razorpay.subscriptions.create({
-        plan_id: planId,
-        customer_notify: 1,
-        total_count: 12,
-        notes: {
-          purpose: "subscription_checkout",
-          checkout_session_id: checkoutSessionId,
-          company_id: owner.companyId,
-          owner_user_id: owner.userId,
-          correlation_id: correlationId,
-        },
-      });
-
-      const subscriptionId = String(created?.id || "").trim();
-      if (!subscriptionId) {
-        return NextResponse.json(
-          {
-            error: "RAZORPAY_SUBSCRIPTION_CREATE_FAILED",
-            detail: "Missing subscription id",
-            plan_id_used: planId,
+      let subscriptionId: string | null = null;
+      if (checkoutMode !== "addons_only") {
+        const created = await razorpay.subscriptions.create({
+          plan_id: planId,
+          customer_notify: 1,
+          total_count: 12,
+          notes: {
+            purpose: "subscription_checkout",
+            checkout_session_id: checkoutSessionId,
+            company_id: owner.companyId,
+            owner_user_id: owner.userId,
             correlation_id: correlationId,
           },
-          { status: 502 }
-        );
+        });
+
+        subscriptionId = String(created?.id || "").trim();
+        if (!subscriptionId) {
+          return NextResponse.json(
+            {
+              error: "RAZORPAY_SUBSCRIPTION_CREATE_FAILED",
+              detail: "Missing subscription id",
+              plan_id_used: planId,
+              correlation_id: correlationId,
+            },
+            { status: 502 }
+          );
+        }
       }
 
       const addonAmountPaise = Math.max(0, Math.trunc(Number((session as any)?.totals_json?.addons_paise || 0)));
@@ -223,8 +228,13 @@ export async function POST(req: NextRequest) {
           status: orderId ? "topup_initiated" : "subscription_initiated",
           metadata: {
             ...((session as any).metadata || {}),
-            phase: orderId ? "phase_3_split_checkout_initiated" : "phase_3_subscription_only_initiated",
-            billing_split: "subscription_plus_addons",
+            phase:
+              checkoutMode === "addons_only"
+                ? "phase_3_addons_only_initiated"
+                : orderId
+                ? "phase_3_split_checkout_initiated"
+                : "phase_3_subscription_only_initiated",
+            billing_split: checkoutMode === "addons_only" ? "addons_only" : "subscription_plus_addons",
             provider: "razorpay",
             payment_subscription_created_at: now,
             payment_subscription_id: subscriptionId,
@@ -262,7 +272,7 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        subscription_id: subscriptionId,
+        subscription_id: subscriptionId || undefined,
         order_id: orderId,
         plan_id_used: planId,
         correlation_id: correlationId,
@@ -276,7 +286,7 @@ export async function POST(req: NextRequest) {
         },
         razorpay: {
           key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || null,
-          subscription_id: subscriptionId,
+          subscription_id: subscriptionId || undefined,
           order_id: orderId || undefined,
           amount_paise: orderId ? finalAddonAmountPaise : undefined,
           plan_id_used: planId,

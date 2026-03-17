@@ -172,7 +172,9 @@ export async function POST(req: Request) {
 
         if (
           splitCheckoutSession &&
-          String((splitCheckoutSession as any)?.metadata?.billing_split || "") === "subscription_plus_addons"
+          ["subscription_plus_addons", "addons_only"].includes(
+            String((splitCheckoutSession as any)?.metadata?.billing_split || "")
+          )
         ) {
           if ((splitCheckoutSession as any)?.metadata?.addon_payment_processed_at) {
             return withCorrelation({ success: true, duplicate: true, addon_order: orderId }, 200, correlationId);

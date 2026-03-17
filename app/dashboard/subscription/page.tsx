@@ -413,6 +413,10 @@ export default function SubscriptionCheckoutPage() {
   }
 
   async function initiateCheckout() {
+    await initiatePayment("subscription_with_addons");
+  }
+
+  async function initiatePayment(checkoutMode: "subscription_with_addons" | "addons_only") {
     if (!quote || !quoteSignature) return;
     setSubmitting(true);
     setError(null);
@@ -445,6 +449,7 @@ export default function SubscriptionCheckoutPage() {
           plan_id: selectedPlanTemplateId,
           addon_amount: quote.totals.addons_paise / 100,
           discount_amount: quote.totals.discount_paise / 100,
+          checkout_mode: checkoutMode,
         }),
       });
       const paymentPayload = (await paymentRes.json()) as PaymentInitiateResponse;
@@ -455,20 +460,18 @@ export default function SubscriptionCheckoutPage() {
       await loadRazorpayScript();
       const RazorpayCtor = (window as any).Razorpay;
 
-      if (!paymentPayload.razorpay.subscription_id) {
-        throw new Error("Missing subscription_id for checkout");
-      }
-
-      const subscriptionStep = await openRazorpayStep(RazorpayCtor, {
-        key: paymentPayload.razorpay.key_id,
-        subscription_id: paymentPayload.razorpay.subscription_id,
-        currency: paymentPayload.razorpay.currency || "INR",
-        name: "RxTrace",
-        description: "Subscription plan",
-      });
-      if (subscriptionStep !== "paid") {
-        setMessage("Subscription checkout was closed before completion.");
-        return;
+      if (paymentPayload.razorpay.subscription_id) {
+        const subscriptionStep = await openRazorpayStep(RazorpayCtor, {
+          key: paymentPayload.razorpay.key_id,
+          subscription_id: paymentPayload.razorpay.subscription_id,
+          currency: paymentPayload.razorpay.currency || "INR",
+          name: "RxTrace",
+          description: "Subscription plan",
+        });
+        if (subscriptionStep !== "paid") {
+          setMessage("Subscription checkout was closed before completion.");
+          return;
+        }
       }
 
       if (paymentPayload.razorpay.order_id) {
@@ -488,7 +491,11 @@ export default function SubscriptionCheckoutPage() {
         }
       }
 
-      setMessage("Payment submitted. Subscription and add-ons will activate after webhook confirmation.");
+      setMessage(
+        checkoutMode === "addons_only"
+          ? "Add-on payment submitted. Quota will update after webhook confirmation."
+          : "Payment submitted. Subscription and add-ons will activate after webhook confirmation."
+      );
       await refreshSummary();
       await loadContext();
     } catch (err: any) {
@@ -679,6 +686,16 @@ export default function SubscriptionCheckoutPage() {
           <CardTitle>Add-ons</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          <div className="rounded-lg border border-dashed p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Live Add-on Total</p>
+                <p className="text-xs text-gray-500">This updates before coupon and before Razorpay opens.</p>
+              </div>
+              <p className="text-lg font-semibold">{formatINRFromPaise(addOnsSubtotalPaise)}</p>
+            </div>
+          </div>
+
           <div className="space-y-3">
             <p className="font-medium text-gray-700">Code Add-ons</p>
             <div className="grid gap-3 md:grid-cols-2">
@@ -840,9 +857,21 @@ export default function SubscriptionCheckoutPage() {
                 <p className="text-xs text-gray-500">
                   We open subscription checkout first, then a second one-time add-on payment if add-ons are selected.
                 </p>
-                <Button onClick={initiateCheckout} disabled={submitting || !quote || !quoteSignature}>
-                  Proceed to Payment
-                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button onClick={initiateCheckout} disabled={submitting || !quote || !quoteSignature}>
+                    Proceed to Payment
+                  </Button>
+                  {context.current_subscription && quote.totals.addons_payable_paise > 0 ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => initiatePayment("addons_only")}
+                      disabled={submitting || !quote || !quoteSignature}
+                    >
+                      Buy Add-ons Only
+                    </Button>
+                  ) : null}
+                </div>
               </div>
               {checkoutSessionId ? <p className="text-xs text-gray-500">Checkout session: {checkoutSessionId}</p> : null}
             </>
