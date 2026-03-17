@@ -86,6 +86,27 @@ function parseTrialPurpose(purpose: string): string | null {
   return companyId || null;
 }
 
+function mapAddonEntitlementToResource(key: string | null | undefined): string | null {
+  switch (String(key || "").toLowerCase()) {
+    case "unit":
+      return "unit";
+    case "box":
+      return "box";
+    case "carton":
+      return "carton";
+    case "pallet":
+      return "pallet";
+    case "seat":
+      return "seats";
+    case "plant":
+      return "plants";
+    case "handset":
+      return "handsets";
+    default:
+      return null;
+  }
+}
+
 export async function POST(req: Request) {
   const headersList = await headers();
   const correlationId = getOrGenerateCorrelationId(headersList, "webhook");
@@ -141,6 +162,191 @@ export async function POST(req: Request) {
       const orderId = extractOrderId(parsedBody);
       const payment = extractPayment(parsedBody);
       if (orderId) {
+        const { data: splitCheckoutSession } = await supabase
+          .from("checkout_sessions")
+          .select(
+            "id, company_id, provider_subscription_id, provider_topup_order_id, selected_plan_template_id, selected_plan_version_id, quote_payload_json, totals_json, metadata"
+          )
+          .eq("provider_topup_order_id", orderId)
+          .maybeSingle();
+
+        if (
+          splitCheckoutSession &&
+          String((splitCheckoutSession as any)?.metadata?.billing_split || "") === "subscription_plus_addons"
+        ) {
+          if ((splitCheckoutSession as any)?.metadata?.addon_payment_processed_at) {
+            return withCorrelation({ success: true, duplicate: true, addon_order: orderId }, 200, correlationId);
+          }
+          if (payment.id) {
+            const { data: existingTopup } = await supabase
+              .from("company_addon_topups")
+              .select("id")
+              .eq("provider", "razorpay")
+              .eq("provider_payment_id", payment.id)
+              .maybeSingle();
+
+            if (existingTopup) {
+              return withCorrelation({ success: true, duplicate: true, addon_order: orderId }, 200, correlationId);
+            }
+          }
+
+          const companyId = String((splitCheckoutSession as any).company_id || "").trim();
+          const nowIso = new Date().toISOString();
+          const { data: currentSubscription } = await supabase
+            .from("company_subscriptions")
+            .select("current_period_end")
+            .eq("company_id", companyId)
+            .order("updated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          const periodEndIso =
+            String((currentSubscription as any)?.current_period_end || "").trim() ||
+            new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+          const codeAddons = Array.isArray((splitCheckoutSession as any)?.quote_payload_json?.code_addons)
+            ? (splitCheckoutSession as any).quote_payload_json.code_addons
+            : [];
+          const capacityAddons = Array.isArray((splitCheckoutSession as any)?.quote_payload_json?.capacity_addons)
+            ? (splitCheckoutSession as any).quote_payload_json.capacity_addons
+            : [];
+
+          await supabase
+            .from("razorpay_orders")
+            .update({
+              status: "paid",
+              paid_at: nowIso,
+              payment_id: payment.id,
+            })
+            .eq("order_id", orderId);
+
+          if (codeAddons.length) {
+            const topupRows = codeAddons.map((line: any, index: number) => ({
+              company_id: companyId,
+              addon_id: line.addon_id,
+              entitlement_key: line.entitlement_key,
+              purchased_quantity: Math.max(
+                Number(line.allocated_quota || 0),
+                Number(line.quantity || 0),
+                1
+              ),
+              consumed_quantity: 0,
+              status: "paid",
+              checkout_session_id: (splitCheckoutSession as any).id,
+              provider: "razorpay",
+              provider_order_id: orderId,
+              provider_payment_id: `${payment.id || orderId}:${line.addon_id || index}:${index}`,
+              amount: Math.max(0, Number(line.line_total_paise || 0) / 100),
+              currency: "INR",
+              metadata: {
+                event_id: eventId,
+                event_type: eventType,
+                payment_id: payment.id,
+              },
+            }));
+
+            await supabase.from("company_addon_topups").insert(topupRows);
+          }
+
+          if (capacityAddons.length) {
+            const structuralRows = capacityAddons.map((line: any) => ({
+              company_id: companyId,
+              addon_id: line.addon_id,
+              quantity: Math.max(1, Number(line.quantity || 1)),
+              status: "active",
+              checkout_session_id: (splitCheckoutSession as any).id,
+              starts_at: nowIso,
+              ends_at: periodEndIso,
+              metadata: {
+                event_id: eventId,
+                event_type: eventType,
+                payment_id: payment.id,
+                order_id: orderId,
+                billing_split: "subscription_plus_addons",
+              },
+            }));
+
+            await supabase.from("company_addon_subscriptions").insert(structuralRows);
+          }
+
+          const allocationRows = [...codeAddons, ...capacityAddons]
+            .map((line: any) => {
+              const resource = mapAddonEntitlementToResource(line.entitlement_key);
+              const amount =
+                resource === "seats" || resource === "plants" || resource === "handsets"
+                  ? Math.max(0, Math.trunc(Number(line.allocated_capacity || line.quantity || 0)))
+                  : Math.max(0, Math.trunc(Number(line.allocated_quota || line.quantity || 0)));
+              if (!resource || amount <= 0) return null;
+              return {
+                company_id: companyId,
+                source: "addon",
+                quota_type: resource === "seats" || resource === "plants" || resource === "handsets" ? "base" : "variable",
+                resource,
+                amount,
+                expires_at: periodEndIso,
+                metadata: {
+                  event_id: eventId,
+                  event_type: eventType,
+                  payment_id: payment.id,
+                  order_id: orderId,
+                  checkout_session_id: (splitCheckoutSession as any).id,
+                },
+              };
+            })
+            .filter(Boolean);
+
+          if (allocationRows.length) {
+            await supabase.from("quota_allocations").insert(allocationRows as any[]);
+          }
+
+          await supabase.from("billing_invoices").insert({
+            company_id: companyId,
+            invoice_type: "addon_topup",
+            status: "paid",
+            provider: "razorpay",
+            provider_payment_id: payment.id || orderId,
+            checkout_session_id: (splitCheckoutSession as any).id,
+            amount: Math.max(0, Number((splitCheckoutSession as any)?.totals_json?.addons_payable_paise || 0) / 100),
+            discount_amount: Math.max(0, Number((splitCheckoutSession as any)?.totals_json?.discount_paise || 0) / 100),
+            currency: "INR",
+            issued_at: nowIso,
+            paid_at: nowIso,
+            metadata: {
+              event_id: eventId,
+              event_type: eventType,
+              order_id: orderId,
+              payment_id: payment.id,
+            },
+            updated_at: nowIso,
+          });
+
+          await supabase
+            .from("checkout_sessions")
+            .update({
+              status: "completed",
+              completed_at: nowIso,
+              metadata: {
+                ...((splitCheckoutSession as any).metadata || {}),
+                addon_payment_processed_at: nowIso,
+                addon_payment_id: payment.id,
+                addon_order_id: orderId,
+              },
+              updated_at: nowIso,
+            })
+            .eq("id", (splitCheckoutSession as any).id);
+
+          return withCorrelation(
+            {
+              success: true,
+              addon_order_processed: true,
+              order_id: orderId,
+              payment_id: payment.id,
+            },
+            200,
+            correlationId
+          );
+        }
+
         const { data: orderRow } = await supabase
           .from("razorpay_orders")
           .select("order_id, purpose, payment_id, status, amount_paise")

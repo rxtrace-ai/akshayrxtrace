@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { computeCouponDiscountPaise, type ResolvedCoupon } from "@/lib/billing/coupons";
 
 export type CheckoutMetric = "seat" | "plant" | "handset" | "unit" | "box" | "carton" | "pallet";
 export type AddOnKind = "structural" | "variable_quota";
@@ -53,6 +54,7 @@ export type CheckoutQuoteInput = {
   planTemplateId: string;
   capacityAddons?: Array<{ addon_id: string; quantity: number }>;
   codeAddons?: Array<{ addon_id: string; quantity: number }>;
+  coupon?: ResolvedCoupon | null;
 };
 
 export type CheckoutQuotePayload = {
@@ -91,11 +93,20 @@ export type CheckoutQuotePayload = {
     unit_price_paise: number;
     line_total_paise: number;
   }>;
+  coupon: null | {
+    id: string;
+    code: string;
+    scope: "subscription" | "addons" | "both";
+  };
   totals: {
     currency: "INR";
     subscription_paise: number;
     capacity_addons_paise: number;
     code_addons_paise: number;
+    addons_paise: number;
+    discount_paise: number;
+    addons_payable_paise: number;
+    payable_today_paise: number;
     grand_total_paise: number;
   };
 };
@@ -321,6 +332,9 @@ export function buildCheckoutQuote(
   const subscriptionSubtotal = plan.plan_price_paise;
   const capacitySubtotal = capacityLines.reduce((sum, line) => sum + line.line_total_paise, 0);
   const codeSubtotal = codeLines.reduce((sum, line) => sum + line.line_total_paise, 0);
+  const addonsSubtotal = capacitySubtotal + codeSubtotal;
+  const discountPaise = computeCouponDiscountPaise(input.coupon || null, addonsSubtotal);
+  const addonsPayable = Math.max(0, addonsSubtotal - discountPaise);
 
   return {
     company_id: input.companyId,
@@ -341,12 +355,23 @@ export function buildCheckoutQuote(
     },
     capacity_addons: capacityLines,
     code_addons: codeLines,
+    coupon: input.coupon
+      ? {
+          id: input.coupon.id,
+          code: input.coupon.code,
+          scope: input.coupon.scope,
+        }
+      : null,
     totals: {
       currency: "INR",
       subscription_paise: subscriptionSubtotal,
       capacity_addons_paise: capacitySubtotal,
       code_addons_paise: codeSubtotal,
-      grand_total_paise: subscriptionSubtotal + capacitySubtotal + codeSubtotal,
+      addons_paise: addonsSubtotal,
+      discount_paise: discountPaise,
+      addons_payable_paise: addonsPayable,
+      payable_today_paise: subscriptionSubtotal + addonsPayable,
+      grand_total_paise: subscriptionSubtotal + addonsPayable,
     },
   };
 }

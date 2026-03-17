@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
+import { resolveActiveCoupon } from "@/lib/billing/coupons";
 import {
   buildCheckoutQuote,
   loadCheckoutCatalog,
@@ -17,15 +18,21 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const planTemplateId = String((body as any)?.plan_template_id || "").trim();
+    const couponCode = String((body as any)?.coupon_code || "").trim();
     if (!planTemplateId) {
       return NextResponse.json({ error: "plan_template_id is required" }, { status: 400 });
     }
 
     const catalog = await loadCheckoutCatalog(owner.supabase);
+    const coupon = couponCode ? await resolveActiveCoupon(owner.supabase, couponCode) : null;
+    if (couponCode && !coupon) {
+      return NextResponse.json({ error: "COUPON_INVALID" }, { status: 400 });
+    }
     const quoteInput: CheckoutQuoteInput = {
       companyId: owner.companyId,
       ownerUserId: owner.userId,
       planTemplateId,
+      coupon,
       capacityAddons: Array.isArray((body as any)?.capacity_addons)
         ? (body as any).capacity_addons
         : Array.isArray((body as any)?.structural_addons)

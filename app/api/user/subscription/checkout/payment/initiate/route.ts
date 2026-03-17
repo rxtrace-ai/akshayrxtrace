@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     const { data: session, error: sessionError } = await owner.supabase
       .from("checkout_sessions")
       .select(
-        "id, company_id, owner_user_id, status, expires_at, provider_subscription_id, quote_payload_json, totals_json, selected_plan_template_id, selected_plan_version_id, metadata"
+        "id, company_id, owner_user_id, status, expires_at, provider_subscription_id, provider_topup_order_id, quote_payload_json, totals_json, selected_plan_template_id, selected_plan_version_id, metadata"
       )
       .eq("id", checkoutSessionId)
       .eq("company_id", owner.companyId)
@@ -110,12 +110,14 @@ export async function POST(req: NextRequest) {
     }
 
     const existingSubscriptionId = String((session as any).provider_subscription_id || "").trim();
+    const existingOrderId = String((session as any).provider_topup_order_id || "").trim();
     if (existingSubscriptionId) {
       return NextResponse.json({
         success: true,
         replay: true,
         subscription_id: existingSubscriptionId,
         plan_id_used: planId,
+        order_id: existingOrderId || null,
         correlation_id: correlationId,
         checkout_session: {
           id: (session as any).id,
@@ -128,6 +130,8 @@ export async function POST(req: NextRequest) {
         razorpay: {
           key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || null,
           subscription_id: existingSubscriptionId,
+          order_id: existingOrderId || undefined,
+          amount_paise: existingOrderId ? Number((session as any)?.totals_json?.addons_payable_paise || 0) : undefined,
           plan_id_used: planId,
           currency: "INR",
         },
@@ -162,19 +166,64 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      const addonAmountPaise = Math.max(0, Math.trunc(Number((session as any)?.totals_json?.addons_paise || 0)));
+      const discountAmountPaise = Math.max(0, Math.trunc(Number((session as any)?.totals_json?.discount_paise || 0)));
+      const finalAddonAmountPaise = Math.max(
+        0,
+        Math.trunc(Number((session as any)?.totals_json?.addons_payable_paise || addonAmountPaise - discountAmountPaise))
+      );
+
+      let orderId: string | null = null;
+      const addonReceipt = `addon_${Date.now()}`;
+      if (finalAddonAmountPaise > 0) {
+        const addonOrder = await razorpay.orders.create({
+          amount: finalAddonAmountPaise,
+          currency: "INR",
+          receipt: addonReceipt,
+          notes: {
+            purpose: "addon_checkout",
+            checkout_session_id: checkoutSessionId,
+            company_id: owner.companyId,
+            owner_user_id: owner.userId,
+            correlation_id: correlationId,
+            linked_subscription_id: subscriptionId,
+            addon_amount_paise: String(addonAmountPaise),
+            discount_amount_paise: String(discountAmountPaise),
+          },
+        });
+        orderId = String(addonOrder?.id || "").trim() || null;
+        if (!orderId) {
+          return NextResponse.json(
+            {
+              error: "RAZORPAY_ORDER_CREATE_FAILED",
+              detail: "Missing add-on order id",
+              plan_id_used: planId,
+              correlation_id: correlationId,
+            },
+            { status: 502 }
+          );
+        }
+      }
+
       const now = new Date().toISOString();
       const { error: updateSessionError } = await owner.supabase
         .from("checkout_sessions")
         .update({
           provider_subscription_id: subscriptionId,
-          status: "subscription_initiated",
+          provider_topup_order_id: orderId,
+          status: orderId ? "topup_initiated" : "subscription_initiated",
           metadata: {
             ...((session as any).metadata || {}),
-            phase: "phase_3_payment_initiated",
+            phase: orderId ? "phase_3_split_checkout_initiated" : "phase_3_subscription_only_initiated",
+            billing_split: "subscription_plus_addons",
             provider: "razorpay",
             payment_subscription_created_at: now,
             payment_subscription_id: subscriptionId,
+            payment_order_id: orderId,
             razorpay_plan_id: planId,
+            addon_amount_paise: addonAmountPaise,
+            discount_amount_paise: discountAmountPaise,
+            addon_payable_paise: finalAddonAmountPaise,
           },
           updated_at: now,
         })
@@ -186,14 +235,31 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: updateSessionError.message }, { status: 500 });
       }
 
+      if (orderId) {
+        const { error: orderInsertError } = await owner.supabase.from("razorpay_orders").insert({
+          order_id: orderId,
+          payment_id: null,
+          amount: finalAddonAmountPaise / 100,
+          amount_paise: finalAddonAmountPaise,
+          currency: "INR",
+          receipt: addonReceipt,
+          status: "created",
+          purpose: `addon_checkout_session_${checkoutSessionId}`,
+        });
+        if (orderInsertError && !String(orderInsertError.message || "").toLowerCase().includes("duplicate")) {
+          return NextResponse.json({ error: orderInsertError.message }, { status: 500 });
+        }
+      }
+
       return NextResponse.json({
         success: true,
         subscription_id: subscriptionId,
+        order_id: orderId,
         plan_id_used: planId,
         correlation_id: correlationId,
         checkout_session: {
           id: (session as any).id,
-          status: "subscription_initiated",
+          status: orderId ? "topup_initiated" : "subscription_initiated",
           selected_plan_template_id: (session as any).selected_plan_template_id,
           selected_plan_version_id: (session as any).selected_plan_version_id,
           quote: (session as any).quote_payload_json,
@@ -202,6 +268,8 @@ export async function POST(req: NextRequest) {
         razorpay: {
           key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || null,
           subscription_id: subscriptionId,
+          order_id: orderId || undefined,
+          amount_paise: orderId ? finalAddonAmountPaise : undefined,
           plan_id_used: planId,
           currency: "INR",
         },

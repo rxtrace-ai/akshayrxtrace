@@ -125,6 +125,9 @@ export async function POST(req: NextRequest) {
         ? {
             mode: "add_ons",
             action: "payment_pending",
+            coupon: quote.coupon,
+            discount_paise: quote.totals.discount_paise,
+            payable_paise: quote.totals.addons_payable_paise,
             capacity_addons: quote.capacity_addons,
             code_addons: quote.code_addons,
           }
@@ -142,6 +145,9 @@ export async function POST(req: NextRequest) {
         status: "quote_locked",
         selected_plan_template_id: quote.selected_plan_template_id,
         selected_plan_version_id: quote.selected_plan_version_id,
+        coupon_code: quote.coupon?.code ?? null,
+        coupon_id: quote.coupon?.id ?? null,
+        coupon_snapshot_json: quote.coupon,
         subscription_payload_json: subscriptionPayload,
         topup_payload_json: addOnPayload,
         totals_json: quote.totals,

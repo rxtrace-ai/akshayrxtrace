@@ -120,11 +120,20 @@ type CheckoutQuote = {
   };
   capacity_addons: QuoteLine[];
   code_addons: QuoteLine[];
+  coupon: null | {
+    id: string;
+    code: string;
+    scope: "subscription" | "addons" | "both";
+  };
   totals: {
     currency: "INR";
     subscription_paise: number;
     capacity_addons_paise: number;
     code_addons_paise: number;
+    addons_paise: number;
+    discount_paise: number;
+    addons_payable_paise: number;
+    payable_today_paise: number;
     grand_total_paise: number;
   };
 };
@@ -139,6 +148,9 @@ type InitiateResponse = {
 
 type PaymentInitiateResponse = {
   success: boolean;
+  subscription_id?: string;
+  order_id?: string | null;
+  plan_id_used?: string;
   razorpay: {
     key_id: string | null;
     subscription_id?: string;
@@ -184,6 +196,8 @@ export default function SubscriptionCheckoutPage() {
   const [selectedPlanTemplateId, setSelectedPlanTemplateId] = useState<string>("");
   const [capacityQty, setCapacityQty] = useState<Record<string, number>>({});
   const [codeQty, setCodeQty] = useState<Record<string, number>>({});
+  const [couponCode, setCouponCode] = useState("");
+  const [appliedCouponCode, setAppliedCouponCode] = useState("");
 
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quote, setQuote] = useState<CheckoutQuote | null>(null);
@@ -263,8 +277,21 @@ export default function SubscriptionCheckoutPage() {
       plan: selectedPlanTemplateId,
       capacity: stableSort(capacitySelection),
       code: stableSort(codeSelection),
+      coupon: appliedCouponCode,
     });
-  }, [capacitySelection, codeSelection, selectedPlanTemplateId]);
+  }, [appliedCouponCode, capacitySelection, codeSelection, selectedPlanTemplateId]);
+
+  const addOnsSubtotalPaise = useMemo(() => {
+    const codeSubtotal = codeAddOns.reduce((sum, addon) => {
+      const qty = Math.max(0, Number(codeQty[addon.id] || 0));
+      return sum + Math.round(addon.price_inr * 100) * qty;
+    }, 0);
+    const capacitySubtotal = capacityAddOns.reduce((sum, addon) => {
+      const qty = Math.max(0, Number(capacityQty[addon.id] || 0));
+      return sum + Math.round(addon.price_inr * 100) * qty;
+    }, 0);
+    return codeSubtotal + capacitySubtotal;
+  }, [capacityAddOns, capacityQty, codeAddOns, codeQty]);
 
   const computeQuote = useCallback(async () => {
     if (!selectedPlanTemplateId) return;
@@ -278,6 +305,7 @@ export default function SubscriptionCheckoutPage() {
           plan_template_id: selectedPlanTemplateId,
           capacity_addons: capacitySelection,
           code_addons: codeSelection,
+          coupon_code: appliedCouponCode || undefined,
         }),
       });
       const payload = await res.json();
@@ -293,7 +321,7 @@ export default function SubscriptionCheckoutPage() {
     } finally {
       setQuoteLoading(false);
     }
-  }, [capacitySelection, codeSelection, selectedPlanTemplateId]);
+  }, [appliedCouponCode, capacitySelection, codeSelection, selectedPlanTemplateId]);
 
   useEffect(() => {
     if (!context) return;
@@ -327,6 +355,61 @@ export default function SubscriptionCheckoutPage() {
     }
   }
 
+  async function applyCoupon() {
+    if (!couponCode.trim()) {
+      setError("Enter a coupon code.");
+      setAppliedCouponCode("");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/user/coupons/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: couponCode.trim(),
+          addons_amount_paise: addOnsSubtotalPaise,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok || !payload.success) {
+        throw new Error(payload.error || "Coupon could not be applied");
+      }
+      const normalizedCode = String(payload.coupon?.code || couponCode.trim()).toUpperCase();
+      setCouponCode(normalizedCode);
+      setAppliedCouponCode(normalizedCode);
+      setMessage("Coupon applied to add-ons.");
+    } catch (err: any) {
+      setAppliedCouponCode("");
+      setError(err?.message || "Coupon could not be applied");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function removeCoupon() {
+    setCouponCode("");
+    setAppliedCouponCode("");
+    setError(null);
+    setMessage("Coupon removed.");
+  }
+
+  async function openRazorpayStep(
+    RazorpayCtor: any,
+    options: Record<string, unknown>
+  ): Promise<"paid" | "dismissed"> {
+    return await new Promise<"paid" | "dismissed">((resolve) => {
+      const rzp = new RazorpayCtor({
+        ...options,
+        handler: () => resolve("paid"),
+        modal: { ondismiss: () => resolve("dismissed") },
+      });
+      rzp.open();
+    });
+  }
+
   async function initiateCheckout() {
     if (!quote || !quoteSignature) return;
     setSubmitting(true);
@@ -357,6 +440,9 @@ export default function SubscriptionCheckoutPage() {
         },
         body: JSON.stringify({
           checkout_session_id: payload.checkout_session_id,
+          plan_id: selectedPlanTemplateId,
+          addon_amount: quote.totals.addons_paise / 100,
+          discount_amount: quote.totals.discount_paise / 100,
         }),
       });
       const paymentPayload = (await paymentRes.json()) as PaymentInitiateResponse;
@@ -367,31 +453,40 @@ export default function SubscriptionCheckoutPage() {
       await loadRazorpayScript();
       const RazorpayCtor = (window as any).Razorpay;
 
-      await new Promise<void>((resolve) => {
-        const razorpayOptions: Record<string, unknown> = {
+      if (!paymentPayload.razorpay.subscription_id) {
+        throw new Error("Missing subscription_id for checkout");
+      }
+
+      const subscriptionStep = await openRazorpayStep(RazorpayCtor, {
+        key: paymentPayload.razorpay.key_id,
+        subscription_id: paymentPayload.razorpay.subscription_id,
+        currency: paymentPayload.razorpay.currency || "INR",
+        name: "RxTrace",
+        description: "Subscription plan",
+      });
+      if (subscriptionStep !== "paid") {
+        setMessage("Subscription checkout was closed before completion.");
+        return;
+      }
+
+      if (paymentPayload.razorpay.order_id) {
+        const addOnStep = await openRazorpayStep(RazorpayCtor, {
           key: paymentPayload.razorpay.key_id,
+          order_id: paymentPayload.razorpay.order_id,
+          amount: paymentPayload.razorpay.amount_paise || 0,
           currency: paymentPayload.razorpay.currency || "INR",
           name: "RxTrace",
-          description: "Subscription checkout",
-          handler: () => resolve(),
-          modal: { ondismiss: () => resolve() },
-        };
-        if (paymentPayload.razorpay.subscription_id) {
-          razorpayOptions.subscription_id = paymentPayload.razorpay.subscription_id;
-        } else if (paymentPayload.razorpay.order_id) {
-          razorpayOptions.order_id = paymentPayload.razorpay.order_id;
-          razorpayOptions.amount = paymentPayload.razorpay.amount_paise || 0;
-        } else {
-          throw new Error("Missing Razorpay checkout reference");
-        }
-
-        const rzp = new RazorpayCtor({
-          ...razorpayOptions,
+          description: "Add-ons payment",
         });
-        rzp.open();
-      });
+        if (addOnStep !== "paid") {
+          setMessage("Subscription was submitted. Add-on payment is still pending.");
+          await refreshSummary();
+          await loadContext();
+          return;
+        }
+      }
 
-      setMessage("Payment submitted. Subscription will activate after webhook confirmation.");
+      setMessage("Payment submitted. Subscription and add-ons will activate after webhook confirmation.");
       await refreshSummary();
       await loadContext();
     } catch (err: any) {
@@ -645,11 +740,14 @@ export default function SubscriptionCheckoutPage() {
           {quote ? (
             <>
               <div className="rounded-lg border p-4">
-                <p className="font-medium">Subscription</p>
-                <p className="mt-1">{quote.plan.name}</p>
-                <p className="text-gray-500">
-                  {quote.plan.billing_cycle} · {formatINRFromPaise(quote.plan.plan_price_paise)}
-                </p>
+                <p className="font-medium">Subscription Plan</p>
+                <div className="mt-2 flex items-center justify-between">
+                  <div>
+                    <p>{quote.plan.name}</p>
+                    <p className="text-gray-500">{quote.plan.billing_cycle} recurring</p>
+                  </div>
+                  <span>{formatINRFromPaise(quote.plan.plan_price_paise)}</span>
+                </div>
               </div>
 
               <div className="rounded-lg border p-4">
@@ -693,30 +791,55 @@ export default function SubscriptionCheckoutPage() {
               </div>
 
               <div className="rounded-lg border p-4">
+                <p className="font-medium">Coupon</p>
+                <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                  <Input
+                    value={couponCode}
+                    placeholder="Enter coupon code"
+                    onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                  />
+                  <Button type="button" variant="outline" onClick={applyCoupon} disabled={submitting || addOnsSubtotalPaise <= 0}>
+                    Apply Coupon
+                  </Button>
+                  {appliedCouponCode ? (
+                    <Button type="button" variant="ghost" onClick={removeCoupon} disabled={submitting}>
+                      Remove
+                    </Button>
+                  ) : null}
+                </div>
+                <p className="mt-2 text-xs text-gray-500">Coupons are applied to the one-time add-on payment only.</p>
+                {quote.coupon ? <p className="mt-2 text-xs text-emerald-700">Applied: {quote.coupon.code}</p> : null}
+              </div>
+
+              <div className="rounded-lg border p-4">
                 <div className="flex items-center justify-between">
-                  <span>Subscription</span>
+                  <span>Plan</span>
                   <span>{formatINRFromPaise(quote.totals.subscription_paise)}</span>
                 </div>
                 <div className="mt-2 flex items-center justify-between">
-                  <span>Code Add-ons</span>
-                  <span>{formatINRFromPaise(quote.totals.code_addons_paise)}</span>
+                  <span>Add-ons</span>
+                  <span>{formatINRFromPaise(quote.totals.addons_paise)}</span>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-emerald-700">
+                  <span>Discount</span>
+                  <span>-{formatINRFromPaise(quote.totals.discount_paise)}</span>
                 </div>
                 <div className="mt-2 flex items-center justify-between">
-                  <span>Capacity Add-ons</span>
-                  <span>{formatINRFromPaise(quote.totals.capacity_addons_paise)}</span>
+                  <span>Add-ons payable</span>
+                  <span>{formatINRFromPaise(quote.totals.addons_payable_paise)}</span>
                 </div>
                 <div className="mt-3 flex items-center justify-between border-t pt-3 font-semibold">
-                  <span>Total</span>
-                  <span>{formatINRFromPaise(quote.totals.grand_total_paise)}</span>
+                  <span>Total Summary</span>
+                  <span>{formatINRFromPaise(quote.totals.payable_today_paise)}</span>
                 </div>
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs text-gray-500">
-                  Amounts are server-calculated and locked in the checkout session before Razorpay payment.
+                  We open subscription checkout first, then a second one-time add-on payment if add-ons are selected.
                 </p>
                 <Button onClick={initiateCheckout} disabled={submitting || !quote || !quoteSignature}>
-                  {context.current_subscription ? "Pay & Upgrade" : "Pay & Subscribe"}
+                  Proceed to Payment
                 </Button>
               </div>
               {checkoutSessionId ? <p className="text-xs text-gray-500">Checkout session: {checkoutSessionId}</p> : null}
