@@ -29,6 +29,25 @@ export async function GET() {
 
   try {
     const entitlement = await getCompanyEntitlementSnapshot(owner.supabase, owner.companyId);
+    const nowIso = new Date().toISOString();
+
+    const { data: activeQuotaRows, error: activeQuotaError } = await owner.supabase
+      .from("quota_allocations")
+      .select("resource, amount")
+      .eq("company_id", owner.companyId)
+      .gt("expires_at", nowIso);
+    if (activeQuotaError) {
+      return NextResponse.json({ error: activeQuotaError.message }, { status: 500 });
+    }
+
+    const allocatedByResource = (activeQuotaRows || []).reduce<Record<string, number>>((acc, row: any) => {
+      const resource = String(row?.resource || "").trim().toLowerCase();
+      const amount = Math.max(0, Number(row?.amount || 0));
+      if (!resource) return acc;
+      acc[resource] = (acc[resource] || 0) + amount;
+      return acc;
+    }, {});
+    const totalQuota = Object.values(allocatedByResource).reduce((sum, value) => sum + value, 0);
 
     const subscriptionStatus = await getUnifiedSubscriptionStatus({
       supabase: owner.supabase as any,
@@ -62,15 +81,14 @@ export async function GET() {
 
     const codeTypes = ["unit", "box", "carton", "pallet"] as const;
     const quotaTable = codeTypes.map((metric) => {
-      const subscriptionAllocated = entitlement.limits?.[metric] ?? 0;
-      const addonAllocated = entitlement.topups?.[metric] ?? 0;
+      const allocatedFromLedger = Math.max(0, Math.trunc(allocatedByResource[metric] || 0));
       const consumed = entitlement.usage?.[metric] ?? 0;
-      const remaining = entitlement.remaining?.[metric] ?? 0;
+      const remaining = Math.max(allocatedFromLedger - consumed, 0);
       return {
         metric,
-        allocated: subscriptionAllocated + addonAllocated,
-        subscription_allocated: subscriptionAllocated,
-        addon_allocated: addonAllocated,
+        allocated: allocatedFromLedger,
+        subscription_allocated: allocatedFromLedger,
+        addon_allocated: 0,
         consumed,
         remaining,
       };
@@ -136,6 +154,7 @@ export async function GET() {
         trialExpiresAt: subscriptionStatus.trialExpiresAt ? subscriptionStatus.trialExpiresAt.toISOString() : null,
       },
       entitlement,
+      total_quota: Math.max(0, Math.trunc(totalQuota)),
       quota_table: quotaTable,
       decisions,
       capacity_addons: (structuralAddOns || [])

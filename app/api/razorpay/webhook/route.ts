@@ -144,6 +144,55 @@ export async function POST(req: Request) {
       quoteId,
       correlationId,
     });
+
+    const invoiceReference = `quote:${quoteId}`;
+    const { data: existingInvoice } = await supabase
+      .from("billing_invoices")
+      .select("id")
+      .eq("reference", invoiceReference)
+      .limit(1)
+      .maybeSingle();
+
+    if (!existingInvoice) {
+      const { data: quoteRow } = await supabase
+        .from("quotes")
+        .select("company_id, currency, plan_snapshot_json, totals_snapshot_json")
+        .eq("id", quoteId)
+        .maybeSingle();
+
+      const totalsSnapshot = ((quoteRow as any)?.totals_snapshot_json || {}) as Record<string, unknown>;
+      const planSnapshot = ((quoteRow as any)?.plan_snapshot_json || {}) as Record<string, unknown>;
+      const finalTotalInr = Math.max(0, Number(totalsSnapshot.final_total_paise || 0)) / 100;
+      const gstInr = Math.max(0, Number(totalsSnapshot.gst_paise || 0)) / 100;
+      const baseInr = Math.max(0, Number(totalsSnapshot.subscription_paise || 0)) / 100;
+      const addonInr = Math.max(0, Number(totalsSnapshot.addons_paise || 0)) / 100;
+      const discountInr = Math.max(0, Number(totalsSnapshot.discount_paise || 0)) / 100;
+
+      if ((quoteRow as any)?.company_id && finalTotalInr > 0) {
+        await supabase.from("billing_invoices").insert({
+          company_id: (quoteRow as any).company_id,
+          invoice_type: Object.keys(planSnapshot).length > 0 ? "subscription" : "addon_topup",
+          amount: finalTotalInr,
+          base_amount: baseInr,
+          addons_amount: addonInr,
+          discount_amount: discountInr,
+          tax_amount: gstInr,
+          status: "paid",
+          provider: "razorpay",
+          provider_payment_id: payment.id,
+          reference: invoiceReference,
+          currency: String((quoteRow as any).currency || "INR"),
+          issued_at: new Date().toISOString(),
+          paid_at: new Date().toISOString(),
+          metadata: {
+            quote_id: quoteId,
+            source_event: "payment.captured",
+            correlation_id: correlationId,
+          },
+        } as any);
+      }
+    }
+
     console.log("PAYMENT_CAPTURE_FINALIZED", {
       quote_id: quoteId,
       razorpay_order_id: orderId,
