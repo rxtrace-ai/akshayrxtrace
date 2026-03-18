@@ -23,6 +23,7 @@ type InvoiceRow = {
   discount_amount?: number | null;
   billing_cycle?: string | null;
   created_at?: string | null;
+  provider_payment_id?: string | null;
   metadata?: any;
 };
 
@@ -42,7 +43,7 @@ function toNumber(v: unknown, fallback = 0): number {
 
 function formatINR(amount: number): string {
   const safe = Number.isFinite(amount) ? amount : 0;
-  return `₹${safe.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `INR ${safe.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 const styles = StyleSheet.create({
@@ -61,16 +62,22 @@ const styles = StyleSheet.create({
 
 function InvoicePdfDoc({ invoice, company }: { invoice: InvoiceRow; company: CompanyRow }) {
   const amount = toNumber(invoice.amount);
-  const base = invoice.base_amount != null ? toNumber(invoice.base_amount) : toNumber(invoice?.metadata?.pricing?.base);
-  const addons = invoice.addons_amount != null ? toNumber(invoice.addons_amount) : toNumber(invoice?.metadata?.pricing?.addons);
-  const discountAmount = invoice.discount_amount != null ? toNumber(invoice.discount_amount) : toNumber(invoice?.metadata?.pricing?.discount);
-  const taxAmount = invoice.tax_amount != null ? toNumber(invoice.tax_amount) : toNumber(invoice?.metadata?.pricing?.tax);
-  const billingCycle = invoice.billing_cycle ?? invoice?.metadata?.billing_cycle ?? null;
+  const base = invoice.base_amount != null ? toNumber(invoice.base_amount) : toNumber(invoice?.metadata?.totals_snapshot?.subscription_paise, 0) / 100;
+  const addons = invoice.addons_amount != null ? toNumber(invoice.addons_amount) : toNumber(invoice?.metadata?.totals_snapshot?.addons_paise, 0) / 100;
+  const discountAmount = invoice.discount_amount != null ? toNumber(invoice.discount_amount) : toNumber(invoice?.metadata?.totals_snapshot?.discount_paise, 0) / 100;
+  const taxAmount = invoice.tax_amount != null ? toNumber(invoice.tax_amount) : toNumber(invoice?.metadata?.totals_snapshot?.gst_paise, 0) / 100;
+  const billingCycle = invoice.billing_cycle ?? invoice?.metadata?.plan_snapshot?.billing_cycle ?? null;
+  const paymentId = String(invoice?.provider_payment_id || invoice?.metadata?.razorpay_payment_id || '-');
+  const quoteId = String(invoice?.metadata?.quote_id || '-');
+  const planSnapshot = invoice?.metadata?.plan_snapshot ?? null;
+  const addonsSnapshot = invoice?.metadata?.addons_snapshot ?? null;
+  const codeAddons = Array.isArray(addonsSnapshot?.code_addons) ? addonsSnapshot.code_addons : [];
+  const capacityAddons = Array.isArray(addonsSnapshot?.capacity_addons) ? addonsSnapshot.capacity_addons : [];
 
-  const periodStart = invoice.period_start ? new Date(invoice.period_start).toLocaleDateString('en-IN') : '—';
-  const periodEnd = invoice.period_end ? new Date(invoice.period_end).toLocaleDateString('en-IN') : '—';
+  const periodStart = invoice.period_start ? new Date(invoice.period_start).toLocaleDateString('en-IN') : '-';
+  const periodEnd = invoice.period_end ? new Date(invoice.period_end).toLocaleDateString('en-IN') : '-';
 
-  const createdAt = invoice.created_at ? new Date(invoice.created_at).toLocaleString('en-IN') : '—';
+  const createdAt = invoice.created_at ? new Date(invoice.created_at).toLocaleString('en-IN') : '-';
   const paidAt = invoice.paid_at ? new Date(invoice.paid_at).toLocaleString('en-IN') : null;
 
   return (
@@ -136,11 +143,11 @@ function InvoicePdfDoc({ invoice, company }: { invoice: InvoiceRow; company: Com
             </View>
 
             <View style={styles.tableRow}>
-              <Text>Plan base</Text>
+              <Text>Plan amount</Text>
               <Text>{formatINR(base)}</Text>
             </View>
             <View style={styles.tableRow}>
-              <Text>Monthly add-ons</Text>
+              <Text>Add-on amount</Text>
               <Text>{formatINR(addons)}</Text>
             </View>
             {discountAmount > 0 ? (
@@ -157,19 +164,53 @@ function InvoicePdfDoc({ invoice, company }: { invoice: InvoiceRow; company: Com
             ) : null}
 
             <View style={styles.tableRow}>
-              <Text style={styles.bold}>Subtotal</Text>
-              <Text style={styles.bold}>{formatINR(amount)}</Text>
-            </View>
-
-            <View style={styles.tableRow}>
-              <Text style={styles.bold}>Amount due</Text>
+              <Text style={styles.bold}>Final total</Text>
               <Text style={styles.bold}>{formatINR(amount)}</Text>
             </View>
           </View>
         </View>
 
+        {planSnapshot ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Plan Details</Text>
+            <View style={styles.box}>
+              <View style={styles.row}>
+                <Text style={styles.muted}>Name</Text>
+                <Text>{String(planSnapshot?.name || invoice.plan || '-')}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.muted}>Cycle</Text>
+                <Text>{String(planSnapshot?.billing_cycle || billingCycle || '-')}</Text>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
+        {codeAddons.length || capacityAddons.length ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Add-ons</Text>
+            <View style={styles.box}>
+              {codeAddons.map((line: any, idx: number) => (
+                <View style={styles.tableRow} key={`code-${idx}`}>
+                  <Text>{String(line?.name || 'Code add-on')} x{toNumber(line?.quantity, 0)}</Text>
+                  <Text>{formatINR(toNumber(line?.line_total_paise, 0) / 100)}</Text>
+                </View>
+              ))}
+              {capacityAddons.map((line: any, idx: number) => (
+                <View style={styles.tableRow} key={`capacity-${idx}`}>
+                  <Text>{String(line?.name || 'Capacity add-on')} x{toNumber(line?.quantity, 0)}</Text>
+                  <Text>{formatINR(toNumber(line?.line_total_paise, 0) / 100)}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
         <View style={styles.section}>
-          <Text style={styles.muted}>Reference: {invoice.reference ?? '—'}</Text>
+          <Text style={styles.muted}>Reference: {invoice.reference ?? '-'}</Text>
+          <Text style={styles.muted}>Quote ID: {quoteId}</Text>
+          <Text style={styles.muted}>Payment ID: {paymentId}</Text>
+          <Text style={styles.muted}>Invoice Date: {createdAt}</Text>
         </View>
       </Page>
     </Document>

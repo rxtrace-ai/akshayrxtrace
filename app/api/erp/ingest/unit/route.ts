@@ -299,8 +299,13 @@ export async function POST(req: Request) {
       });
 
       if (!decision.allow) {
+        const isQuotaError = String(decision.reason_code || "").toUpperCase().includes("QUOTA_EXCEEDED");
         return NextResponse.json(
-          { error: 'QUOTA_EXCEEDED', code: 'quota_exceeded', results },
+          {
+            error: isQuotaError ? "Quota exceeded. Please purchase add-ons." : decision.reason_code || "QUOTA_EXCEEDED",
+            code: decision.reason_code || 'QUOTA_EXCEEDED',
+            results,
+          },
           { status: 403 }
         );
       }

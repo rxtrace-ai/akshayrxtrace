@@ -6,7 +6,6 @@ import { getOrGenerateCorrelationId } from "@/lib/observability/correlation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-const DEFAULT_RAZORPAY_PLAN_ID = "plan_SS7ZgGfy9sKS2q";
 
 function getRazorpayClient(keyId: string, keySecret: string) {
   return new Razorpay({
@@ -15,22 +14,11 @@ function getRazorpayClient(keyId: string, keySecret: string) {
   });
 }
 
-function normalizeStatus(value: unknown): string {
-  return String(value || "").trim().toLowerCase();
+function toPaise(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.trunc(parsed));
 }
-
-const ALLOWED_PENDING_STATUSES = new Set([
-  "created",
-  "quote_locked",
-  "subscription_initiated",
-  "subscription_paid",
-  "topup_initiated",
-  "topup_paid",
-  "partial_success",
-  "failed",
-  "expired",
-  "cancelled",
-]);
 
 export async function POST(req: NextRequest) {
   const owner = await requireOwnerContext();
@@ -39,43 +27,41 @@ export async function POST(req: NextRequest) {
   try {
     const correlationId = getOrGenerateCorrelationId(await headers(), "user");
     const body = await req.json().catch(() => ({}));
-    const checkoutSessionId = String((body as any)?.checkout_session_id || "").trim();
-    const requestedPlanId = String((body as any)?.plan_id || "").trim();
-    const requestedAddonAmount = Number((body as any)?.addon_amount || 0);
-    const requestedDiscountAmount = Number((body as any)?.discount_amount || 0);
-    const checkoutMode = String((body as any)?.checkout_mode || "subscription_with_addons").trim().toLowerCase();
-    if (!checkoutSessionId) {
-      return NextResponse.json({ error: "checkout_session_id is required" }, { status: 400 });
+    const quoteId = String((body as any)?.quote_id || "").trim();
+    if (!quoteId) {
+      return NextResponse.json({ error: "quote_id is required" }, { status: 400 });
     }
 
-    const { data: session, error: sessionError } = await owner.supabase
-      .from("checkout_sessions")
-      .select(
-        "id, company_id, owner_user_id, status, expires_at, provider_subscription_id, provider_topup_order_id, quote_payload_json, totals_json, selected_plan_template_id, selected_plan_version_id, metadata"
-      )
-      .eq("id", checkoutSessionId)
+    const { data: quote, error: quoteError } = await owner.supabase
+      .from("quotes")
+      .select("*")
+      .eq("id", quoteId)
       .eq("company_id", owner.companyId)
-      .eq("owner_user_id", owner.userId)
+      .eq("user_id", owner.userId)
       .maybeSingle();
+    if (quoteError) return NextResponse.json({ error: quoteError.message }, { status: 500 });
+    if (!quote) return NextResponse.json({ error: "QUOTE_NOT_FOUND" }, { status: 404 });
 
-    if (sessionError) return NextResponse.json({ error: sessionError.message }, { status: 500 });
-    if (!session) return NextResponse.json({ error: "CHECKOUT_SESSION_NOT_FOUND" }, { status: 404 });
-
-    const sessionStatus = normalizeStatus((session as any).status);
-    if (sessionStatus === "completed") {
-      return NextResponse.json({ error: "CHECKOUT_SESSION_ALREADY_COMPLETED" }, { status: 409 });
-    }
-    if (!ALLOWED_PENDING_STATUSES.has(sessionStatus)) {
-      return NextResponse.json({ error: "CHECKOUT_SESSION_NOT_PAYABLE" }, { status: 409 });
+    const quoteStatus = String((quote as any).status || "").trim().toLowerCase();
+    if (quoteStatus !== "active") {
+      return NextResponse.json({ error: "QUOTE_NOT_ACTIVE" }, { status: 409 });
     }
 
-    const expiresAtMs = new Date(String((session as any).expires_at || "")).getTime();
-    if (Number.isNaN(expiresAtMs) || Date.now() > expiresAtMs) {
-      await owner.supabase
-        .from("checkout_sessions")
-        .update({ status: "expired", updated_at: new Date().toISOString() })
-        .eq("id", checkoutSessionId);
-      return NextResponse.json({ error: "CHECKOUT_SESSION_EXPIRED" }, { status: 409 });
+    const expiresAt = new Date(String((quote as any).expires_at || "")).getTime();
+    if (Number.isNaN(expiresAt) || Date.now() > expiresAt) {
+      await owner.supabase.from("quotes").update({ status: "expired" }).eq("id", quoteId);
+      return NextResponse.json({ error: "QUOTE_EXPIRED" }, { status: 409 });
+    }
+
+    const totalsSnapshot = ((quote as any).totals_snapshot_json || {}) as Record<string, unknown>;
+    const planSnapshot = ((quote as any).plan_snapshot_json || {}) as Record<string, unknown>;
+    const hasPlan = Object.keys(planSnapshot).length > 0;
+    const finalAmountPaise = toPaise(totalsSnapshot.final_total_paise);
+    if (!finalAmountPaise) {
+      return NextResponse.json({ error: "QUOTE_FINAL_TOTAL_MISSING" }, { status: 409 });
+    }
+    if (finalAmountPaise <= 0) {
+      return NextResponse.json({ error: "FINAL_TOTAL_MUST_BE_GREATER_THAN_ZERO" }, { status: 400 });
     }
 
     const keyId = process.env.RAZORPAY_KEY_ID?.trim();
@@ -83,236 +69,151 @@ export async function POST(req: NextRequest) {
     if (!keyId || !keySecret) {
       return NextResponse.json({ error: "RAZORPAY_NOT_CONFIGURED" }, { status: 503 });
     }
-    console.log("KEY:", keyId);
-    console.log("RAZORPAY MODE:", keyId.startsWith("rzp_live_") ? "live" : "test");
-    console.log("PAYMENT REQUEST:", {
-      checkout_session_id: checkoutSessionId,
-      plan_id: requestedPlanId,
-      addon_amount: requestedAddonAmount,
-      discount_amount: requestedDiscountAmount,
-      checkout_mode: checkoutMode,
-    });
 
-    const { data: selectedTemplate, error: selectedTemplateError } = await owner.supabase
-      .from("subscription_plan_templates")
-      .select("id, razorpay_plan_id")
-      .eq("id", String((session as any).selected_plan_template_id || ""))
+    const { data: existingIntent, error: intentReadError } = await owner.supabase
+      .from("payment_intents")
+      .select("*")
+      .eq("quote_id", quoteId)
       .maybeSingle();
-    if (selectedTemplateError) {
-      return NextResponse.json({ error: selectedTemplateError.message }, { status: 500 });
-    }
+    if (intentReadError) return NextResponse.json({ error: intentReadError.message }, { status: 500 });
 
-    if (!(selectedTemplate as any)?.razorpay_plan_id) {
-      console.error("Missing razorpay_plan_id", {
-        checkout_session_id: checkoutSessionId,
-        selected_plan_template_id: (session as any).selected_plan_template_id,
-      });
-    }
-    const planId = String((selectedTemplate as any)?.razorpay_plan_id || DEFAULT_RAZORPAY_PLAN_ID).trim();
-    if (!planId) {
-      return NextResponse.json({ error: "Missing razorpay_plan_id" }, { status: 409 });
-    }
-    console.log("PLAN ID SENT:", planId);
-    if (!keyId.startsWith("rzp_live_")) {
-      console.warn("RAZORPAY MODE MISMATCH: non-live key detected while using live plan fallback", {
-        key: keyId,
-        plan_id: planId,
-      });
-    }
+    if (existingIntent && String((existingIntent as any).razorpay_order_id || "").trim()) {
+      if (hasPlan) {
+        const { data: existingSub } = await owner.supabase
+          .from("company_subscriptions")
+          .select("id, status")
+          .eq("company_id", owner.companyId)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-    const existingSubscriptionId = String((session as any).provider_subscription_id || "").trim();
-    const existingOrderId = String((session as any).provider_topup_order_id || "").trim();
-    if (existingSubscriptionId || (checkoutMode === "addons_only" && existingOrderId)) {
+        if ((existingSub as any)?.id) {
+          const currentStatus = String((existingSub as any).status || "").trim().toLowerCase();
+          if (!["active", "pending_payment"].includes(currentStatus)) {
+            await owner.supabase
+              .from("company_subscriptions")
+              .update({
+                status: "pending_payment",
+                plan_template_id: (quote as any).plan_id || null,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", (existingSub as any).id);
+          }
+        } else {
+          await owner.supabase.from("company_subscriptions").insert({
+            company_id: owner.companyId,
+            status: "pending_payment",
+            plan_template_id: (quote as any).plan_id || null,
+            metadata: { quote_id: quoteId, initiated_from: "payment_initiate_replay" },
+          });
+        }
+      }
+
+      await owner.supabase
+        .from("quotes")
+        .update({ status: "pending_payment" })
+        .eq("id", quoteId)
+        .eq("status", "active");
       return NextResponse.json({
         success: true,
         replay: true,
-        subscription_id: existingSubscriptionId || undefined,
-        plan_id_used: planId,
-        order_id: existingOrderId || null,
+        quote_id: quoteId,
+        payment_intent_id: (existingIntent as any).id,
+        order_id: (existingIntent as any).razorpay_order_id,
         correlation_id: correlationId,
-        checkout_session: {
-          id: (session as any).id,
-          status: (session as any).status,
-          selected_plan_template_id: (session as any).selected_plan_template_id,
-          selected_plan_version_id: (session as any).selected_plan_version_id,
-          quote: (session as any).quote_payload_json,
-          totals: (session as any).totals_json,
-        },
         razorpay: {
-          key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || null,
-          subscription_id: existingSubscriptionId || undefined,
-          order_id: existingOrderId || undefined,
-          amount_paise: existingOrderId ? Number((session as any)?.totals_json?.addons_payable_paise || 0) : undefined,
-          plan_id_used: planId,
-          currency: "INR",
+          key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || keyId || null,
+          order_id: (existingIntent as any).razorpay_order_id,
+          amount_paise: finalAmountPaise,
+          currency: String((quote as any).currency || "INR"),
         },
       });
     }
 
-    try {
-      const razorpay = getRazorpayClient(keyId, keySecret);
-      let subscriptionId: string | null = null;
-      if (checkoutMode !== "addons_only") {
-        const created = await razorpay.subscriptions.create({
-          plan_id: planId,
-          customer_notify: 1,
-          total_count: 12,
-          notes: {
-            purpose: "subscription_checkout",
-            checkout_session_id: checkoutSessionId,
-            company_id: owner.companyId,
-            owner_user_id: owner.userId,
-            correlation_id: correlationId,
-          },
-        });
+    const razorpay = getRazorpayClient(keyId, keySecret);
+    const createdOrder = await razorpay.orders.create({
+      amount: finalAmountPaise,
+      currency: String((quote as any).currency || "INR"),
+      receipt: `quote_${quoteId.slice(0, 8)}_${Date.now()}`,
+      notes: {
+        quote_id: quoteId,
+        company_id: owner.companyId,
+        user_id: owner.userId,
+        correlation_id: correlationId,
+        final_total_paise: String(finalAmountPaise),
+      },
+    });
+    const orderId = String(createdOrder?.id || "").trim();
+    if (!orderId) {
+      return NextResponse.json({ error: "RAZORPAY_ORDER_CREATE_FAILED" }, { status: 502 });
+    }
 
-        subscriptionId = String(created?.id || "").trim();
-        if (!subscriptionId) {
-          return NextResponse.json(
-            {
-              error: "RAZORPAY_SUBSCRIPTION_CREATE_FAILED",
-              detail: "Missing subscription id",
-              plan_id_used: planId,
-              correlation_id: correlationId,
-            },
-            { status: 502 }
-          );
-        }
-      }
+    const payload = {
+      quote_id: quoteId,
+      razorpay_order_id: orderId,
+      amount_paise: finalAmountPaise,
+      correlation_id: correlationId,
+      status: "created",
+      updated_at: new Date().toISOString(),
+    };
 
-      const addonAmountPaise = Math.max(0, Math.trunc(Number((session as any)?.totals_json?.addons_paise || 0)));
-      const discountAmountPaise = Math.max(0, Math.trunc(Number((session as any)?.totals_json?.discount_paise || 0)));
-      const finalAddonAmountPaise = Math.max(
-        0,
-        Math.trunc(Number((session as any)?.totals_json?.addons_payable_paise || addonAmountPaise - discountAmountPaise))
-      );
+    const { data: savedIntent, error: upsertError } = await owner.supabase
+      .from("payment_intents")
+      .upsert(payload, { onConflict: "quote_id" })
+      .select("id, razorpay_order_id")
+      .single();
+    if (upsertError) return NextResponse.json({ error: upsertError.message }, { status: 500 });
 
-      let orderId: string | null = null;
-      const addonReceipt = `addon_${Date.now()}`;
-      if (finalAddonAmountPaise > 0) {
-        const addonOrder = await razorpay.orders.create({
-          amount: finalAddonAmountPaise,
-          currency: "INR",
-          receipt: addonReceipt,
-          notes: {
-            purpose: "addon_checkout",
-            checkout_session_id: checkoutSessionId,
-            company_id: owner.companyId,
-            owner_user_id: owner.userId,
-            correlation_id: correlationId,
-            linked_subscription_id: subscriptionId,
-            addon_amount_paise: String(addonAmountPaise),
-            discount_amount_paise: String(discountAmountPaise),
-          },
-        });
-        orderId = String(addonOrder?.id || "").trim() || null;
-        if (!orderId) {
-          return NextResponse.json(
-            {
-              error: "RAZORPAY_ORDER_CREATE_FAILED",
-              detail: "Missing add-on order id",
-              plan_id_used: planId,
-              correlation_id: correlationId,
-            },
-            { status: 502 }
-          );
-        }
-      }
+    await owner.supabase
+      .from("quotes")
+      .update({ status: "pending_payment" })
+      .eq("id", quoteId)
+      .eq("status", "active");
 
-      const now = new Date().toISOString();
-      const { error: updateSessionError } = await owner.supabase
-        .from("checkout_sessions")
-        .update({
-          provider_subscription_id: subscriptionId,
-          provider_topup_order_id: orderId,
-          status: orderId ? "topup_initiated" : "subscription_initiated",
-          metadata: {
-            ...((session as any).metadata || {}),
-            phase:
-              checkoutMode === "addons_only"
-                ? "phase_3_addons_only_initiated"
-                : orderId
-                ? "phase_3_split_checkout_initiated"
-                : "phase_3_subscription_only_initiated",
-            billing_split: checkoutMode === "addons_only" ? "addons_only" : "subscription_plus_addons",
-            provider: "razorpay",
-            payment_subscription_created_at: now,
-            payment_subscription_id: subscriptionId,
-            payment_order_id: orderId,
-            razorpay_plan_id: planId,
-            addon_amount_paise: addonAmountPaise,
-            discount_amount_paise: discountAmountPaise,
-            addon_payable_paise: finalAddonAmountPaise,
-          },
-          updated_at: now,
-        })
-        .eq("id", checkoutSessionId)
+    if (hasPlan) {
+      const { data: existingSub } = await owner.supabase
+        .from("company_subscriptions")
+        .select("id, status")
         .eq("company_id", owner.companyId)
-        .in("status", Array.from(ALLOWED_PENDING_STATUSES));
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      if (updateSessionError) {
-        return NextResponse.json({ error: updateSessionError.message }, { status: 500 });
-      }
-
-      if (orderId) {
-        const { error: orderInsertError } = await owner.supabase.from("razorpay_orders").insert({
-          order_id: orderId,
-          payment_id: null,
-          amount: finalAddonAmountPaise / 100,
-          amount_paise: finalAddonAmountPaise,
-          currency: "INR",
-          receipt: addonReceipt,
-          status: "created",
-          purpose: `addon_checkout_session_${checkoutSessionId}`,
-        });
-        if (orderInsertError && !String(orderInsertError.message || "").toLowerCase().includes("duplicate")) {
-          return NextResponse.json({ error: orderInsertError.message }, { status: 500 });
+      if ((existingSub as any)?.id) {
+        const currentStatus = String((existingSub as any).status || "").trim().toLowerCase();
+        if (!["active", "pending_payment"].includes(currentStatus)) {
+          await owner.supabase
+            .from("company_subscriptions")
+            .update({
+              status: "pending_payment",
+              plan_template_id: (quote as any).plan_id || null,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", (existingSub as any).id);
         }
+      } else {
+        await owner.supabase.from("company_subscriptions").insert({
+          company_id: owner.companyId,
+          status: "pending_payment",
+          plan_template_id: (quote as any).plan_id || null,
+          metadata: { quote_id: quoteId, initiated_from: "payment_initiate" },
+        });
       }
-
-      return NextResponse.json({
-        success: true,
-        subscription_id: subscriptionId || undefined,
-        order_id: orderId,
-        plan_id_used: planId,
-        correlation_id: correlationId,
-        checkout_session: {
-          id: (session as any).id,
-          status: orderId ? "topup_initiated" : "subscription_initiated",
-          selected_plan_template_id: (session as any).selected_plan_template_id,
-          selected_plan_version_id: (session as any).selected_plan_version_id,
-          quote: (session as any).quote_payload_json,
-          totals: (session as any).totals_json,
-        },
-        razorpay: {
-          key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || null,
-          subscription_id: subscriptionId || undefined,
-          order_id: orderId || undefined,
-          amount_paise: orderId ? finalAddonAmountPaise : undefined,
-          plan_id_used: planId,
-          currency: "INR",
-        },
-      });
-    } catch (error: any) {
-      console.error("RAZORPAY ERROR:", {
-        plan_id_used: planId,
-        key: keyId,
-        message: error?.message || String(error),
-        statusCode: error?.statusCode ?? null,
-        error: error?.error ?? null,
-        description: error?.error?.description ?? null,
-      });
-      return NextResponse.json(
-        {
-          error: "RAZORPAY_SUBSCRIPTION_CREATE_FAILED",
-          detail: error?.error?.description || error?.message || "Failed to create Razorpay subscription",
-          plan_id_used: planId,
-          key_used: keyId,
-          correlation_id: correlationId,
-        },
-        { status: 502 }
-      );
     }
+
+    return NextResponse.json({
+      success: true,
+      quote_id: quoteId,
+      payment_intent_id: (savedIntent as any).id,
+      order_id: (savedIntent as any).razorpay_order_id,
+      correlation_id: correlationId,
+      razorpay: {
+        key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || keyId || null,
+        order_id: (savedIntent as any).razorpay_order_id,
+        amount_paise: finalAmountPaise,
+        currency: String((quote as any).currency || "INR"),
+      },
+    });
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "Failed to initiate Razorpay checkout payment" },

@@ -95,9 +95,11 @@ export async function POST(req: Request) {
       metadata: { source: "unit_create" },
     });
     if (!decision.allow) {
+      const isQuotaError = String(decision.reason_code || "").toUpperCase().includes("QUOTA_EXCEEDED");
       return NextResponse.json(
         {
-          error: decision.reason_code,
+          error: isQuotaError ? "Quota exceeded. Please purchase add-ons." : decision.reason_code,
+          code: decision.reason_code,
           remaining: decision.remaining,
         },
         { status: 403 }

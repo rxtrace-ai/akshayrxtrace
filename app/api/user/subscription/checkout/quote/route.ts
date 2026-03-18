@@ -4,7 +4,7 @@ import { resolveActiveCoupon } from "@/lib/billing/coupons";
 import {
   buildCheckoutQuote,
   loadCheckoutCatalog,
-  signCheckoutQuote,
+  type CheckoutQuotePayload,
   type CheckoutQuoteInput,
 } from "@/lib/billing/userCheckout";
 
@@ -19,14 +19,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const planTemplateId = String((body as any)?.plan_template_id || (body as any)?.plan_id || "").trim();
     const couponCode = String((body as any)?.coupon_code || "").trim();
-    if (!planTemplateId) {
-      return NextResponse.json({ error: "plan_template_id is required" }, { status: 400 });
-    }
-
     const catalog = await loadCheckoutCatalog(owner.supabase);
     const coupon = couponCode ? await resolveActiveCoupon(owner.supabase, couponCode) : null;
     if (couponCode && !coupon) {
-      return NextResponse.json({ error: "COUPON_INVALID" }, { status: 400 });
+      return NextResponse.json({ error: "INVALID_COUPON" }, { status: 400 });
     }
 
     const genericAddons = Array.isArray((body as any)?.addons) ? (body as any).addons : [];
@@ -40,7 +36,7 @@ export async function POST(req: NextRequest) {
     const quoteInput: CheckoutQuoteInput = {
       companyId: owner.companyId,
       ownerUserId: owner.userId,
-      planTemplateId,
+      planTemplateId: planTemplateId || null,
       coupon,
       capacityAddons: Array.isArray((body as any)?.capacity_addons)
         ? (body as any).capacity_addons
@@ -57,19 +53,66 @@ export async function POST(req: NextRequest) {
     };
 
     const quote = buildCheckoutQuote(quoteInput, catalog);
+    const quoteResponse: CheckoutQuotePayload & {
+      plan_snapshot: CheckoutQuotePayload["plan"];
+      addons_snapshot: {
+        capacity_addons: CheckoutQuotePayload["capacity_addons"];
+        code_addons: CheckoutQuotePayload["code_addons"];
+      };
+      discount_paise: number;
+      gst_paise: number;
+      final_total_paise: number;
+    } = {
+      ...quote,
+      plan_snapshot: quote.plan,
+      addons_snapshot: {
+        capacity_addons: quote.capacity_addons,
+        code_addons: quote.code_addons,
+      },
+      discount_paise: quote.totals.discount_paise,
+      gst_paise: quote.totals.gst_paise,
+      final_total_paise: quote.totals.final_total_paise,
+    };
+    const { data: persistedQuote, error: quotePersistError } = await owner.supabase
+      .from("quotes")
+      .insert({
+        company_id: owner.companyId,
+        user_id: owner.userId,
+        plan_id: quote.selected_plan_template_id || null,
+        plan_snapshot_json: quote.selected_plan_template_id ? quote.plan : {},
+        addons_json: {
+          capacity_addons: quote.capacity_addons,
+          code_addons: quote.code_addons,
+        },
+        totals_snapshot_json: quote.totals,
+        discount_paise: quote.totals.discount_paise,
+        taxable_subtotal_paise: quote.totals.taxable_subtotal_paise,
+        gst_paise: quote.totals.gst_paise,
+        final_total_paise: quote.totals.final_total_paise,
+        currency: quote.totals.currency,
+        status: "active",
+        expires_at: quote.expires_at,
+      })
+      .select("id, status, expires_at")
+      .single();
+    if (quotePersistError) {
+      return NextResponse.json({ error: quotePersistError.message }, { status: 500 });
+    }
+
     console.log("ADDONS:", {
       capacity_addons: quote.capacity_addons,
       code_addons: quote.code_addons,
     });
     console.log("DISCOUNT:", quote.totals.discount_paise);
+    console.log("FINAL_TOTAL:", quote.totals.final_total_paise);
+    console.log("QUOTE_ID:", (persistedQuote as any).id);
     console.log("QUOTE:", quote);
-    const signed = signCheckoutQuote(quote);
-
     return NextResponse.json({
       success: true,
-      quote,
-      quote_hash: signed.quote_hash,
-      quote_signature: signed.signature,
+      quote_id: (persistedQuote as any).id,
+      quote_status: String((persistedQuote as any).status || "active"),
+      quote_expires_at: String((persistedQuote as any).expires_at || quote.expires_at),
+      quote: quoteResponse,
     });
   } catch (error: any) {
     const message = String(error?.message || "Failed to compute quote");
@@ -77,7 +120,9 @@ export async function POST(req: NextRequest) {
       message.includes("PLAN_NOT_AVAILABLE") ||
       message.includes("ADDON_NOT_AVAILABLE") ||
       message.includes("INVALID_CAPACITY_ADDON_SELECTION") ||
-      message.includes("INVALID_CODE_ADDON_SELECTION")
+      message.includes("INVALID_CODE_ADDON_SELECTION") ||
+      message.includes("CHECKOUT_ITEM_REQUIRED") ||
+      message.includes("FINAL_TOTAL_MUST_BE_GREATER_THAN_ZERO")
     ) {
       return NextResponse.json({ error: message }, { status: 400 });
     }

@@ -12,37 +12,15 @@ function toNumber(value: unknown, fallback = 0): number {
 export type ResolvedCoupon = {
   id: string;
   code: string;
-  type: "percentage" | "flat";
-  value: number;
-  scope: "subscription" | "addons" | "both";
+  discount_type: "percentage" | "flat";
+  discount_value: number;
   maxDiscountPaise: number | null;
+  active: boolean;
+  valid_from: string | null;
+  valid_until: string | null;
+  usage_limit: number | null;
+  used_count: number;
 };
-
-export function computeCouponDiscountPaise(
-  coupon: ResolvedCoupon | null,
-  addonsSubtotalPaise: number
-): number {
-  if (!coupon) return 0;
-  if (!["addons", "both"].includes(coupon.scope)) return 0;
-
-  const safeSubtotal = Math.max(0, Math.trunc(addonsSubtotalPaise));
-  if (safeSubtotal <= 0) return 0;
-
-  let discount = 0;
-  if (coupon.type === "percentage") {
-    const pct = Math.min(Math.max(coupon.value, 0), 100);
-    discount = Math.min(safeSubtotal, Math.round((safeSubtotal * pct) / 100));
-  } else {
-    const flatPaise = Math.max(0, Math.round(coupon.value * 100));
-    discount = Math.min(safeSubtotal, flatPaise);
-  }
-
-  if (coupon.maxDiscountPaise !== null) {
-    discount = Math.min(discount, Math.max(0, coupon.maxDiscountPaise));
-  }
-
-  return discount;
-}
 
 export async function resolveActiveCoupon(
   supabase: SupabaseClient,
@@ -51,21 +29,31 @@ export async function resolveActiveCoupon(
   const code = normalizeCode(rawCode);
   if (!code) return null;
 
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
   const { data, error } = await supabase
-    .from("discounts")
-    .select("id, code, type, value, scope, metadata, is_active, valid_from, valid_to, usage_limit, usage_count")
+    .from("coupons")
+    .select("id, code, discount_type, discount_value, max_discount_paise, active, valid_from, valid_until, usage_limit, used_count")
     .eq("code", code)
-    .eq("is_active", true)
-    .lte("valid_from", now)
-    .or(`valid_to.is.null,valid_to.gte.${now}`)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
   if (!data) return null;
 
+  const isActive = Boolean(data.active);
+  if (!isActive) return null;
+
+  const validFrom = data.valid_from ? new Date(String(data.valid_from)) : null;
+  const validUntil = data.valid_until ? new Date(String(data.valid_until)) : null;
+  if (validFrom && !Number.isNaN(validFrom.getTime()) && validFrom.getTime() > nowDate.getTime()) {
+    return null;
+  }
+  if (validUntil && !Number.isNaN(validUntil.getTime()) && validUntil.getTime() < nowDate.getTime()) {
+    return null;
+  }
+
   const usageLimit = data.usage_limit == null ? null : Number(data.usage_limit);
-  const usageCount = Number(data.usage_count || 0);
+  const usageCount = Number(data.used_count || 0);
   if (usageLimit !== null && Number.isFinite(usageLimit) && usageCount >= usageLimit) {
     return null;
   }
@@ -73,12 +61,13 @@ export async function resolveActiveCoupon(
   return {
     id: String(data.id),
     code: String(data.code),
-    type: data.type === "flat" ? "flat" : "percentage",
-    value: toNumber(data.value, 0),
-    scope: data.scope === "subscription" || data.scope === "addons" ? data.scope : "both",
-    maxDiscountPaise:
-      data?.metadata?.max_discount == null
-        ? null
-        : Math.max(0, Math.round(toNumber(data.metadata.max_discount, 0) * 100)),
+    discount_type: data.discount_type === "flat" ? "flat" : "percentage",
+    discount_value: Math.max(0, Math.trunc(toNumber(data.discount_value, 0))),
+    maxDiscountPaise: data.max_discount_paise == null ? null : Math.max(0, Math.trunc(toNumber(data.max_discount_paise, 0))),
+    active: isActive,
+    valid_from: data.valid_from ? String(data.valid_from) : null,
+    valid_until: data.valid_until ? String(data.valid_until) : null,
+    usage_limit: usageLimit,
+    used_count: usageCount,
   };
 }

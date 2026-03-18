@@ -19,7 +19,7 @@ function normalizeStatus(value: unknown): "active" | "pending" | "expired" | "ca
   const parsed = String(value || "").trim().toLowerCase();
   if (["active", "authenticated", "activated", "charged"].includes(parsed)) return "active";
   if (["cancelled", "canceled"].includes(parsed)) return "cancelled";
-  if (["pending", "trial", "trialing"].includes(parsed)) return "pending";
+  if (["pending", "pending_payment", "trial", "trialing"].includes(parsed)) return "pending";
   return "expired";
 }
 
@@ -51,7 +51,7 @@ export async function GET() {
     const { data: invoices, error: invoiceError } = await owner.supabase
       .from("billing_invoices")
       .select(
-        "invoice_type, status, reference, plan, amount, currency, period_start, period_end, due_at, issued_at, paid_at, invoice_pdf_url, created_at"
+        "id, invoice_type, status, reference, plan, amount, currency, period_start, period_end, due_at, issued_at, paid_at, invoice_pdf_url, created_at"
       )
       .eq("company_id", owner.companyId)
       .order("created_at", { ascending: false })
@@ -157,6 +157,7 @@ export async function GET() {
         pallet: entitlement.topups?.pallet ?? 0,
       },
       invoices: (invoices || []).map((row: any) => ({
+        id: row.id,
         invoice_type: row.invoice_type,
         status: row.status,
         reference: row.reference,
@@ -168,7 +169,7 @@ export async function GET() {
         due_at: row.due_at,
         issued_at: row.issued_at,
         paid_at: row.paid_at,
-        invoice_pdf_url: row.invoice_pdf_url,
+        invoice_pdf_url: row.invoice_pdf_url || `/api/billing/invoice/${row.id}/pdf`,
         created_at: row.created_at,
       })),
     });

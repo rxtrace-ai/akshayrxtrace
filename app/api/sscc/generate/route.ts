@@ -194,8 +194,16 @@ export async function POST(req: Request) {
       ],
     });
 
-    if (!consumption.ok)
-      return NextResponse.json({ error: consumption.error || 'QUOTA_EXCEEDED' }, { status: 403 });
+    if (!consumption.ok) {
+      const isQuotaError = String(consumption.error || "").toUpperCase().includes("QUOTA_EXCEEDED");
+      return NextResponse.json(
+        {
+          error: isQuotaError ? "Quota exceeded. Please purchase add-ons." : consumption.error || "QUOTA_EXCEEDED",
+          code: consumption.error || "QUOTA_EXCEEDED",
+        },
+        { status: 403 }
+      );
+    }
 
     entitlementCompanyId = authCompanyId;
     consumedEntitlements = consumption.consumed;

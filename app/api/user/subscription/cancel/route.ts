@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       updated_at: now,
     })
     .eq("company_id", owner.companyId)
-    .in("status", ["active", "authenticated", "pending", "paused", "past_due", "expired"])
+    .in("status", ["active", "authenticated", "pending", "pending_payment", "paused", "past_due", "expired"])
     .select("status, cancel_at_period_end, current_period_end, next_billing_at")
     .maybeSingle();
 

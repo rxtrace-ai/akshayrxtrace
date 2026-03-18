@@ -310,8 +310,13 @@ export async function POST(req: Request) {
       });
 
       if (!consumption.ok) {
+        const isQuotaError = String(consumption.error || "").toUpperCase().includes("QUOTA_EXCEEDED");
         return NextResponse.json(
-          { error: 'QUOTA_EXCEEDED', code: 'quota_exceeded', results },
+          {
+            error: isQuotaError ? "Quota exceeded. Please purchase add-ons." : consumption.error || "QUOTA_EXCEEDED",
+            code: consumption.error || 'QUOTA_EXCEEDED',
+            results,
+          },
           { status: 403 }
         );
       }

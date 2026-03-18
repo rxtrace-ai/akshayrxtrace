@@ -10,7 +10,7 @@ function normalizeSubscriptionStatus(value: unknown): UnifiedSubscriptionStatus[
   const parsed = String(value || "").trim().toLowerCase();
   if (["active", "authenticated", "activated", "charged"].includes(parsed)) return "active";
   if (["cancelled", "canceled"].includes(parsed)) return "cancelled";
-  if (["pending", "trial", "trialing"].includes(parsed)) return "pending";
+  if (["pending", "pending_payment", "trial", "trialing"].includes(parsed)) return "pending";
   return "expired";
 }
 
@@ -66,6 +66,24 @@ export async function getUnifiedSubscriptionStatus(params: {
 
   if (activeSub) {
     const normalized = normalizeSubscriptionStatus((activeSub as any).status);
+    const periodEndIso = String((activeSub as any).current_period_end || "").trim();
+    const periodEndTs = periodEndIso ? new Date(periodEndIso).getTime() : NaN;
+    const isPastPeriodEnd = Number.isFinite(periodEndTs) && periodEndTs > 0 && periodEndTs < now.getTime();
+
+    if (normalized === "active" && isPastPeriodEnd) {
+      await params.supabase
+        .from("company_subscriptions")
+        .update({ status: "expired", updated_at: now.toISOString() })
+        .eq("id", (activeSub as any).id);
+      return {
+        status: "expired",
+        subscription: {
+          ...(activeSub as any),
+          status: "expired",
+        },
+      };
+    }
+
     return {
       status: normalized,
       subscription: activeSub as any,

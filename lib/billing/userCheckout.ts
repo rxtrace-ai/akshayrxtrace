@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { computeCouponDiscountPaise, type ResolvedCoupon } from "@/lib/billing/coupons";
+import type { ResolvedCoupon } from "@/lib/billing/coupons";
+import { buildPricingBreakdown } from "@/lib/billing/pricing";
 
 export type CheckoutMetric = "seat" | "plant" | "handset" | "unit" | "box" | "carton" | "pallet";
 export type AddOnKind = "structural" | "variable_quota";
@@ -51,7 +52,7 @@ export type ActiveAddOn = {
 export type CheckoutQuoteInput = {
   companyId: string;
   ownerUserId: string;
-  planTemplateId: string;
+  planTemplateId?: string | null;
   capacityAddons?: Array<{ addon_id: string; quantity: number }>;
   codeAddons?: Array<{ addon_id: string; quantity: number }>;
   coupon?: ResolvedCoupon | null;
@@ -62,8 +63,8 @@ export type CheckoutQuotePayload = {
   owner_user_id: string;
   generated_at: string;
   expires_at: string;
-  selected_plan_template_id: string;
-  selected_plan_version_id: string;
+  selected_plan_template_id: string | null;
+  selected_plan_version_id: string | null;
   plan: {
     name: string;
     description: string | null;
@@ -96,7 +97,9 @@ export type CheckoutQuotePayload = {
   coupon: null | {
     id: string;
     code: string;
-    scope: "subscription" | "addons" | "both";
+    discount_type: "percentage" | "flat";
+    discount_value: number;
+    max_discount_paise: number | null;
   };
   totals: {
     currency: "INR";
@@ -105,9 +108,13 @@ export type CheckoutQuotePayload = {
     code_addons_paise: number;
     addons_paise: number;
     discount_paise: number;
+    taxable_subtotal_paise: number;
+    gst_rate_percent: number;
+    gst_paise: number;
     addons_payable_paise: number;
     payable_today_paise: number;
     grand_total_paise: number;
+    final_total_paise: number;
   };
 };
 
@@ -280,8 +287,11 @@ export function buildCheckoutQuote(
     addOns: ActiveAddOn[];
   }
 ): CheckoutQuotePayload {
-  const plan = catalog.plans.find((row) => row.template_id === input.planTemplateId);
-  if (!plan) throw new Error("PLAN_NOT_AVAILABLE");
+  const normalizedPlanTemplateId = String(input.planTemplateId || "").trim();
+  const plan = normalizedPlanTemplateId
+    ? catalog.plans.find((row) => row.template_id === normalizedPlanTemplateId) || null
+    : null;
+  if (normalizedPlanTemplateId && !plan) throw new Error("PLAN_NOT_AVAILABLE");
 
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 10 * 60 * 1000);
@@ -329,29 +339,35 @@ export function buildCheckoutQuote(
     });
   }
 
-  const subscriptionSubtotal = plan.plan_price_paise;
+  const subscriptionSubtotal = plan?.plan_price_paise || 0;
   const capacitySubtotal = capacityLines.reduce((sum, line) => sum + line.line_total_paise, 0);
   const codeSubtotal = codeLines.reduce((sum, line) => sum + line.line_total_paise, 0);
   const addonsSubtotal = capacitySubtotal + codeSubtotal;
-  const discountPaise = computeCouponDiscountPaise(input.coupon || null, addonsSubtotal);
-  const addonsPayable = Math.max(0, addonsSubtotal - discountPaise);
+  if (!plan && addonsSubtotal <= 0) {
+    throw new Error("CHECKOUT_ITEM_REQUIRED");
+  }
+  const pricing = buildPricingBreakdown({
+    subscriptionSubtotalPaise: subscriptionSubtotal,
+    addonsSubtotalPaise: addonsSubtotal,
+    coupon: input.coupon || null,
+  });
 
   return {
     company_id: input.companyId,
     owner_user_id: input.ownerUserId,
     generated_at: now.toISOString(),
     expires_at: expiresAt.toISOString(),
-    selected_plan_template_id: plan.template_id,
-    selected_plan_version_id: plan.version_id,
+    selected_plan_template_id: plan?.template_id || null,
+    selected_plan_version_id: plan?.version_id || null,
     plan: {
-      name: plan.template_name,
-      description: plan.description,
-      billing_cycle: plan.billing_cycle,
-      plan_price_paise: plan.plan_price_paise,
-      pricing_unit_size: plan.pricing_unit_size,
-      quota_units: plan.quota_units,
-      quotas: plan.quotas,
-      capacities: plan.capacities,
+      name: plan?.template_name || "Add-ons only",
+      description: plan?.description || null,
+      billing_cycle: plan?.billing_cycle || "monthly",
+      plan_price_paise: plan?.plan_price_paise || 0,
+      pricing_unit_size: plan?.pricing_unit_size || 1,
+      quota_units: plan?.quota_units || { unit: 0, box: 0, carton: 0, pallet: 0 },
+      quotas: plan?.quotas || { unit: 0, box: 0, carton: 0, pallet: 0 },
+      capacities: plan?.capacities || { seat: 0, plant: 0, handset: 0 },
     },
     capacity_addons: capacityLines,
     code_addons: codeLines,
@@ -359,19 +375,25 @@ export function buildCheckoutQuote(
       ? {
           id: input.coupon.id,
           code: input.coupon.code,
-          scope: input.coupon.scope,
+          discount_type: input.coupon.discount_type,
+          discount_value: input.coupon.discount_value,
+          max_discount_paise: input.coupon.maxDiscountPaise,
         }
       : null,
     totals: {
-      currency: "INR",
-      subscription_paise: subscriptionSubtotal,
+      currency: pricing.currency,
+      subscription_paise: pricing.subscription_paise,
       capacity_addons_paise: capacitySubtotal,
       code_addons_paise: codeSubtotal,
-      addons_paise: addonsSubtotal,
-      discount_paise: discountPaise,
-      addons_payable_paise: addonsPayable,
-      payable_today_paise: subscriptionSubtotal + addonsPayable,
-      grand_total_paise: subscriptionSubtotal + addonsPayable,
+      addons_paise: pricing.addons_paise,
+      discount_paise: pricing.discount_paise,
+      taxable_subtotal_paise: pricing.taxable_subtotal_paise,
+      gst_rate_percent: pricing.gst_rate_percent,
+      gst_paise: pricing.gst_paise,
+      addons_payable_paise: pricing.addons_payable_paise,
+      payable_today_paise: pricing.payable_today_paise,
+      grand_total_paise: pricing.grand_total_paise,
+      final_total_paise: pricing.final_total_paise,
     },
   };
 }
