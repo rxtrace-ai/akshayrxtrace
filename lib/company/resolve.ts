@@ -35,10 +35,14 @@ export async function resolveCompanyForUser(
     .eq('user_id', userId)
     .maybeSingle();
 
-  if (!error && company?.id) {
+  const companyRecord = company as Record<string, unknown> | null;
+  const ownerCompanyId =
+    companyRecord && typeof companyRecord.id === 'string' ? companyRecord.id : null;
+
+  if (!error && ownerCompanyId) {
     return {
-      companyId: company.id as string,
-      company: company as Record<string, unknown>,
+      companyId: ownerCompanyId,
+      company: companyRecord as Record<string, unknown>,
       isOwner: true,
     };
   }
@@ -62,13 +66,17 @@ export async function resolveCompanyForUser(
     .eq('id', seat.company_id)
     .maybeSingle();
 
-  if (companyErr || !companyBySeat?.id) {
+  const seatCompanyRecord = companyBySeat as Record<string, unknown> | null;
+  const seatCompanyId =
+    seatCompanyRecord && typeof seatCompanyRecord.id === 'string' ? seatCompanyRecord.id : null;
+
+  if (companyErr || !seatCompanyId) {
     return null;
   }
 
   return {
-    companyId: companyBySeat.id as string,
-    company: companyBySeat as Record<string, unknown>,
+    companyId: seatCompanyId,
+    company: seatCompanyRecord as Record<string, unknown>,
     isOwner: false,
   };
 }

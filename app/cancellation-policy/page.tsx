@@ -44,7 +44,7 @@ export default function CancellationPolicyPage() {
                 <li>Log in to your RxTrace dashboard</li>
                 <li>Navigate to Settings</li>
                 <li>Find the Trial Management section</li>
-                <li>Click on "Cancel Trial"</li>
+                <li>Click on &quot;Cancel Trial&quot;</li>
                 <li>Confirm your cancellation</li>
               </ol>
             </div>

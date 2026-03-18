@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
     // Auto-create the owner seat as ACTIVE. Starter plan includes 1 seat and
     // the owner should not need an invite.
     try {
-      const ownerEmail = String(user.email ?? email ?? '').trim().toLowerCase();
+      const ownerEmail = String(user.email ?? '').trim().toLowerCase();
 
       // Avoid duplicates if the setup flow is retried.
       const { data: existingSeat } = await supabase

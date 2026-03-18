@@ -192,7 +192,7 @@ function VerifyOTPContent() {
       });
 
       if (response.ok) {
-        setResendMessage('✅ New OTP sent! Check your email.');
+        setResendMessage('New OTP sent! Check your email.');
         setCountdown(60); // Reset countdown
         setOTP(['', '', '', '', '', '']); // Clear OTP inputs
         inputRefs.current[0]?.focus();
@@ -246,7 +246,9 @@ function VerifyOTPContent() {
                 {otp.map((digit, index) => (
                   <input
                     key={index}
-                    ref={(el) => (inputRefs.current[index] = el)}
+                    ref={(el) => {
+                      inputRefs.current[index] = el;
+                    }}
                     type="text"
                     inputMode="numeric"
                     maxLength={1}

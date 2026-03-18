@@ -83,20 +83,22 @@ export async function GET(request: Request) {
 
   if (userId) {
     const admin = getSupabaseAdmin();
-    await admin
-      .from('user_profiles')
-      .upsert(
-        {
-          id: userId,
-          user_id: userId,
-          email: userEmail,
-          full_name: userFullName || '',
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'id' }
-      )
-      .then(() => undefined)
-      .catch(() => undefined);
+    try {
+      await admin
+        .from('user_profiles')
+        .upsert(
+          {
+            id: userId,
+            user_id: userId,
+            email: userEmail,
+            full_name: userFullName || '',
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        );
+    } catch {
+      // best-effort profile upsert
+    }
 
     const resolved = await resolveCompanyForUser(admin, userId, 'id');
     const hasCompany = Boolean(resolved?.companyId);

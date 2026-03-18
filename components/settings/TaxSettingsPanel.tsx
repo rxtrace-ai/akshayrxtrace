@@ -22,6 +22,7 @@ export default function TaxSettingsPanel({
   profileCompleted,
   initialPan = '',
   initialGstNumber = '',
+  onSave,
 }: TaxSettingsPanelProps) {
   const [pan, setPan] = useState(initialPan);
   const [gstNumber, setGstNumber] = useState(initialGstNumber);

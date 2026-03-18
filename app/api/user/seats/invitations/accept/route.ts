@@ -44,20 +44,22 @@ export async function POST(req: Request) {
     "";
 
   // Ensure profile exists so dashboards can resolve member details immediately.
-  await supabase
-    .from("user_profiles")
-    .upsert(
-      {
-        id: user.id,
-        user_id: user.id,
-        email: normalizedEmail,
-        full_name: fullName,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "id" }
-    )
-    .then(() => undefined)
-    .catch(() => undefined);
+  try {
+    await supabase
+      .from("user_profiles")
+      .upsert(
+        {
+          id: user.id,
+          user_id: user.id,
+          email: normalizedEmail,
+          full_name: fullName,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "id" }
+      );
+  } catch {
+    // best-effort profile upsert
+  }
 
   const tokenHash = hashSeatInviteToken(token);
   const { data, error } = await supabase.rpc("accept_seat_invitation", {

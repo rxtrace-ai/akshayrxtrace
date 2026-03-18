@@ -87,22 +87,21 @@ export async function POST(req: Request) {
   }
 
   // Best-effort profile row for downstream dashboard/profile lookups.
-  await admin
-    .from("user_profiles")
-    .upsert(
+  try {
+    await admin.from("user_profiles").upsert(
       {
         id: created.user.id,
         user_id: created.user.id,
         email: invitationEmail,
       },
       { onConflict: "id" }
-    )
-    .then(() => undefined)
-    .catch(() => undefined);
+    );
+  } catch {
+    // best effort
+  }
 
   return NextResponse.json({
     success: true,
     invitation_email: invitationEmail,
   });
 }
-

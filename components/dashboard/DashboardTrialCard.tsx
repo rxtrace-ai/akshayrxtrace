@@ -10,7 +10,7 @@ export function DashboardTrialCard() {
   const { subscription, loading } = useSubscription();
   if (loading) return null;
 
-  const isTrial = subscription?.status === 'TRIAL' || subscription?.status === 'trialing';
+  const isTrial = subscription?.status === 'trialing';
   const daysLeft = subscription?.trial_end
     ? Math.max(0, Math.ceil((new Date(subscription.trial_end).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
     : 0;

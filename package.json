@@ -16,6 +16,11 @@
     "test:coverage": "vitest --coverage"
   },
   "dependencies": {
+    "@opentelemetry/auto-instrumentations-node": "^0.71.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.213.0",
+    "@opentelemetry/resources": "^2.6.0",
+    "@opentelemetry/sdk-node": "^0.213.0",
+    "@opentelemetry/sdk-trace-node": "^2.6.0",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-avatar": "^1.1.11",
@@ -37,6 +42,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "embla-carousel-react": "^8.6.0",
     "file-saver": "^2.0.5",
     "framer-motion": "^12.23.26",
     "jsonwebtoken": "^9.0.3",
@@ -66,7 +72,13 @@
     "zod": "^4.2.1"
   },
   "devDependencies": {
+    "@types/bwip-js": "^3.2.3",
+    "@types/file-saver": "^2.0.7",
     "@types/node": "^20.11.0",
+    "@types/nodemailer": "^7.0.11",
+    "@types/papaparse": "^5.5.2",
+    "@types/pdfkit": "^0.17.5",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.28",
     "@types/react-dom": "^18.3.7",
     "eslint": "^8.57.1",

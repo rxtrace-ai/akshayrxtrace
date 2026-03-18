@@ -17,17 +17,21 @@ export async function supabaseServer() {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(
+          cookiesToSet: Array<{ name: string; value: string; options?: Record<string, unknown> }>
+        ) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
+              cookieStore.set(name, value, options as any)
             );
           } catch {}
         },
       },
       global: {
-        fetch: (url, options: any = {}) =>
-          fetch(url, { ...options, agent }),
+        fetch: (
+          url: Parameters<typeof fetch>[0],
+          options: Parameters<typeof fetch>[1] = {}
+        ) => fetch(url, { ...(options || {}), agent } as any),
       },
     }
   );

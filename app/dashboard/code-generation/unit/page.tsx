@@ -299,8 +299,8 @@ async function processUnitCSV(csvText: string, companyId: string, companyName: s
         id: `r${out.length + 1}`,
         fields: {
           gtin: gtin || 'PIC',
-          mfdYYMMDD: isoDateToYYMMDD(mfdISO),
-          expiryYYMMDD: isoDateToYYMMDD(expISO),
+          mfdYYMMDD: isoDateToYYMMDD(mfdISO ?? undefined),
+          expiryYYMMDD: isoDateToYYMMDD(expISO ?? undefined),
           batch: batch || undefined,
           mrp: mrp || undefined,
           sku: sku || undefined,

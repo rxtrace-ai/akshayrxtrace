@@ -58,7 +58,7 @@ export class DatabaseMetricsStorage implements MetricsStorage {
         const newTotalDuration = existing.total_duration_ms + duration;
         const newAverageDuration = newTotalDuration / newTotalRequests;
 
-        await this.supabase
+        await this.getSupabase()
           .from('route_metrics')
           .update({
             total_requests: newTotalRequests,
@@ -72,7 +72,7 @@ export class DatabaseMetricsStorage implements MetricsStorage {
           .eq('id', existing.id);
       } else {
         // Insert new record
-        await this.supabase
+        await this.getSupabase()
           .from('route_metrics')
           .insert({
             route,
@@ -122,7 +122,7 @@ export class DatabaseMetricsStorage implements MetricsStorage {
         const newTotalDuration = existing.total_duration_ms + duration;
         const newAverageDuration = newTotalDuration / newTotalExecutions;
 
-        await this.supabase
+        await this.getSupabase()
           .from('operation_metrics')
           .update({
             total_executions: newTotalExecutions,
@@ -136,7 +136,7 @@ export class DatabaseMetricsStorage implements MetricsStorage {
           .eq('id', existing.id);
       } else {
         // Insert new record
-        await this.supabase
+        await this.getSupabase()
           .from('operation_metrics')
           .insert({
             operation,
@@ -265,7 +265,7 @@ export class DatabaseMetricsStorage implements MetricsStorage {
       if (routeError) throw routeError;
 
       // Get operation metrics for current period
-      const { data: opData, error: opError } = await this.supabase
+      const { data: opData, error: opError } = await this.getSupabase()
         .from('operation_metrics')
         .select('total_executions')
         .gte('period_start', start.toISOString())

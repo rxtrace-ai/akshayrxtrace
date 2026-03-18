@@ -18,12 +18,16 @@ export interface Alert {
   metadata?: Record<string, any>;
 }
 
+type EmailChannelConfig = { recipients: string[]; from?: string };
+type SlackChannelConfig = { webhook: string };
+type WebhookChannelConfig = { url: string; headers?: Record<string, string> };
+
 /**
  * PHASE-14: Send alert via email channel
  */
 export async function sendEmailAlert(
   alert: Alert,
-  channelConfig: { recipients: string[]; from?: string }
+  channelConfig: EmailChannelConfig
 ): Promise<boolean> {
   try {
     // PHASE-14: Use nodemailer or SendGrid API
@@ -76,7 +80,7 @@ export async function sendEmailAlert(
  */
 export async function sendSlackAlert(
   alert: Alert,
-  channelConfig: { webhook: string }
+  channelConfig: SlackChannelConfig
 ): Promise<boolean> {
   try {
     const response = await fetch(channelConfig.webhook, {
@@ -156,7 +160,7 @@ export async function sendSlackAlert(
  */
 export async function sendWebhookAlert(
   alert: Alert,
-  channelConfig: { url: string; headers?: Record<string, string> }
+  channelConfig: WebhookChannelConfig
 ): Promise<boolean> {
   try {
     const response = await fetch(channelConfig.url, {
@@ -195,15 +199,41 @@ export async function sendAlert(alert: Alert, channels: AlertChannel[]): Promise
 
     try {
       switch (channel.type) {
-        case 'email':
-          success = await sendEmailAlert(alert, channel.config);
+        case 'email': {
+          const recipients = Array.isArray(channel.config?.recipients)
+            ? channel.config.recipients.filter((r) => typeof r === 'string' && r.trim().length > 0)
+            : [];
+          if (recipients.length === 0) {
+            success = false;
+            break;
+          }
+          success = await sendEmailAlert(alert, {
+            recipients,
+            from: typeof channel.config?.from === 'string' ? channel.config.from : undefined,
+          });
           break;
-        case 'slack':
-          success = await sendSlackAlert(alert, channel.config);
+        }
+        case 'slack': {
+          const webhook = typeof channel.config?.webhook === 'string' ? channel.config.webhook : '';
+          if (!webhook) {
+            success = false;
+            break;
+          }
+          success = await sendSlackAlert(alert, { webhook });
           break;
-        case 'webhook':
-          success = await sendWebhookAlert(alert, channel.config);
+        }
+        case 'webhook': {
+          const url = typeof channel.config?.url === 'string' ? channel.config.url : '';
+          if (!url) {
+            success = false;
+            break;
+          }
+          success = await sendWebhookAlert(alert, {
+            url,
+            headers: channel.config?.headers as Record<string, string> | undefined,
+          });
           break;
+        }
         default:
           console.warn(`PHASE-14: Unknown alert channel type: ${channel.type}`);
           success = false;
