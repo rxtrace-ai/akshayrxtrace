@@ -145,53 +145,65 @@ export async function POST(req: Request) {
       correlationId,
     });
 
-    const invoiceReference = `quote:${quoteId}`;
-    const { data: existingInvoice } = await supabase
-      .from("billing_invoices")
-      .select("id")
-      .eq("reference", invoiceReference)
-      .limit(1)
+    const { data: quoteRow } = await supabase
+      .from("quotes")
+      .select("company_id, totals_snapshot_json, plan_snapshot_json, addons_json")
+      .eq("id", quoteId)
       .maybeSingle();
 
-    if (!existingInvoice) {
-      const { data: quoteRow } = await supabase
-        .from("quotes")
-        .select("company_id, currency, plan_snapshot_json, totals_snapshot_json")
-        .eq("id", quoteId)
-        .maybeSingle();
-
-      const totalsSnapshot = ((quoteRow as any)?.totals_snapshot_json || {}) as Record<string, unknown>;
-      const planSnapshot = ((quoteRow as any)?.plan_snapshot_json || {}) as Record<string, unknown>;
-      const finalTotalInr = Math.max(0, Number(totalsSnapshot.final_total_paise || 0)) / 100;
-      const gstInr = Math.max(0, Number(totalsSnapshot.gst_paise || 0)) / 100;
-      const baseInr = Math.max(0, Number(totalsSnapshot.subscription_paise || 0)) / 100;
-      const addonInr = Math.max(0, Number(totalsSnapshot.addons_paise || 0)) / 100;
-      const discountInr = Math.max(0, Number(totalsSnapshot.discount_paise || 0)) / 100;
-
-      if ((quoteRow as any)?.company_id && finalTotalInr > 0) {
-        await supabase.from("billing_invoices").insert({
-          company_id: (quoteRow as any).company_id,
-          invoice_type: Object.keys(planSnapshot).length > 0 ? "subscription" : "addon_topup",
-          amount: finalTotalInr,
-          base_amount: baseInr,
-          addons_amount: addonInr,
-          discount_amount: discountInr,
-          tax_amount: gstInr,
-          status: "paid",
-          provider: "razorpay",
-          provider_payment_id: payment.id,
-          reference: invoiceReference,
-          currency: String((quoteRow as any).currency || "INR"),
-          issued_at: new Date().toISOString(),
-          paid_at: new Date().toISOString(),
-          metadata: {
-            quote_id: quoteId,
-            source_event: "payment.captured",
-            correlation_id: correlationId,
-          },
-        } as any);
-      }
+    const companyId = String((quoteRow as any)?.company_id || "").trim();
+    console.log("WEBHOOK HIT payment.captured", payment.id, companyId);
+    if (!companyId) {
+      throw new Error("Missing company_id in webhook");
     }
+
+    const totalsSnapshot = ((quoteRow as any)?.totals_snapshot_json || {}) as Record<string, unknown>;
+    const planSnapshot = ((quoteRow as any)?.plan_snapshot_json || {}) as Record<string, unknown>;
+    const addonsSnapshot = ((quoteRow as any)?.addons_json || {}) as Record<string, unknown>;
+
+    const planQuotas = (planSnapshot as any)?.quotas || {};
+    const subscriptionQuantity =
+      Number(planQuotas.unit || 0) +
+      Number(planQuotas.box || 0) +
+      Number(planQuotas.carton || 0) +
+      Number(planQuotas.pallet || 0);
+
+    const codeAddons = Array.isArray((addonsSnapshot as any)?.code_addons) ? (addonsSnapshot as any).code_addons : [];
+    const capacityAddons = Array.isArray((addonsSnapshot as any)?.capacity_addons)
+      ? (addonsSnapshot as any).capacity_addons
+      : [];
+    const addonQuantity =
+      [...codeAddons, ...capacityAddons].reduce((sum: number, row: any) => {
+        const allocated = Number(row?.allocated_quota ?? row?.allocated_capacity ?? row?.quantity ?? 0);
+        return sum + (Number.isFinite(allocated) ? allocated : 0);
+      }, 0);
+
+    await supabase.from("quota_allocations").insert({
+      company_id: companyId,
+      quantity: Math.max(1, Math.trunc(subscriptionQuantity || 0)),
+      source: "subscription",
+      status: "active",
+    } as any);
+
+    await supabase.from("quota_allocations").insert({
+      company_id: companyId,
+      quantity: Math.max(1, Math.trunc(addonQuantity || 0)),
+      source: "addon",
+      status: "active",
+    } as any);
+
+    const amount = Math.max(0, Number(totalsSnapshot.subscription_paise || 0)) / 100;
+    const gst = Math.max(0, Number(totalsSnapshot.gst_paise || 0)) / 100;
+    const totalAmount = Math.max(0, Number(totalsSnapshot.final_total_paise || payment.amount || 0)) / 100;
+
+    await supabase.from("billing_invoices").insert({
+      company_id: companyId,
+      amount,
+      gst,
+      total_amount: totalAmount,
+      status: "paid",
+      payment_id: payment.id,
+    } as any);
 
     console.log("PAYMENT_CAPTURE_FINALIZED", {
       quote_id: quoteId,
