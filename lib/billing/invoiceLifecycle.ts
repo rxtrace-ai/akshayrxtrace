@@ -32,17 +32,27 @@ export async function ensureInvoicePdfForInvoice(params: {
   if (companyError) return { ok: false, invoice_pdf_url: null, generated: false, error: companyError.message };
   if (!company) return { ok: false, invoice_pdf_url: null, generated: false, error: "COMPANY_NOT_FOUND" };
 
-  const pdfBuffer = await renderInvoicePdfBuffer({
-    invoice: invoice as any,
-    company: {
-      id: String((company as any).id),
-      company_name: (company as any).company_name || null,
-      gst_number: (company as any).gst_number || null,
-      contact_email: (company as any).contact_email || (company as any).email || null,
-      contact_phone: (company as any).contact_phone || (company as any).phone || null,
-      address: (company as any).address || null,
-    },
-  });
+  let pdfBuffer: Buffer;
+  try {
+    pdfBuffer = await renderInvoicePdfBuffer({
+      invoice: invoice as any,
+      company: {
+        id: String((company as any).id),
+        company_name: (company as any).company_name || null,
+        gst_number: (company as any).gst_number || null,
+        contact_email: (company as any).contact_email || (company as any).email || null,
+        contact_phone: (company as any).contact_phone || (company as any).phone || null,
+        address: (company as any).address || null,
+      },
+    });
+  } catch (renderError: any) {
+    return {
+      ok: false,
+      invoice_pdf_url: null,
+      generated: false,
+      error: String(renderError?.message || "PDF_RENDER_FAILED"),
+    };
+  }
 
   const pdfDataUrl = `data:application/pdf;base64,${pdfBuffer.toString("base64")}`;
   const { error: updateError } = await supabase
