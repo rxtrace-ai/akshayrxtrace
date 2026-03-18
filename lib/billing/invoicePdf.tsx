@@ -219,6 +219,29 @@ function InvoicePdfDoc({ invoice, company }: { invoice: InvoiceRow; company: Com
 
 export async function renderInvoicePdfBuffer(opts: { invoice: InvoiceRow; company: CompanyRow }): Promise<Buffer> {
   const instance = pdf(<InvoicePdfDoc invoice={opts.invoice} company={opts.company} />);
-  const buf = await instance.toBuffer();
-  return Buffer.isBuffer(buf) ? buf : Buffer.from(buf as any);
+  const output = await instance.toBuffer();
+
+  if (Buffer.isBuffer(output)) return output;
+  if (output instanceof Uint8Array) return Buffer.from(output);
+  if (typeof output === "string") return Buffer.from(output);
+
+  if (output && typeof (output as any).on === "function") {
+    const stream = output as any;
+    return await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      stream.on("data", (chunk: any) => {
+        if (Buffer.isBuffer(chunk)) {
+          chunks.push(chunk);
+        } else if (chunk instanceof Uint8Array) {
+          chunks.push(Buffer.from(chunk));
+        } else if (typeof chunk === "string") {
+          chunks.push(Buffer.from(chunk));
+        }
+      });
+      stream.on("end", () => resolve(Buffer.concat(chunks)));
+      stream.on("error", (err: any) => reject(err));
+    });
+  }
+
+  throw new Error("PDF_BUFFER_CONVERSION_FAILED");
 }
