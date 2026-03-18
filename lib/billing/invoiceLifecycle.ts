@@ -49,7 +49,6 @@ export async function ensureInvoicePdfForInvoice(params: {
     .from("billing_invoices")
     .update({
       invoice_pdf_url: pdfDataUrl,
-      updated_at: new Date().toISOString(),
     })
     .eq("id", normalizedInvoiceId)
     .is("invoice_pdf_url", null);
@@ -60,4 +59,3 @@ export async function ensureInvoicePdfForInvoice(params: {
 
   return { ok: true, invoice_pdf_url: pdfDataUrl, generated: true };
 }
-
