@@ -270,7 +270,7 @@ export default function AdminDiscountsPage() {
                     {coupon.discount_type === "percentage" ? "%" : " paise"}
                   </p>
                   <p className="text-xs text-gray-500">
-                    max cap: {coupon.max_discount_paise ?? "none"} · used: {coupon.used_count}
+                    max cap: {coupon.max_discount_paise ?? "none"} ï¿½ used: {coupon.used_count}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">

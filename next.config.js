@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Use a custom build output directory to avoid locked .next artifacts on Windows hosts.
+  distDir: ".next-build",
   // Optimize fonts but allow fallback if fetch fails
   optimizeFonts: true,
   // Skip font optimization if network fails (will use system fonts)
