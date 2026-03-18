@@ -176,6 +176,14 @@ export async function GET() {
         pallet: entitlement.topups?.pallet ?? 0,
       },
       invoices: (invoices || []).map((row: any) => ({
+        ...(() => {
+          const rawPdfUrl = String(row.invoice_pdf_url || "").trim();
+          const pdfUrl =
+            rawPdfUrl && !rawPdfUrl.startsWith("data:application/pdf;base64,")
+              ? rawPdfUrl
+              : `/api/billing/invoice/${row.id}/pdf`;
+          return { invoice_pdf_url: pdfUrl };
+        })(),
         id: row.id,
         invoice_type: row.invoice_type,
         status: row.status,
@@ -188,7 +196,6 @@ export async function GET() {
         due_at: row.due_at,
         issued_at: row.issued_at,
         paid_at: row.paid_at,
-        invoice_pdf_url: row.invoice_pdf_url || `/api/billing/invoice/${row.id}/pdf`,
         created_at: row.created_at,
       })),
     });

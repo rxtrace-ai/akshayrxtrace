@@ -22,7 +22,16 @@ export async function GET() {
 
   return NextResponse.json({
     success: true,
-    invoices: data || [],
+    invoices: (data || []).map((row: any) => {
+      const rawPdfUrl = String(row.invoice_pdf_url || "").trim();
+      const pdfUrl =
+        rawPdfUrl && !rawPdfUrl.startsWith("data:application/pdf;base64,")
+          ? rawPdfUrl
+          : `/api/billing/invoice/${row.id}/pdf`;
+      return {
+        ...row,
+        invoice_pdf_url: pdfUrl,
+      };
+    }),
   });
 }
-
