@@ -180,19 +180,19 @@ export default function DashboardPage() {
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           {[
-            { key: 'generation', label: 'Generation' },
-            { key: 'seats', label: 'Seats' },
-            { key: 'plants', label: 'Plants' },
+            { key: 'generation', metricKey: 'generation', label: 'Generation' },
+            { key: 'seats', metricKey: 'seat', label: 'Seats' },
+            { key: 'plants', metricKey: 'plant', label: 'Plants' },
           ].map((item) => {
             const blocked = (subscriptionSummary as any)?.decisions?.[item.key]?.blocked ?? false;
             const reason = (subscriptionSummary as any)?.decisions?.[item.key]?.code ?? null;
             const remaining =
-              item.key === 'generation'
+              item.metricKey === 'generation'
                 ? ((subscriptionSummary?.entitlement?.remaining?.unit ?? 0) +
                   (subscriptionSummary?.entitlement?.remaining?.box ?? 0) +
                   (subscriptionSummary?.entitlement?.remaining?.carton ?? 0) +
                   (subscriptionSummary?.entitlement?.remaining?.pallet ?? 0))
-                : (subscriptionSummary?.entitlement?.remaining?.[item.key] ?? 0);
+                : (subscriptionSummary?.entitlement?.remaining?.[item.metricKey] ?? 0);
             const statusLabel = blocked ? reason || 'Blocked' : 'Allowed';
             const statusColor = blocked ? 'text-rose-600' : 'text-emerald-600';
 

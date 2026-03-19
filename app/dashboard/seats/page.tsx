@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useSubscriptionSummary } from "@/lib/hooks/useSubscriptionSummary";
 
 type SeatSummary = {
   allocated: number;
@@ -47,7 +46,6 @@ export default function SeatsManagementPage() {
     pending: 0,
     remaining: 0,
   });
-  const { data: subscriptionSummary } = useSubscriptionSummary();
   const [rows, setRows] = useState<SeatRow[]>([]);
   const [plants, setPlants] = useState<PlantOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,15 +86,6 @@ export default function SeatsManagementPage() {
       }
 
       setSummary(seatsPayload.summary || { allocated: 0, active: 0, pending: 0, remaining: 0 });
-      if (subscriptionSummary) {
-        setSummary((prev) => ({
-          ...prev,
-          allocated: subscriptionSummary.entitlement?.limits?.seat ?? prev.allocated,
-          remaining: subscriptionSummary.entitlement?.remaining?.seat ?? prev.remaining,
-          blocked: subscriptionSummary.decisions?.seats?.blocked ?? prev.blocked,
-          reason: subscriptionSummary.decisions?.seats?.code ?? prev.reason,
-        }));
-      }
       setRows(seatsPayload.seats || []);
       setPlants(plantsPayload.plants || []);
     } catch (err: any) {
@@ -109,17 +98,6 @@ export default function SeatsManagementPage() {
   useEffect(() => {
     fetchData();
   }, []);
-
-  useEffect(() => {
-    if (!subscriptionSummary) return;
-    setSummary((prev) => ({
-      ...prev,
-      allocated: subscriptionSummary.entitlement?.limits?.seat ?? prev.allocated,
-      remaining: subscriptionSummary.entitlement?.remaining?.seat ?? prev.remaining,
-      blocked: subscriptionSummary.decisions?.seats?.blocked ?? prev.blocked,
-      reason: subscriptionSummary.decisions?.seats?.code ?? prev.reason,
-    }));
-  }, [subscriptionSummary]);
 
   async function handleInviteSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
