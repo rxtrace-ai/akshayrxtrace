@@ -81,6 +81,14 @@ type SubscriptionSummary = {
     consumed: number;
     remaining: number;
   }>;
+  capacity_table?: Array<{
+    metric: string;
+    allocated: number;
+    subscription_allocated: number;
+    addon_allocated: number;
+    consumed: number;
+    remaining: number;
+  }>;
   entitlement: {
     remaining: Record<string, number>;
   };
@@ -686,6 +694,33 @@ export default function SubscriptionCheckoutPage() {
                     {summary.quota_table.map((row) => (
                       <tr key={row.metric} className="border-t border-gray-100">
                         <td className="px-3 py-2 font-medium capitalize">{row.metric}</td>
+                        <td className="px-3 py-2">{row.allocated.toLocaleString()}</td>
+                        <td className="px-3 py-2">{row.consumed.toLocaleString()}</td>
+                        <td className="px-3 py-2">{row.remaining.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="overflow-x-auto rounded-lg border border-gray-100">
+                <table className="w-full text-left text-sm">
+                  <thead className="text-xs uppercase text-gray-400">
+                    <tr>
+                      <th className="px-3 py-2">Capacity</th>
+                      <th className="px-3 py-2">Plan</th>
+                      <th className="px-3 py-2">Add-ons</th>
+                      <th className="px-3 py-2">Total</th>
+                      <th className="px-3 py-2">Used</th>
+                      <th className="px-3 py-2">Remaining</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(summary.capacity_table || []).map((row) => (
+                      <tr key={row.metric} className="border-t border-gray-100">
+                        <td className="px-3 py-2 font-medium capitalize">{row.metric}s</td>
+                        <td className="px-3 py-2">{row.subscription_allocated.toLocaleString()}</td>
+                        <td className="px-3 py-2">{row.addon_allocated.toLocaleString()}</td>
                         <td className="px-3 py-2">{row.allocated.toLocaleString()}</td>
                         <td className="px-3 py-2">{row.consumed.toLocaleString()}</td>
                         <td className="px-3 py-2">{row.remaining.toLocaleString()}</td>

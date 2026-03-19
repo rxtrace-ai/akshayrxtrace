@@ -23,6 +23,11 @@ function normalizeStatus(value: unknown): "active" | "pending" | "expired" | "ca
   return "expired";
 }
 
+function toSafeInt(value: unknown): number {
+  const parsed = Math.trunc(Number(value ?? 0));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 export async function GET() {
   const owner = await requireOwnerContext();
   if (!owner.ok) return owner.response;
@@ -77,6 +82,57 @@ export async function GET() {
       };
     });
     const totalQuota = quotaTable.reduce((sum, row) => sum + row.allocated, 0);
+
+    const structuralCapacityRows = (structuralAddOns || []).filter((row: any) => {
+      const addon = row.add_ons;
+      return addon?.addon_kind === "structural" && addon?.billing_mode === "recurring";
+    });
+
+    const addonCapacityByMetric = structuralCapacityRows.reduce<Record<"seat" | "plant" | "handset", number>>(
+      (acc, row: any) => {
+        const rawKey = String(row?.add_ons?.entitlement_key || "").trim().toLowerCase();
+        const quantity = Math.max(0, Math.trunc(Number(row?.quantity || 0)));
+        const key =
+          rawKey === "seats"
+            ? "seat"
+            : rawKey === "plants"
+              ? "plant"
+              : rawKey === "handsets"
+                ? "handset"
+                : rawKey;
+        if (key === "seat" || key === "plant" || key === "handset") {
+          acc[key] = (acc[key] || 0) + quantity;
+        }
+        return acc;
+      },
+      { seat: 0, plant: 0, handset: 0 }
+    );
+
+    const planCapacityByMetric: Record<"seat" | "plant" | "handset", number> = {
+      seat: toSafeInt((currentSubscription as any)?.seat_limit),
+      plant: toSafeInt((currentSubscription as any)?.plant_limit),
+      handset: toSafeInt((currentSubscription as any)?.handset_limit),
+    };
+
+    const capacityTypes = ["seat", "plant", "handset"] as const;
+    const capacityTable = capacityTypes.map((metric) => {
+      const subscriptionAllocated = planCapacityByMetric[metric];
+      const addonAllocated = addonCapacityByMetric[metric] || 0;
+      const allocated = Math.max(
+        subscriptionAllocated + addonAllocated,
+        Math.max(0, Math.trunc(entitlement.limits?.[metric] ?? 0))
+      );
+      const consumed = Math.max(0, Math.trunc(entitlement.usage?.[metric] ?? 0));
+      const remaining = Math.max(0, Math.trunc(entitlement.remaining?.[metric] ?? 0));
+      return {
+        metric,
+        allocated,
+        subscription_allocated: subscriptionAllocated,
+        addon_allocated: addonAllocated,
+        consumed,
+        remaining,
+      };
+    });
 
     const decisions = {
       generation: (() => {
@@ -140,12 +196,9 @@ export async function GET() {
       entitlement,
       total_quota: Math.max(0, Math.trunc(totalQuota)),
       quota_table: quotaTable,
+      capacity_table: capacityTable,
       decisions,
-      capacity_addons: (structuralAddOns || [])
-        .filter((row: any) => {
-          const addon = row.add_ons;
-          return addon?.addon_kind === "structural" && addon?.billing_mode === "recurring";
-        })
+      capacity_addons: structuralCapacityRows
         .map((row: any) => ({
           addon_id: row.addon_id,
           name: row.add_ons?.name ?? null,
