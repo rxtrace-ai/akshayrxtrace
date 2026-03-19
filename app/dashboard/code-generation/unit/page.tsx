@@ -19,7 +19,7 @@ import QRCodeComponent from '@/components/custom/QRCodeComponent';
 import DataMatrixComponent from '@/components/custom/DataMatrixComponent';
 import { supabaseClient } from '@/lib/supabase/client';
 import { exportLabels as exportLabelsUtil, LabelData } from '@/lib/labelExporter';
-import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useSubscriptionSummary } from '@/lib/hooks/useSubscriptionSummary';
 
 // ---------- Types ----------
 type Gs1Fields = {
@@ -340,8 +340,17 @@ function exportUnitCodesCSV(batch: UnitBatchRow[]): void {
 
 // ---------- Main Component ----------
 export default function UnitCodeGenerationPage() {
-  const { subscription, isFeatureEnabled, loading: subscriptionLoading } = useSubscription();
-  const canGenerate = isFeatureEnabled('code_generation');
+  const { data: entitlementSummary, loading: subscriptionLoading } = useSubscriptionSummary();
+  const subscriptionState = entitlementSummary?.subscriptionStatus?.status ?? null;
+  const hasActiveSubscription =
+    entitlementSummary?.subscriptionStatus?.status === "active" ||
+    entitlementSummary?.subscription?.status === "active";
+  const trialActive = Boolean(entitlementSummary?.entitlement?.trial_active);
+  const subscriptionCancelled = subscriptionState === "cancelled";
+  const canGenerate = !subscriptionCancelled && (hasActiveSubscription || trialActive);
+  const generationBlockMessage = subscriptionCancelled
+    ? "Subscription is cancelled. Renew your plan to continue code generation."
+    : "Generation is disabled. Trial expired or no active subscription.";
   const [form, setForm] = useState<UnitFormState>({
     sku: '',
     batch: '',
@@ -574,7 +583,7 @@ export default function UnitCodeGenerationPage() {
     setCsvFile(file);
 
     if (!canGenerate) {
-      setError('Code generation is disabled. This feature is available only during an active trial in pilot mode.');
+      setError(generationBlockMessage);
       return;
     }
     if (!form.complianceAck) {
@@ -662,10 +671,9 @@ export default function UnitCodeGenerationPage() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            Code generation is disabled because trial access is not active. 
-            This feature is available only during an active trial in pilot mode.
+            {generationBlockMessage}
             <Button asChild variant="link" className="p-0 ml-2 h-auto">
-              <Link href="/contact">Contact Sales →</Link>
+              <Link href="/dashboard/subscription">View Plans</Link>
             </Button>
           </AlertDescription>
         </Alert>

@@ -10,6 +10,15 @@ export type CanonicalDecisionCode =
 
 export type SubscriptionSummaryResponse = {
   success: boolean;
+  subscriptionStatus?: {
+    status: "active" | "pending" | "expired" | "cancelled";
+    trialExpiresAt: string | null;
+  };
+  trial?: {
+    active: boolean;
+    expires_at: string | null;
+    days_remaining: number;
+  };
   subscription: null | {
     status: string | null;
     cancel_at_period_end: boolean;
@@ -29,6 +38,21 @@ export type SubscriptionSummaryResponse = {
     addon_allocated: number;
     consumed: number;
     remaining: number;
+  }>;
+  capacity_table?: Array<{
+    metric: string;
+    allocated: number;
+    subscription_allocated: number;
+    addon_allocated: number;
+    consumed: number;
+    remaining: number;
+  }>;
+  capacity_addons?: Array<{
+    addon_id: string;
+    name: string | null;
+    entitlement_key: string | null;
+    quantity: number;
+    status: string;
   }>;
   entitlement: {
     state: string;

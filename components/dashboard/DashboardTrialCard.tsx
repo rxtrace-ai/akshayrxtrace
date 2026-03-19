@@ -1,18 +1,21 @@
 'use client';
 
 import Link from 'next/link';
-import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useSubscriptionSummary } from '@/lib/hooks/useSubscriptionSummary';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Sparkles, Settings } from 'lucide-react';
 
 export function DashboardTrialCard() {
-  const { subscription, loading } = useSubscription();
+  const { data, loading } = useSubscriptionSummary();
   if (loading) return null;
 
-  const isTrial = subscription?.status === 'trialing';
-  const daysLeft = subscription?.trial_end
-    ? Math.max(0, Math.ceil((new Date(subscription.trial_end).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+  const hasActiveSubscription =
+    data?.subscriptionStatus?.status === 'active' ||
+    data?.subscription?.status === 'active';
+  const isTrial = !hasActiveSubscription && Boolean(data?.entitlement?.trial_active);
+  const daysLeft = data?.entitlement?.trial_expires_at
+    ? Math.max(0, Math.ceil((new Date(data.entitlement.trial_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
     : 0;
 
   if (isTrial) {
@@ -36,10 +39,10 @@ export function DashboardTrialCard() {
   return (
     <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-6">
       <h3 className="text-lg font-semibold text-gray-900 mb-2 flex items-center gap-2">
-        <Sparkles className="w-5 h-5 text-blue-600" />Get started with RxTrace
+        <Sparkles className="w-5 h-5 text-blue-600" />Upgrade to continue
       </h3>
       <Button asChild className="bg-blue-600 hover:bg-blue-700">
-        <Link href="/dashboard/settings"><Settings className="w-4 h-4 mr-2" />Start Free Trial</Link>
+        <Link href="/dashboard/subscription"><Settings className="w-4 h-4 mr-2" />View Plans</Link>
       </Button>
     </div>
   );

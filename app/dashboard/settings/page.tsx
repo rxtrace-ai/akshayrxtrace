@@ -3,7 +3,7 @@
 import { useState, useEffect, FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useSubscription } from "@/lib/hooks/useSubscription";
+import { useSubscriptionSummary } from "@/lib/hooks/useSubscriptionSummary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import TaxSettingsPanel from "@/components/settings/TaxSettingsPanel";
@@ -11,7 +11,7 @@ import { supabaseClient } from "@/lib/supabase/client";
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { trialSummary, loading: trialLoading, error: trialError, refresh: refreshTrial } = useSubscription();
+  const { data: entitlementSummary, loading: summaryLoading, error: summaryError, refresh: refreshSummary } = useSubscriptionSummary();
   const [trialActivating, setTrialActivating] = useState(false);
   const [trialActivateError, setTrialActivateError] = useState<string | null>(null);
   const [trialCancelling, setTrialCancelling] = useState(false);
@@ -73,7 +73,7 @@ export default function SettingsPage() {
       });
 
       // Webhook activates the trial. Refresh the page state after user returns.
-      await refreshTrial();
+      await refreshSummary();
       router.refresh();
     } catch (err: any) {
       setTrialActivateError(err?.message || "TRIAL_ACTIVATION_FAILED");
@@ -95,7 +95,7 @@ export default function SettingsPage() {
         throw new Error(payload?.error || "TRIAL_CANCEL_FAILED");
       }
 
-      await refreshTrial();
+      await refreshSummary();
       router.refresh();
     } catch (err: any) {
       setTrialCancelError(err?.message || "TRIAL_CANCEL_FAILED");
@@ -232,10 +232,25 @@ export default function SettingsPage() {
     }
   }
 
-  if (trialLoading) {
+  const hasActiveSubscription =
+    entitlementSummary?.subscriptionStatus?.status === "active" ||
+    entitlementSummary?.subscription?.status === "active";
+  const subscriptionCancelled = entitlementSummary?.subscriptionStatus?.status === "cancelled";
+  const trialActive = Boolean(entitlementSummary?.entitlement?.trial_active) && !hasActiveSubscription;
+  const generationEnabled = !subscriptionCancelled && (hasActiveSubscription || trialActive);
+
+  const accessMessage = subscriptionCancelled
+    ? "Subscription cancelled. Renew or subscribe to continue."
+    : hasActiveSubscription
+    ? `Active plan: ${entitlementSummary?.subscription?.plan_name || "Subscription"}`
+    : trialActive
+      ? "Trial active (limits apply)"
+      : "Trial expired. Upgrade to continue";
+
+  if (summaryLoading) {
     return (
       <div className="p-6 text-gray-500">
-        Loading trial details...
+        Loading entitlement details...
       </div>
     );
   }
@@ -412,72 +427,127 @@ export default function SettingsPage() {
       </div>
 
       {/* Trial Section */}
-      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-medium">Trial</h2>
-            <p className="text-sm text-gray-500">
-              Activate your 10-day trial by completing a ₹1 Razorpay payment. Trial starts only after webhook confirmation.
-            </p>
-          </div>
-          <Badge
-            className={`px-3 py-1 text-sm ${
-              trialSummary?.trial_status === "active"
-                ? "bg-green-600 text-white"
-                : trialSummary?.trial_status === "cancelled"
-                ? "bg-red-100 text-red-700"
-                : "bg-gray-100 text-gray-700"
-            }`}
-          >
-            {trialSummary?.trial_status === "active"
-              ? "Active"
-              : trialSummary?.trial_status === "cancelled"
-              ? "Cancelled"
-              : trialSummary?.trial_expires_at
-              ? "Expired"
-              : "Not started"}
-          </Badge>
-        </div>
+      <div
+        className={`rounded-2xl border p-4 text-sm ${
+          generationEnabled
+            ? "border-green-200 bg-green-50 text-green-800"
+            : "border-amber-200 bg-amber-50 text-amber-800"
+        }`}
+      >
+        <p className="font-medium">Generation Eligibility</p>
+        <p className="mt-1">{accessMessage}</p>
+      </div>
 
-        {trialError && (
-          <div className="text-red-600 text-sm">{trialError}</div>
-        )}
-        {trialActivateError && (
-          <div className="text-red-600 text-sm">{trialActivateError}</div>
-        )}
-        {trialCancelError && (
-          <div className="text-red-600 text-sm">{trialCancelError}</div>
-        )}
+      {!!summaryError && <p className="text-sm text-red-600">{summaryError}</p>}
+      {trialActivateError && <p className="text-sm text-red-600">{trialActivateError}</p>}
+      {trialCancelError && <p className="text-sm text-red-600">{trialCancelError}</p>}
 
-        {trialSummary ? (
-          <div className="space-y-4">
-            <div className="text-sm text-gray-600">
-              {trialSummary.trial_status === "cancelled"
-                ? "Trial cancelled."
-                : trialSummary.trial_active
-                ? `${trialSummary.days_remaining} ${trialSummary.days_remaining === 1 ? "day" : "days"} remaining`
-                : trialSummary.trial_expires_at
-                ? "Trial has ended."
-                : "Trial window not yet available."}
+      {hasActiveSubscription && entitlementSummary ? (
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-medium">Subscription</h2>
+              <p className="text-sm text-gray-500">Subscription is active. Entitlement is now controlled by your plan and add-ons.</p>
             </div>
+            <Badge className="bg-green-600 text-white">Active</Badge>
+          </div>
 
-            {!trialSummary.trial_active && !trialSummary.trial_expires_at && trialSummary.trial_status !== "cancelled" && (
-              <div className="flex items-center gap-3">
-                <Button
-                  type="button"
-                  onClick={handleActivateTrial}
-                  disabled={trialActivating}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  {trialActivating ? "Opening payment..." : "Activate Trial (₹1)"}
-                </Button>
-                <span className="text-xs text-gray-500">
-                  Payment is verified by webhook; activation may take a few seconds after payment.
-                </span>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 text-sm">
+            <div>
+              <p className="text-gray-500">Plan</p>
+              <p className="font-semibold text-gray-900">{entitlementSummary.subscription?.plan_name || "Active plan"}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Billing Cycle</p>
+              <p className="font-semibold text-gray-900">{entitlementSummary.subscription?.billing_cycle || "-"}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Renewal</p>
+              <p className="font-semibold text-gray-900">
+                {entitlementSummary.subscription?.renewal_date
+                  ? new Date(entitlementSummary.subscription.renewal_date).toLocaleDateString()
+                  : "-"}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 text-sm">
+            {entitlementSummary.capacity_table?.map((row) => (
+              <div key={row.metric} className="rounded-xl border border-dashed border-gray-200 px-4 py-3">
+                <p className="text-gray-500 capitalize">{row.metric}s</p>
+                <p className="font-semibold text-gray-900">
+                  {row.consumed} / {row.allocated}
+                </p>
+                <p className="text-xs text-gray-500">
+                  Plan {row.subscription_allocated}, Add-ons {row.addon_allocated}, Remaining {row.remaining}
+                </p>
               </div>
-            )}
+            ))}
+          </div>
 
-            {trialSummary.trial_status === "active" && (
+          {(entitlementSummary.capacity_addons || []).length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-gray-700">Active Capacity Add-ons</p>
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                {(entitlementSummary.capacity_addons || []).map((addon) => (
+                  <div key={addon.addon_id} className="rounded border px-3 py-2 text-sm">
+                    <p className="font-medium text-gray-900">{addon.name || addon.addon_id}</p>
+                    <p className="text-xs text-gray-500">
+                      {addon.entitlement_key}: +{addon.quantity}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-medium">Trial</h2>
+              <p className="text-sm text-gray-500">
+                Activate your 10-day trial by completing a INR 1 Razorpay payment. Trial starts only after webhook confirmation.
+              </p>
+            </div>
+            <Badge className={`px-3 py-1 text-sm ${trialActive ? "bg-green-600 text-white" : "bg-red-100 text-red-700"}`}>
+              {trialActive ? "Active" : "Expired"}
+            </Badge>
+          </div>
+
+          {trialActive && entitlementSummary ? (
+            <>
+              <div className="text-sm text-gray-600">
+                {Math.max(0, Number(entitlementSummary?.trial?.days_remaining || 0))} day(s) remaining
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                {[
+                  { label: "Unit", key: "unit" },
+                  { label: "Box", key: "box" },
+                  { label: "Carton", key: "carton" },
+                  { label: "Pallet", key: "pallet" },
+                  { label: "Seats", key: "seat" },
+                  { label: "Plants", key: "plant" },
+                  { label: "Handsets", key: "handset" },
+                ].map((metric) => {
+                  const usage = entitlementSummary.entitlement?.usage?.[metric.key] ?? 0;
+                  const limit = entitlementSummary.entitlement?.limits?.[metric.key] ?? 0;
+                  const remaining = entitlementSummary.entitlement?.remaining?.[metric.key] ?? 0;
+                  return (
+                    <div
+                      key={metric.key}
+                      className="flex items-center justify-between border border-dashed border-gray-200 rounded-xl px-4 py-3"
+                    >
+                      <span className="text-gray-500">{metric.label}</span>
+                      <span className="font-semibold text-gray-900">
+                        {usage} / {limit} ({remaining} left)
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
               <div className="flex items-center gap-3">
                 <Button
                   type="button"
@@ -491,50 +561,31 @@ export default function SettingsPage() {
                   Cancelling removes trial quotas and ends access immediately.
                 </span>
               </div>
-            )}
-
-            {(trialSummary.trial_status === "cancelled" || trialSummary.trial_status === "expired") && (
-              <div>
-                <Button
-                  asChild
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  <Link href="/dashboard/subscription">Upgrade Plan</Link>
+            </>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">
+                {subscriptionCancelled ? "Subscription cancelled." : "Trial expired or inactive."}
+              </p>
+              <div className="flex items-center gap-3">
+                {!subscriptionCancelled && (
+                  <Button
+                    type="button"
+                    onClick={handleActivateTrial}
+                    disabled={trialActivating}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    {trialActivating ? "Opening payment..." : "Activate Trial (INR 1)"}
+                  </Button>
+                )}
+                <Button asChild className="bg-blue-600 hover:bg-blue-700">
+                  <Link href="/dashboard/subscription">{subscriptionCancelled ? "Renew Plan" : "Upgrade Plan"}</Link>
                 </Button>
               </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              {[
-                { label: "Unit", key: "unit" },
-                { label: "Box", key: "box" },
-                { label: "Carton", key: "carton" },
-                { label: "Pallet", key: "pallet" },
-                { label: "Seats", key: "seat" },
-                { label: "Plants", key: "plant" },
-                { label: "Handsets", key: "handset" },
-              ].map((metric) => {
-                const usage = trialSummary.usage[metric.key as keyof typeof trialSummary.usage];
-                const limit = trialSummary.limits[metric.key as keyof typeof trialSummary.limits];
-                return (
-                  <div
-                    key={metric.key}
-                    className="flex items-center justify-between border border-dashed border-gray-200 rounded-xl px-4 py-3"
-                  >
-                    <span className="text-gray-500">{metric.label}</span>
-                    <span className="font-semibold text-gray-900">
-                      {usage} / {limit}
-                    </span>
-                  </div>
-                );
-              })}
             </div>
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500">Trial information is unavailable. Please refresh.</p>
-        )}
-      </div>
-
+          )}
+        </div>
+      )}
       {/* ERP Ingestion */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
         <h2 className="text-xl font-medium">
