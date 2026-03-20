@@ -115,7 +115,8 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const items = (data || []).map((row) => normalizeScanLog(row as ScanLogRow));
+    const rows = (data || []) as ScanLogRow[];
+    const items = rows.map((row) => normalizeScanLog(row));
     const total = Number(count || 0);
 
     return NextResponse.json({
@@ -130,4 +131,3 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: err?.message || "Failed to fetch scan logs" }, { status: 500 });
   }
 }
-
