@@ -16,10 +16,10 @@ export async function GET() {
     ctx.supabase
       .from("handsets")
       .select(
-        "id, company_id, status, high_scan_enabled, device_id, platform, app_version, device_name, activated_by, activated_at, disabled_by, disabled_at, created_at"
+        "id, company_id, status, high_scan_enabled, device_id, platform, app_version, device_name, activated_by, activated_at, disabled_by, disabled_at"
       )
       .eq("company_id", ctx.companyId)
-      .order("created_at", { ascending: false }),
+      .order("activated_at", { ascending: false }),
     ctx.supabase
       .from("handset_activation_tokens")
       .select("id, company_id, created_by, intended_user, max_activations, activation_count, expires_at, revoked_at, created_at")
