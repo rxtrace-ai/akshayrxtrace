@@ -12,7 +12,6 @@ type ScanLogRow = {
   raw_scan: string | null;
   parsed: Record<string, unknown> | null;
   metadata: Record<string, unknown> | null;
-  status: string | null;
   ip: string | null;
   handset_id: string | null;
 };
@@ -67,7 +66,7 @@ function normalizeScanLog(row: ScanLogRow) {
   return {
     id: row.id,
     scanned_at: row.scanned_at,
-    status: asString((metadata as any).status) || asString(row.status) || "UNKNOWN",
+    status: asString((metadata as any).status) || "UNKNOWN",
     serial,
     gtin,
     batch,
@@ -104,7 +103,7 @@ export async function GET(req: Request) {
 
     const baseQuery = admin
       .from("scan_logs")
-      .select("id, scanned_at, raw_scan, parsed, metadata, status, ip, handset_id", { count: "exact" })
+      .select("id, scanned_at, raw_scan, parsed, metadata, ip, handset_id", { count: "exact" })
       .eq("company_id", resolved.companyId)
       .order("scanned_at", { ascending: false });
 
