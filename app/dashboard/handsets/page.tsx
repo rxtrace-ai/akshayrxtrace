@@ -36,8 +36,6 @@ type LogRow = {
 };
 
 export default function HandsetsPage() {
-  const enabled = String(process.env.NEXT_PUBLIC_HANDSET_V2_ENABLED || "false").toLowerCase() === "true";
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -78,9 +76,8 @@ export default function HandsetsPage() {
   }, []);
 
   useEffect(() => {
-    if (!enabled) return;
     refresh();
-  }, [enabled, refresh]);
+  }, [refresh]);
 
   const activeHandsetCount = useMemo(() => handsets.filter((h) => h.is_active).length, [handsets]);
 
@@ -139,17 +136,6 @@ export default function HandsetsPage() {
     }
     setSuccess("Token revoked");
     await refresh();
-  }
-
-  if (!enabled) {
-    return (
-      <div className="max-w-5xl space-y-4">
-        <h1 className="text-3xl font-semibold text-gray-900">Handsets</h1>
-        <Alert>
-          <AlertDescription>Handset Activation V2 is disabled by feature flag.</AlertDescription>
-        </Alert>
-      </div>
-    );
   }
 
   return (
