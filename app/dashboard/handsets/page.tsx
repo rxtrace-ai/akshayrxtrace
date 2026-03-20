@@ -40,6 +40,8 @@ export default function HandsetsPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [plainToken, setPlainToken] = useState("");
+  const [tokenExpiresAt, setTokenExpiresAt] = useState("");
+  const [tokenMaxActivations, setTokenMaxActivations] = useState(0);
   const [expiryHours, setExpiryHours] = useState("24");
   const [maxActivations, setMaxActivations] = useState("10");
   const [tokens, setTokens] = useState<TokenRow[]>([]);
@@ -80,11 +82,24 @@ export default function HandsetsPage() {
   }, [refresh]);
 
   const activeHandsetCount = useMemo(() => handsets.filter((h) => h.is_active).length, [handsets]);
+  const tokenShareMessage = useMemo(() => {
+    if (!plainToken) return "";
+    const expiresLabel = tokenExpiresAt ? new Date(tokenExpiresAt).toLocaleString() : "-";
+    const maxLabel = tokenMaxActivations > 0 ? String(tokenMaxActivations) : "-";
+    return [
+      `RxTrace handset activation token: ${plainToken}`,
+      `Valid until: ${expiresLabel}`,
+      `Max activations: ${maxLabel}`,
+      "Open the scanner app, tap Activate, and enter this token.",
+    ].join("\n");
+  }, [plainToken, tokenExpiresAt, tokenMaxActivations]);
 
   async function handleCreateToken() {
     setError("");
     setSuccess("");
     setPlainToken("");
+    setTokenExpiresAt("");
+    setTokenMaxActivations(0);
 
     const payload = {
       expiry_hours: Number(expiryHours || 24),
@@ -104,8 +119,32 @@ export default function HandsetsPage() {
     }
 
     setPlainToken(String(json.token || ""));
+    setTokenExpiresAt(String(json.expires_at || ""));
+    setTokenMaxActivations(Number(json.max_activations || 0));
     setSuccess("Token generated. Copy it now; it is shown once.");
     await refresh();
+  }
+
+  async function handleCopyToken() {
+    if (!tokenShareMessage) return;
+    try {
+      await navigator.clipboard.writeText(tokenShareMessage);
+      setSuccess("Token details copied.");
+    } catch {
+      setError("Could not copy token. Please copy manually.");
+    }
+  }
+
+  async function handleNativeShare() {
+    if (!tokenShareMessage || !navigator.share) return;
+    try {
+      await navigator.share({
+        title: "RxTrace Activation Token",
+        text: tokenShareMessage,
+      });
+    } catch {
+      // Ignore user-cancelled or unsupported share flow errors.
+    }
   }
 
   async function handleDisableHandset(handsetId: string) {
@@ -193,7 +232,39 @@ export default function HandsetsPage() {
             </div>
             <Button onClick={handleCreateToken}>Generate Token</Button>
             {plainToken ? (
-              <div className="rounded-md border bg-gray-50 p-3 font-mono text-sm tracking-wide">{plainToken}</div>
+              <div className="space-y-3 rounded-md border bg-gray-50 p-3">
+                <div className="font-mono text-sm tracking-wide">{plainToken}</div>
+                <div className="text-xs text-gray-600">
+                  Valid until: {tokenExpiresAt ? new Date(tokenExpiresAt).toLocaleString() : "-"} | Max activations:{" "}
+                  {tokenMaxActivations > 0 ? tokenMaxActivations : "-"}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" onClick={handleCopyToken}>
+                    Copy
+                  </Button>
+                  <Button asChild type="button" variant="outline">
+                    <a
+                      href={`https://wa.me/?text=${encodeURIComponent(tokenShareMessage)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Share via WhatsApp
+                    </a>
+                  </Button>
+                  <Button asChild type="button" variant="outline">
+                    <a
+                      href={`mailto:?subject=${encodeURIComponent("RxTrace Handset Activation Token")}&body=${encodeURIComponent(tokenShareMessage)}`}
+                    >
+                      Share via Email
+                    </a>
+                  </Button>
+                  {typeof navigator !== "undefined" && "share" in navigator ? (
+                    <Button type="button" variant="outline" onClick={handleNativeShare}>
+                      Share
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
             ) : null}
           </CardContent>
         </Card>

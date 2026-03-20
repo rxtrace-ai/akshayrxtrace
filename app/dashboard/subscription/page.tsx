@@ -101,6 +101,7 @@ type SubscriptionSummary = {
   }>;
   add_on_balances: Record<string, number>;
   invoices?: Array<{
+    id: string;
     invoice_type: string;
     status: string;
     reference: string | null;
@@ -115,6 +116,8 @@ type SubscriptionSummary = {
     created_at: string | null;
   }>;
 };
+
+type SummaryInvoice = NonNullable<SubscriptionSummary["invoices"]>[number];
 
 type QuoteLine = {
   addon_id: string;
@@ -487,6 +490,46 @@ export default function SubscriptionCheckoutPage() {
     setAppliedCouponCode("");
     setError(null);
     setMessage("Coupon removed. Refreshing quote...");
+  }
+
+  function buildInvoiceShareMessage(invoice: SummaryInvoice) {
+    const reference = invoice.reference || invoice.id || "Invoice";
+    const invoiceDate = invoice.created_at ? new Date(invoice.created_at).toLocaleDateString("en-IN") : "-";
+    const amount = `INR ${Number(invoice.amount || 0).toFixed(2)}`;
+    const pdfUrl = String(invoice.invoice_pdf_url || "").trim();
+    const absolutePdfUrl =
+      pdfUrl && pdfUrl.startsWith("/") && typeof window !== "undefined"
+        ? `${window.location.origin}${pdfUrl}`
+        : pdfUrl;
+
+    return [
+      `RxTrace invoice: ${reference}`,
+      `Status: ${invoice.status || "-"}`,
+      `Amount: ${amount}`,
+      `Date: ${invoiceDate}`,
+      absolutePdfUrl ? `PDF: ${absolutePdfUrl}` : "PDF: pending",
+    ].join("\n");
+  }
+
+  async function handleCopyInvoiceShare(invoice: SummaryInvoice) {
+    try {
+      await navigator.clipboard.writeText(buildInvoiceShareMessage(invoice));
+      setMessage("Invoice details copied.");
+    } catch {
+      setError("Could not copy invoice details.");
+    }
+  }
+
+  async function handleNativeShareInvoice(invoice: SummaryInvoice) {
+    if (!("share" in navigator)) return;
+    try {
+      await navigator.share({
+        title: `RxTrace Invoice ${invoice.reference || invoice.id || ""}`.trim(),
+        text: buildInvoiceShareMessage(invoice),
+      });
+    } catch {
+      // Ignore share dismiss and unsupported payload errors.
+    }
   }
 
   async function openRazorpayStep(
@@ -1046,18 +1089,54 @@ export default function SubscriptionCheckoutPage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <p className="font-semibold">INR {Number(invoice.amount || 0).toFixed(2)}</p>
-                  {invoice.invoice_pdf_url ? (
-                    <a
-                      href={invoice.invoice_pdf_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs font-medium text-blue-600 hover:underline"
+                  <div className="flex flex-wrap items-center gap-2">
+                    {invoice.invoice_pdf_url ? (
+                      <a
+                        href={invoice.invoice_pdf_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-medium text-blue-600 hover:underline"
+                      >
+                        Download PDF
+                      </a>
+                    ) : (
+                      <span className="text-xs text-gray-500">PDF pending</span>
+                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-8 px-2 text-xs"
+                      onClick={() => handleCopyInvoiceShare(invoice)}
                     >
-                      Download PDF
-                    </a>
-                  ) : (
-                    <span className="text-xs text-gray-500">PDF pending</span>
-                  )}
+                      Copy
+                    </Button>
+                    <Button asChild type="button" variant="outline" className="h-8 px-2 text-xs">
+                      <a
+                        href={`https://wa.me/?text=${encodeURIComponent(buildInvoiceShareMessage(invoice))}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        WhatsApp
+                      </a>
+                    </Button>
+                    <Button asChild type="button" variant="outline" className="h-8 px-2 text-xs">
+                      <a
+                        href={`mailto:?subject=${encodeURIComponent(`RxTrace Invoice ${invoice.reference || invoice.id || ""}`.trim())}&body=${encodeURIComponent(buildInvoiceShareMessage(invoice))}`}
+                      >
+                        Email
+                      </a>
+                    </Button>
+                    {typeof navigator !== "undefined" && "share" in navigator ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-8 px-2 text-xs"
+                        onClick={() => handleNativeShareInvoice(invoice)}
+                      >
+                        Share
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             ))
