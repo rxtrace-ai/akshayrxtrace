@@ -125,28 +125,6 @@ export default function HandsetsPage() {
     await refresh();
   }
 
-  async function handleCopyToken() {
-    if (!tokenShareMessage) return;
-    try {
-      await navigator.clipboard.writeText(tokenShareMessage);
-      setSuccess("Token details copied.");
-    } catch {
-      setError("Could not copy token. Please copy manually.");
-    }
-  }
-
-  async function handleNativeShare() {
-    if (!tokenShareMessage || !navigator.share) return;
-    try {
-      await navigator.share({
-        title: "RxTrace Activation Token",
-        text: tokenShareMessage,
-      });
-    } catch {
-      // Ignore user-cancelled or unsupported share flow errors.
-    }
-  }
-
   async function handleDisableHandset(handsetId: string) {
     setError("");
     setSuccess("");
@@ -239,9 +217,6 @@ export default function HandsetsPage() {
                   {tokenMaxActivations > 0 ? tokenMaxActivations : "-"}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" onClick={handleCopyToken}>
-                    Copy
-                  </Button>
                   <Button asChild type="button" variant="outline">
                     <a
                       href={`https://wa.me/?text=${encodeURIComponent(tokenShareMessage)}`}
@@ -251,18 +226,6 @@ export default function HandsetsPage() {
                       Share via WhatsApp
                     </a>
                   </Button>
-                  <Button asChild type="button" variant="outline">
-                    <a
-                      href={`mailto:?subject=${encodeURIComponent("RxTrace Handset Activation Token")}&body=${encodeURIComponent(tokenShareMessage)}`}
-                    >
-                      Share via Email
-                    </a>
-                  </Button>
-                  {typeof navigator !== "undefined" && "share" in navigator ? (
-                    <Button type="button" variant="outline" onClick={handleNativeShare}>
-                      Share
-                    </Button>
-                  ) : null}
                 </div>
               </div>
             ) : null}

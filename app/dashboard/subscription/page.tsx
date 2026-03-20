@@ -511,26 +511,6 @@ export default function SubscriptionCheckoutPage() {
     ].join("\n");
   }
 
-  async function handleCopyInvoiceShare(invoice: SummaryInvoice) {
-    try {
-      await navigator.clipboard.writeText(buildInvoiceShareMessage(invoice));
-      setMessage("Invoice details copied.");
-    } catch {
-      setError("Could not copy invoice details.");
-    }
-  }
-
-  async function handleNativeShareInvoice(invoice: SummaryInvoice) {
-    if (!("share" in navigator)) return;
-    try {
-      await navigator.share({
-        title: `RxTrace Invoice ${invoice.reference || invoice.id || ""}`.trim(),
-        text: buildInvoiceShareMessage(invoice),
-      });
-    } catch {
-      // Ignore share dismiss and unsupported payload errors.
-    }
-  }
 
   async function openRazorpayStep(
     RazorpayCtor: any,
@@ -1102,14 +1082,6 @@ export default function SubscriptionCheckoutPage() {
                     ) : (
                       <span className="text-xs text-gray-500">PDF pending</span>
                     )}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-8 px-2 text-xs"
-                      onClick={() => handleCopyInvoiceShare(invoice)}
-                    >
-                      Copy
-                    </Button>
                     <Button asChild type="button" variant="outline" className="h-8 px-2 text-xs">
                       <a
                         href={`https://wa.me/?text=${encodeURIComponent(buildInvoiceShareMessage(invoice))}`}
@@ -1119,23 +1091,6 @@ export default function SubscriptionCheckoutPage() {
                         WhatsApp
                       </a>
                     </Button>
-                    <Button asChild type="button" variant="outline" className="h-8 px-2 text-xs">
-                      <a
-                        href={`mailto:?subject=${encodeURIComponent(`RxTrace Invoice ${invoice.reference || invoice.id || ""}`.trim())}&body=${encodeURIComponent(buildInvoiceShareMessage(invoice))}`}
-                      >
-                        Email
-                      </a>
-                    </Button>
-                    {typeof navigator !== "undefined" && "share" in navigator ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-8 px-2 text-xs"
-                        onClick={() => handleNativeShareInvoice(invoice)}
-                      >
-                        Share
-                      </Button>
-                    ) : null}
                   </div>
                 </div>
               </div>
