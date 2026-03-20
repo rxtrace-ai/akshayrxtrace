@@ -13,7 +13,6 @@ type ScanLogRow = {
   parsed: Record<string, unknown> | null;
   metadata: Record<string, unknown> | null;
   ip: string | null;
-  handset_id: string | null;
 };
 
 function asString(value: unknown): string {
@@ -73,7 +72,7 @@ function normalizeScanLog(row: ScanLogRow) {
     expiry,
     raw_scan: row.raw_scan || "",
     ip: row.ip || "",
-    handset_id: row.handset_id || null,
+    handset_id: null,
   };
 }
 
@@ -103,7 +102,7 @@ export async function GET(req: Request) {
 
     const baseQuery = admin
       .from("scan_logs")
-      .select("id, scanned_at, raw_scan, parsed, metadata, ip, handset_id", { count: "exact" })
+      .select("id, scanned_at, raw_scan, parsed, metadata, ip", { count: "exact" })
       .eq("company_id", resolved.companyId)
       .order("scanned_at", { ascending: false });
 
