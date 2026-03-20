@@ -32,10 +32,16 @@ export async function POST(req: Request) {
     burst: 20,
   });
 
-  if (!perUser.allowed || !perCompany.allowed) {
-    const retryAfterSeconds = !perUser.allowed ? perUser.retryAfterSeconds : perCompany.retryAfterSeconds;
+  if (!perUser.allowed) {
     return NextResponse.json(
-      { success: false, error: "RATE_LIMITED", retry_after_seconds: retryAfterSeconds },
+      { success: false, error: "RATE_LIMITED", retry_after_seconds: perUser.retryAfterSeconds },
+      { status: 429 }
+    );
+  }
+
+  if (!perCompany.allowed) {
+    return NextResponse.json(
+      { success: false, error: "RATE_LIMITED", retry_after_seconds: perCompany.retryAfterSeconds },
       { status: 429 }
     );
   }

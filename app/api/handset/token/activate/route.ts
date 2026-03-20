@@ -40,15 +40,23 @@ export async function POST(req: Request) {
   const deviceLimit = consumeRateLimit({ key: `handset-v2:activate:device:${deviceId}`, refillPerMinute: 10, burst: 10 });
   const tokenLimit = consumeRateLimit({ key: `handset-v2:activate:token:${hashActivationToken(token)}`, refillPerMinute: 30, burst: 30 });
 
-  if (!ipLimit.allowed || !deviceLimit.allowed || !tokenLimit.allowed) {
-    const retryAfterSeconds = !ipLimit.allowed
-      ? ipLimit.retryAfterSeconds
-      : !deviceLimit.allowed
-      ? deviceLimit.retryAfterSeconds
-      : tokenLimit.retryAfterSeconds;
-
+  if (!ipLimit.allowed) {
     return NextResponse.json(
-      { success: false, error: "RATE_LIMITED", retry_after_seconds: retryAfterSeconds },
+      { success: false, error: "RATE_LIMITED", retry_after_seconds: ipLimit.retryAfterSeconds },
+      { status: 429 }
+    );
+  }
+
+  if (!deviceLimit.allowed) {
+    return NextResponse.json(
+      { success: false, error: "RATE_LIMITED", retry_after_seconds: deviceLimit.retryAfterSeconds },
+      { status: 429 }
+    );
+  }
+
+  if (!tokenLimit.allowed) {
+    return NextResponse.json(
+      { success: false, error: "RATE_LIMITED", retry_after_seconds: tokenLimit.retryAfterSeconds },
       { status: 429 }
     );
   }
