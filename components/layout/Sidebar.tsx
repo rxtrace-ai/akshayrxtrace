@@ -19,6 +19,7 @@ import {
   TreeDeciduous,
   Users,
   CreditCard,
+  Smartphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +31,9 @@ const MENU = [
   { label: "Plant Management", path: "/dashboard/plants", icon: TreeDeciduous },
   { label: "Seat Management", path: "/dashboard/seats", icon: Users },
   { label: "Subscription", path: "/dashboard/subscription", icon: CreditCard },
+  ...(String(process.env.NEXT_PUBLIC_HANDSET_V2_ENABLED || "false").toLowerCase() === "true"
+    ? [{ label: "Handsets", path: "/dashboard/handsets", icon: Smartphone }]
+    : []),
   { label: "Scan Logs", path: "/dashboard/scans", icon: ScanLine },
   { label: "Reports", path: "/dashboard/audit", icon: FileText },
   { label: "Help & Support", path: "/dashboard/help", icon: HelpCircle },
