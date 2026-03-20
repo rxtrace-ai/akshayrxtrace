@@ -1,13 +1,11 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { QrCode, Boxes, Smartphone, Activity } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { LabelGenerationTrend } from '@/components/charts/LabelGenerationTrend';
-import { LabelsByLevel } from '@/components/charts/LabelsByLevel';
-import { CostUsageChart } from '@/components/charts/CostUsageChart';
 import { useSubscriptionSummary } from '@/lib/hooks/useSubscriptionSummary';
 
 type DashboardStats = {
@@ -29,29 +27,57 @@ type DashboardStats = {
     id: string;
     action: string;
     status: string;
-    details: any;
+    details?: any;
+    metadata?: any;
     created_at: string;
   }>;
-  trial?: any | null;
 };
+
+const LabelGenerationTrend = dynamic(
+  () => import('@/components/charts/LabelGenerationTrend').then((m) => m.LabelGenerationTrend),
+  {
+    ssr: false,
+    loading: () => <div className="h-48 animate-pulse rounded-md bg-gray-100" />,
+  }
+);
+const LabelsByLevel = dynamic(
+  () => import('@/components/charts/LabelsByLevel').then((m) => m.LabelsByLevel),
+  {
+    ssr: false,
+    loading: () => <div className="h-48 animate-pulse rounded-md bg-gray-100" />,
+  }
+);
+const CostUsageChart = dynamic(
+  () => import('@/components/charts/CostUsageChart').then((m) => m.CostUsageChart),
+  {
+    ssr: false,
+    loading: () => <div className="h-48 animate-pulse rounded-md bg-gray-100" />,
+  }
+);
 
 function KpiCard({
   title,
   value,
   icon: Icon,
   href,
+  loading,
 }: {
   title: string;
   value: string;
   icon: LucideIcon;
   href?: string;
+  loading?: boolean;
 }) {
   const content = (
     <div className="cursor-pointer rounded-lg border bg-white p-4 transition hover:shadow-md">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-gray-500">{title}</p>
-          <p className="mt-1 text-2xl font-semibold text-blue-700">{value}</p>
+          {loading ? (
+            <div className="mt-2 h-8 w-20 animate-pulse rounded bg-gray-100" />
+          ) : (
+            <p className="mt-1 text-2xl font-semibold text-blue-700">{value}</p>
+          )}
         </div>
         <Icon className="h-6 w-6 text-blue-600" />
       </div>
@@ -61,19 +87,41 @@ function KpiCard({
   return href ? <Link href={href}>{content}</Link> : content;
 }
 
+function SectionSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div className="space-y-2">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="h-4 animate-pulse rounded bg-gray-100" />
+      ))}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [recentActivity, setRecentActivity] = useState<NonNullable<DashboardStats['recent_activity']>>([]);
+  const [activityLoading, setActivityLoading] = useState(true);
   const router = useRouter();
-  const { data: subscriptionSummary, loading: summaryLoading } = useSubscriptionSummary();
+  const { data: subscriptionSummary, loading: summaryLoading } = useSubscriptionSummary({
+    view: 'dashboard',
+  });
 
-  async function refreshStats(signal?: AbortSignal) {
-    const res = await fetch('/api/dashboard/stats', { cache: 'no-store', signal });
+  const refreshCoreStats = useCallback(async (signal?: AbortSignal) => {
+    const res = await fetch('/api/dashboard/stats?scope=core', { cache: 'no-store', signal });
     const body = await res.json().catch(() => null);
-    if (res.ok) {
-      setStats(body as DashboardStats);
+    if (res.ok && body) {
+      setStats((prev) => ({ ...prev, ...(body as DashboardStats) }));
     }
-  }
+  }, []);
+
+  const refreshActivity = useCallback(async (signal?: AbortSignal) => {
+    const res = await fetch('/api/dashboard/stats?scope=activity', { cache: 'no-store', signal });
+    const body = await res.json().catch(() => null);
+    if (res.ok && body) {
+      setRecentActivity((body as DashboardStats).recent_activity ?? []);
+    }
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -81,26 +129,39 @@ export default function DashboardPage() {
 
     (async () => {
       try {
-        await refreshStats(controller.signal);
+        await Promise.all([
+          refreshCoreStats(controller.signal),
+          refreshActivity(controller.signal),
+        ]);
       } finally {
         if (mounted) {
-          setLoading(false);
+          setStatsLoading(false);
+          setActivityLoading(false);
         }
       }
     })();
 
-    const id = window.setInterval(() => {
-      refreshStats(controller.signal).catch(() => undefined);
-    }, 5000);
+    const statsInterval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        refreshCoreStats(controller.signal).catch(() => undefined);
+      }
+    }, 15_000);
+
+    const activityInterval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        refreshActivity(controller.signal).catch(() => undefined);
+      }
+    }, 30_000);
 
     return () => {
       mounted = false;
-      window.clearInterval(id);
+      window.clearInterval(statsInterval);
+      window.clearInterval(activityInterval);
       if (!controller.signal.aborted) {
         controller.abort();
       }
     };
-  }, []);
+  }, [refreshActivity, refreshCoreStats]);
 
   const kpi = useMemo(() => {
     const dash = (n: number | null | undefined) =>
@@ -108,18 +169,18 @@ export default function DashboardPage() {
     const labelGen = stats?.label_generation;
 
     return {
-      totalSkus: stats ? dash(stats.total_skus) : loading ? '-' : '0',
-      unitsGenerated: stats ? dash(stats.units_generated) : loading ? '-' : '0',
-      ssccGenerated: stats ? dash(stats.sscc_generated) : loading ? '-' : '0',
-      totalScans: stats ? dash(stats.total_scans) : loading ? '-' : '0',
-      activeHandsets: stats ? dash(stats.active_handsets) : loading ? '-' : '0',
-      activeSeats: stats ? dash(stats.active_seats ?? 0) : loading ? '-' : '0',
-      unitLabels: labelGen ? dash(labelGen.unit) : loading ? '-' : '0',
-      boxLabels: labelGen ? dash(labelGen.box) : loading ? '-' : '0',
-      cartonLabels: labelGen ? dash(labelGen.carton) : loading ? '-' : '0',
-      palletLabels: labelGen ? dash(labelGen.pallet) : loading ? '-' : '0',
+      totalSkus: stats ? dash(stats.total_skus) : '0',
+      unitsGenerated: stats ? dash(stats.units_generated) : '0',
+      ssccGenerated: stats ? dash(stats.sscc_generated) : '0',
+      totalScans: stats ? dash(stats.total_scans) : '0',
+      activeHandsets: stats ? dash(stats.active_handsets) : '0',
+      activeSeats: stats ? dash(stats.active_seats ?? 0) : '0',
+      unitLabels: labelGen ? dash(labelGen.unit) : '0',
+      boxLabels: labelGen ? dash(labelGen.box) : '0',
+      cartonLabels: labelGen ? dash(labelGen.carton) : '0',
+      palletLabels: labelGen ? dash(labelGen.pallet) : '0',
     };
-  }, [stats, loading]);
+  }, [stats]);
 
   const trialStatusLabel = subscriptionSummary?.entitlement?.trial_active
     ? 'TRIAL_ACTIVE'
@@ -179,44 +240,58 @@ export default function DashboardPage() {
         </p>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          {[
-            { key: 'generation', metricKey: 'generation', label: 'Generation' },
-            { key: 'seats', metricKey: 'seat', label: 'Seats' },
-            { key: 'plants', metricKey: 'plant', label: 'Plants' },
-          ].map((item) => {
-            const blocked = (subscriptionSummary as any)?.decisions?.[item.key]?.blocked ?? false;
-            const reason = (subscriptionSummary as any)?.decisions?.[item.key]?.code ?? null;
-            const remaining =
-              item.metricKey === 'generation'
-                ? ((subscriptionSummary?.entitlement?.remaining?.unit ?? 0) +
-                  (subscriptionSummary?.entitlement?.remaining?.box ?? 0) +
-                  (subscriptionSummary?.entitlement?.remaining?.carton ?? 0) +
-                  (subscriptionSummary?.entitlement?.remaining?.pallet ?? 0))
-                : (subscriptionSummary?.entitlement?.remaining?.[item.metricKey] ?? 0);
-            const statusLabel = blocked ? reason || 'Blocked' : 'Allowed';
-            const statusColor = blocked ? 'text-rose-600' : 'text-emerald-600';
-
-            return (
-              <div
-                key={item.key}
-                className="rounded-xl border border-dashed border-gray-200 px-4 py-3"
-              >
-                <p className="text-xs uppercase tracking-wide text-gray-500">{item.label}</p>
-                <p className={`text-sm font-semibold ${statusColor}`}>{statusLabel}</p>
-                <p className="text-xs text-gray-500">{remaining} remaining</p>
+          {summaryLoading && !subscriptionSummary ? (
+            <>
+              <div className="rounded-xl border border-dashed border-gray-200 px-4 py-3">
+                <SectionSkeleton rows={2} />
               </div>
-            );
-          })}
+              <div className="rounded-xl border border-dashed border-gray-200 px-4 py-3">
+                <SectionSkeleton rows={2} />
+              </div>
+              <div className="rounded-xl border border-dashed border-gray-200 px-4 py-3">
+                <SectionSkeleton rows={2} />
+              </div>
+            </>
+          ) : (
+            [
+              { key: 'generation', metricKey: 'generation', label: 'Generation' },
+              { key: 'seats', metricKey: 'seat', label: 'Seats' },
+              { key: 'plants', metricKey: 'plant', label: 'Plants' },
+            ].map((item) => {
+              const blocked = (subscriptionSummary as any)?.decisions?.[item.key]?.blocked ?? false;
+              const reason = (subscriptionSummary as any)?.decisions?.[item.key]?.code ?? null;
+              const remaining =
+                item.metricKey === 'generation'
+                  ? ((subscriptionSummary?.entitlement?.remaining?.unit ?? 0) +
+                    (subscriptionSummary?.entitlement?.remaining?.box ?? 0) +
+                    (subscriptionSummary?.entitlement?.remaining?.carton ?? 0) +
+                    (subscriptionSummary?.entitlement?.remaining?.pallet ?? 0))
+                  : (subscriptionSummary?.entitlement?.remaining?.[item.metricKey] ?? 0);
+              const statusLabel = blocked ? reason || 'Blocked' : 'Allowed';
+              const statusColor = blocked ? 'text-rose-600' : 'text-emerald-600';
+
+              return (
+                <div
+                  key={item.key}
+                  className="rounded-xl border border-dashed border-gray-200 px-4 py-3"
+                >
+                  <p className="text-xs uppercase tracking-wide text-gray-500">{item.label}</p>
+                  <p className={`text-sm font-semibold ${statusColor}`}>{statusLabel}</p>
+                  <p className="text-xs text-gray-500">{remaining} remaining</p>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
-        <KpiCard title="Total SKUs" value={kpi.totalSkus} icon={QrCode} href="/dashboard/sku" />
-        <KpiCard title="Units Generated" value={kpi.unitsGenerated} icon={QrCode} />
-        <KpiCard title="SSCC Generated" value={kpi.ssccGenerated} icon={Boxes} />
-        <KpiCard title="Total Scans" value={kpi.totalScans} icon={Activity} href="/dashboard/scans" />
-        <KpiCard title="Active Seats" value={kpi.activeSeats} icon={Activity} href="/dashboard/seats" />
-        <KpiCard title="Active Handsets" value={kpi.activeHandsets} icon={Smartphone} />
+        <KpiCard title="Total SKUs" value={kpi.totalSkus} icon={QrCode} href="/dashboard/sku" loading={statsLoading} />
+        <KpiCard title="Units Generated" value={kpi.unitsGenerated} icon={QrCode} loading={statsLoading} />
+        <KpiCard title="SSCC Generated" value={kpi.ssccGenerated} icon={Boxes} loading={statsLoading} />
+        <KpiCard title="Total Scans" value={kpi.totalScans} icon={Activity} href="/dashboard/scans" loading={statsLoading} />
+        <KpiCard title="Active Seats" value={kpi.activeSeats} icon={Activity} href="/dashboard/seats" loading={statsLoading} />
+        <KpiCard title="Active Handsets" value={kpi.activeHandsets} icon={Smartphone} loading={statsLoading} />
       </div>
 
       <div>
@@ -224,10 +299,10 @@ export default function DashboardPage() {
         <p className="mt-1 text-sm text-gray-600">Shows labels generated in the current trial period.</p>
 
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiCard title="Unit Labels" value={kpi.unitLabels} icon={QrCode} />
-          <KpiCard title="Box Labels" value={kpi.boxLabels} icon={Boxes} />
-          <KpiCard title="Carton Labels" value={kpi.cartonLabels} icon={Boxes} />
-          <KpiCard title="Pallet Labels" value={kpi.palletLabels} icon={Boxes} />
+          <KpiCard title="Unit Labels" value={kpi.unitLabels} icon={QrCode} loading={statsLoading} />
+          <KpiCard title="Box Labels" value={kpi.boxLabels} icon={Boxes} loading={statsLoading} />
+          <KpiCard title="Carton Labels" value={kpi.cartonLabels} icon={Boxes} loading={statsLoading} />
+          <KpiCard title="Pallet Labels" value={kpi.palletLabels} icon={Boxes} loading={statsLoading} />
         </div>
       </div>
 
@@ -275,9 +350,11 @@ export default function DashboardPage() {
       <div className="rounded-lg border bg-white p-6">
         <h2 className="mb-4 text-lg font-semibold">Recent Activity</h2>
 
-        {stats?.recent_activity && stats.recent_activity.length > 0 ? (
+        {activityLoading ? (
+          <SectionSkeleton rows={4} />
+        ) : recentActivity && recentActivity.length > 0 ? (
           <ul className="space-y-3 text-sm text-gray-600">
-            {stats.recent_activity.map((activity) => (
+            {recentActivity.map((activity) => (
               <li key={activity.id} className="flex items-start gap-2">
                 <span
                   className={
@@ -292,8 +369,8 @@ export default function DashboardPage() {
                 </span>
                 <div className="flex-1">
                   <span className="font-medium">{activity.action.replace(/_/g, ' ')}</span>
-                  {activity.details?.description ? (
-                    <span className="text-gray-500"> - {activity.details.description}</span>
+                  {activity.details?.description || activity.metadata?.description ? (
+                    <span className="text-gray-500"> - {activity.details?.description ?? activity.metadata?.description}</span>
                   ) : null}
                   <span className="ml-2 text-xs text-gray-400">
                     {new Date(activity.created_at).toLocaleString('en-IN', {

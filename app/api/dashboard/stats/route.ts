@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { resolveCompanyForUser } from '@/lib/company/resolve';
@@ -7,6 +7,13 @@ import { getCompanyEntitlementSnapshot } from '@/lib/entitlement/canonical';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type Scope = 'full' | 'core' | 'activity';
+
+function parseScope(value: string | null): Scope {
+  if (value === 'core' || value === 'activity') return value;
+  return 'full';
+}
+
 function toNumber(value: unknown): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'bigint') return Number(value);
@@ -14,9 +21,23 @@ function toNumber(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export async function GET() {
+async function getRecentActivity(supabase: ReturnType<typeof getSupabaseAdmin>, companyId: string) {
+  const { data: recentActivity, error: activityErr } = await supabase
+    .from('audit_logs')
+    .select('id, action, status, metadata, created_at')
+    .eq('company_id', companyId)
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  if (activityErr) {
+    console.warn('Could not fetch recent activity:', activityErr.message);
+    return [];
+  }
+  return recentActivity ?? [];
+}
+
+export async function GET(request: NextRequest) {
   try {
-    // Route handlers run server-side; use SSR client for auth cookies.
     const {
       data: { user },
       error: authError,
@@ -26,149 +47,126 @@ export async function GET() {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    // Use admin client and canonical company resolver (owner + seat).
+    const scope = parseScope(request.nextUrl.searchParams.get('scope'));
     const supabase = getSupabaseAdmin();
     const resolved = await resolveCompanyForUser(supabase, user.id, 'id, company_name');
     if (!resolved) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 });
     }
+
     const companyId = resolved.companyId;
     const company = resolved.company;
 
-    // Billing usage (current trial/paid period): used label quotas are the most accurate
-    // “realtime generation” counters because they are incremented atomically during create APIs.
-    const entitlement = await getCompanyEntitlementSnapshot(supabase, companyId).catch((err) => {
-      console.error('Failed to load entitlement snapshot:', err);
-      return null;
-    });
-
-    // Total SKUs
-    const { count: totalSkus, error: skuErr } = await supabase
-      .from('skus')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId)
-      .is('deleted_at', null);
-
-    if (skuErr) {
-      return NextResponse.json({ error: skuErr.message }, { status: 500 });
+    if (scope === 'activity') {
+      const recentActivity = await getRecentActivity(supabase, companyId);
+      return NextResponse.json({
+        company_id: companyId,
+        company_name: (company?.company_name as string) ?? null,
+        recent_activity: recentActivity,
+      });
     }
 
-    // Units generated: count of labels_units (authoritative store of generated unit labels).
-    // If you use a different “formula” in Supabase (view/RPC), we can swap this.
-    const { count: unitsGenerated, error: unitsErr } = await supabase
-      .from('labels_units')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId);
+    const [
+      entitlement,
+      skusResult,
+      unitsResult,
+      palletsResult,
+      scansResult,
+      handsetsResult,
+      seatsResult,
+      recentActivity,
+      scanLogsResult,
+    ] = await Promise.all([
+      getCompanyEntitlementSnapshot(supabase, companyId).catch((err) => {
+        console.error('Failed to load entitlement snapshot:', err);
+        return null;
+      }),
+      supabase
+        .from('skus')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', companyId)
+        .is('deleted_at', null),
+      supabase
+        .from('labels_units')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', companyId),
+      supabase
+        .from('pallets')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', companyId),
+      supabase
+        .from('scan_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', companyId),
+      supabase
+        .from('handsets')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', companyId)
+        .eq('status', 'ACTIVE'),
+      supabase
+        .from('seats')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', companyId)
+        .eq('active', true),
+      scope === 'full' ? getRecentActivity(supabase, companyId) : Promise.resolve([]),
+      scope === 'full'
+        ? supabase
+            .from('scan_logs')
+            .select('metadata, status')
+            .eq('company_id', companyId)
+        : Promise.resolve({ data: [], error: null } as any),
+    ]);
 
-    if (unitsErr) {
-      return NextResponse.json({ error: unitsErr.message }, { status: 500 });
-    }
+    if (skusResult.error) return NextResponse.json({ error: skusResult.error.message }, { status: 500 });
+    if (unitsResult.error) return NextResponse.json({ error: unitsResult.error.message }, { status: 500 });
+    if (palletsResult.error) return NextResponse.json({ error: palletsResult.error.message }, { status: 500 });
+    if (scansResult.error) return NextResponse.json({ error: scansResult.error.message }, { status: 500 });
+    if (handsetsResult.error) return NextResponse.json({ error: handsetsResult.error.message }, { status: 500 });
+    if (seatsResult.error) return NextResponse.json({ error: seatsResult.error.message }, { status: 500 });
+    if (scanLogsResult.error) return NextResponse.json({ error: scanLogsResult.error.message }, { status: 500 });
 
-    // SSCC generated: pallets count
-    const { count: ssccGenerated, error: palletsErr } = await supabase
-      .from('pallets')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId);
-
-    if (palletsErr) {
-      return NextResponse.json({ error: palletsErr.message }, { status: 500 });
-    }
-
-    // Total scans (company scans only)
-    const { count: totalScans, error: scansErr } = await supabase
-      .from('scan_logs')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId);
-
-    if (scansErr) {
-      return NextResponse.json({ error: scansErr.message }, { status: 500 });
-    }
-
-    // Scan breakdown by expiry status
-    const { data: scanLogs, error: scanLogsErr } = await supabase
-      .from('scan_logs')
-      .select('metadata, status')
-      .eq('company_id', companyId);
-
-    if (scanLogsErr) {
-      console.warn('Could not fetch scan breakdown:', scanLogsErr.message);
-    }
-
-    const validProductScans = (scanLogs || []).filter(log => {
-      const expiryStatus = log.metadata?.expiry_status;
-      return expiryStatus === 'VALID' || (!expiryStatus && log.status === 'SUCCESS');
-    }).length;
-
-    const expiredProductScans = (scanLogs || []).filter(log => {
-      const expiryStatus = log.metadata?.expiry_status;
-      return expiryStatus === 'EXPIRED' || (log.metadata?.error_reason === 'PRODUCT_EXPIRED');
-    }).length;
-
-    const duplicateScans = (scanLogs || []).filter(log => {
-      return log.metadata?.status === 'DUPLICATE';
-    }).length;
-
-    const errorScans = (scanLogs || []).filter(log => {
-      return log.status === 'ERROR' || log.status === 'FAILED';
-    }).length;
-
-    // Active handsets
-    const { count: activeHandsets, error: handsetsErr } = await supabase
-      .from('handsets')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId)
-      .eq('status', 'ACTIVE');
-
-    if (handsetsErr) {
-      return NextResponse.json({ error: handsetsErr.message }, { status: 500 });
-    }
-
-    // Active seats
-    const { count: activeSeats, error: seatsErr } = await supabase
-      .from('seats')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId)
-      .eq('active', true);
-
-    if (seatsErr) {
-      return NextResponse.json({ error: seatsErr.message }, { status: 500 });
-    }
-
-    // Recent activity from audit_logs (last 10 entries) - FIX: removed details column that doesn't exist
-    const { data: recentActivity, error: activityErr } = await supabase
-      .from('audit_logs')
-      .select('id, action, status, metadata, created_at')
-      .eq('company_id', companyId)
-      .order('created_at', { ascending: false })
-      .limit(10);
-
-    if (activityErr) {
-      console.warn('Could not fetch recent activity:', activityErr.message);
-    }
-
-    return NextResponse.json({
+    const responseBody: Record<string, unknown> = {
       company_id: companyId,
       company_name: (company?.company_name as string) ?? null,
-      total_skus: totalSkus ?? 0,
-      units_generated: unitsGenerated,
-      sscc_generated: ssccGenerated ?? 0,
-      total_scans: totalScans ?? 0,
-      active_handsets: activeHandsets ?? 0,
-      active_seats: activeSeats ?? 0,
-      scan_breakdown: {
-        valid_product_scans: validProductScans,
-        expired_product_scans: expiredProductScans,
-        duplicate_scans: duplicateScans,
-        error_scans: errorScans,
-      },
+      total_skus: skusResult.count ?? 0,
+      units_generated: unitsResult.count ?? 0,
+      sscc_generated: palletsResult.count ?? 0,
+      total_scans: scansResult.count ?? 0,
+      active_handsets: handsetsResult.count ?? 0,
+      active_seats: seatsResult.count ?? 0,
       label_generation: {
         unit: entitlement ? toNumber(entitlement.usage.unit) : 0,
         box: entitlement ? toNumber(entitlement.usage.box) : 0,
         carton: entitlement ? toNumber(entitlement.usage.carton) : 0,
         pallet: entitlement ? toNumber(entitlement.usage.pallet) : 0,
       },
-      recent_activity: recentActivity ?? [],
-    });
+    };
+
+    if (scope === 'full') {
+      const scanLogs = (scanLogsResult.data as any[]) || [];
+      const validProductScans = scanLogs.filter((log) => {
+        const expiryStatus = log.metadata?.expiry_status;
+        return expiryStatus === 'VALID' || (!expiryStatus && log.status === 'SUCCESS');
+      }).length;
+
+      const expiredProductScans = scanLogs.filter((log) => {
+        const expiryStatus = log.metadata?.expiry_status;
+        return expiryStatus === 'EXPIRED' || log.metadata?.error_reason === 'PRODUCT_EXPIRED';
+      }).length;
+
+      const duplicateScans = scanLogs.filter((log) => log.metadata?.status === 'DUPLICATE').length;
+      const errorScans = scanLogs.filter((log) => log.status === 'ERROR' || log.status === 'FAILED').length;
+
+      responseBody.scan_breakdown = {
+        valid_product_scans: validProductScans,
+        expired_product_scans: expiredProductScans,
+        duplicate_scans: duplicateScans,
+        error_scans: errorScans,
+      };
+      responseBody.recent_activity = recentActivity;
+    }
+
+    return NextResponse.json(responseBody);
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || String(err) }, { status: 500 });
   }

@@ -1,21 +1,79 @@
 "use client";
 
-import { useState, useEffect, FormEvent } from "react";
+import dynamic from "next/dynamic";
+import { useEffect, useMemo, useState, FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSubscriptionSummary } from "@/lib/hooks/useSubscriptionSummary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import TaxSettingsPanel from "@/components/settings/TaxSettingsPanel";
-import { supabaseClient } from "@/lib/supabase/client";
+
+const TaxSettingsPanel = dynamic(() => import("@/components/settings/TaxSettingsPanel"), {
+  ssr: false,
+  loading: () => <div className="h-56 animate-pulse rounded-2xl border border-gray-200 bg-white" />,
+});
+
+type CompanyProfile = {
+  id: string;
+  company_name?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  pan?: string | null;
+  gst_number?: string | null;
+};
+
+function SkeletonRow() {
+  return <div className="h-4 w-full animate-pulse rounded bg-gray-100" />;
+}
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { data: entitlementSummary, loading: summaryLoading, error: summaryError, refresh: refreshSummary } = useSubscriptionSummary();
+  const {
+    data: entitlementSummary,
+    loading: summaryLoading,
+    error: summaryError,
+    refresh: refreshSummary,
+  } = useSubscriptionSummary({
+    view: "settings",
+  });
   const [trialActivating, setTrialActivating] = useState(false);
   const [trialActivateError, setTrialActivateError] = useState<string | null>(null);
   const [trialCancelling, setTrialCancelling] = useState(false);
   const [trialCancelError, setTrialCancelError] = useState<string | null>(null);
+  const [companyId, setCompanyId] = useState<string | null>(null);
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
+  const [profileError, setProfileError] = useState("");
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    company_name: "",
+    phone: "",
+    address: "",
+    pan: "",
+    gst_number: "",
+  });
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileMessage, setProfileMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  useEffect(() => {
+    const profile = entitlementSummary?.company_profile;
+    if (!profile?.id) {
+      if (!summaryLoading && !summaryError) {
+        setProfileError("No company profile found for this account.");
+      }
+      return;
+    }
+
+    setProfileError("");
+    setCompanyId(profile.id);
+    setCompanyProfile(profile);
+    setProfileForm({
+      company_name: profile.company_name ?? "",
+      phone: profile.phone ?? "",
+      address: profile.address ?? "",
+      pan: profile.pan ?? "",
+      gst_number: profile.gst_number ?? "",
+    });
+  }, [entitlementSummary, summaryError, summaryLoading]);
 
   async function loadRazorpayScript(): Promise<void> {
     if (typeof window === "undefined") return;
@@ -65,15 +123,14 @@ export default function SettingsPage() {
           amount: payload?.razorpay?.amount_paise,
           currency: payload?.razorpay?.currency || "INR",
           name: "RxTrace",
-          description: "Trial activation (₹1)",
+          description: "Trial activation (\u20b91)",
           handler: () => resolve(),
           modal: { ondismiss: () => resolve() },
         });
         rzp.open();
       });
 
-      // Webhook activates the trial. Refresh the page state after user returns.
-      await refreshSummary();
+      await refreshSummary({ force: true });
       router.refresh();
     } catch (err: any) {
       setTrialActivateError(err?.message || "TRIAL_ACTIVATION_FAILED");
@@ -95,7 +152,7 @@ export default function SettingsPage() {
         throw new Error(payload?.error || "TRIAL_CANCEL_FAILED");
       }
 
-      await refreshSummary();
+      await refreshSummary({ force: true });
       router.refresh();
     } catch (err: any) {
       setTrialCancelError(err?.message || "TRIAL_CANCEL_FAILED");
@@ -103,72 +160,6 @@ export default function SettingsPage() {
       setTrialCancelling(false);
     }
   }
-
-  const [companyId, setCompanyId] = useState<string | null>(null);
-  const [companyProfile, setCompanyProfile] = useState<{
-    id: string;
-    company_name?: string | null;
-    phone?: string | null;
-    address?: string | null;
-    pan?: string | null;
-    gst_number?: string | null;
-  } | null>(null);
-  const [profileLoading, setProfileLoading] = useState(true);
-  const [profileError, setProfileError] = useState("");
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [profileForm, setProfileForm] = useState({
-    company_name: "",
-    phone: "",
-    address: "",
-    pan: "",
-    gst_number: "",
-  });
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [profileMessage, setProfileMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-
-  useEffect(() => {
-    async function loadCompany() {
-      setProfileLoading(true);
-      setProfileError("");
-      try {
-        const supabase = supabaseClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-
-        if (!user) {
-          setProfileError("Unable to resolve company without authentication.");
-          return;
-        }
-
-        const { data } = await supabase
-          .from("companies")
-          .select("id, company_name, phone, address, pan, gst_number")
-          .eq("user_id", user.id)
-          .maybeSingle();
-
-        if (data?.id) {
-          setCompanyId(data.id);
-          setCompanyProfile(data);
-          setProfileForm({
-            company_name: data.company_name ?? "",
-            phone: data.phone ?? "",
-            address: data.address ?? "",
-            pan: data.pan ?? "",
-            gst_number: data.gst_number ?? "",
-          });
-        } else {
-          setProfileError("No company profile found for this account.");
-        }
-      } catch (err: any) {
-        setProfileError(err?.message || "Failed to load company profile.");
-      } finally {
-        setProfileLoading(false);
-      }
-    }
-
-    loadCompany();
-  }, []);
 
   async function handleProfileSave(e: FormEvent) {
     e.preventDefault();
@@ -222,6 +213,7 @@ export default function SettingsPage() {
       });
       setIsEditingProfile(false);
       setTimeout(() => setProfileMessage(null), 4000);
+      refreshSummary({ force: true }).catch(() => undefined);
     } catch (err: any) {
       setProfileMessage({
         type: "error",
@@ -239,29 +231,31 @@ export default function SettingsPage() {
   const trialActive = Boolean(entitlementSummary?.entitlement?.trial_active) && !hasActiveSubscription;
   const generationEnabled = !subscriptionCancelled && (hasActiveSubscription || trialActive);
 
-  const accessMessage = subscriptionCancelled
-    ? "Subscription cancelled. Renew or subscribe to continue."
-    : hasActiveSubscription
-    ? `Active plan: ${entitlementSummary?.subscription?.plan_name || "Subscription"}`
-    : trialActive
-      ? "Trial active (limits apply)"
-      : "Trial expired. Upgrade to continue";
+  const accessMessage = useMemo(
+    () =>
+      subscriptionCancelled
+        ? "Subscription cancelled. Renew or subscribe to continue."
+        : hasActiveSubscription
+          ? `Active plan: ${entitlementSummary?.subscription?.plan_name || "Subscription"}`
+          : trialActive
+            ? "Trial active (limits apply)"
+            : "Trial expired. Upgrade to continue",
+    [entitlementSummary?.subscription?.plan_name, hasActiveSubscription, subscriptionCancelled, trialActive]
+  );
 
-  if (summaryLoading) {
-    return (
-      <div className="p-6 text-gray-500">
-        Loading entitlement details...
-      </div>
-    );
-  }
+  const profileLoading = summaryLoading && !companyProfile;
 
   return (
     <div className="max-w-5xl mx-auto px-8 py-10 space-y-8">
-      {/* Profile Panel */}
+      <div>
+        <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
+        <p className="text-gray-500 mt-2">Pilot configuration and system setup.</p>
+      </div>
+
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-medium">Profile & Company</h2>
-          {!isEditingProfile && (
+          {!isEditingProfile && !profileLoading && (
             <button
               type="button"
               className="text-sm text-blue-600 hover:underline"
@@ -276,7 +270,11 @@ export default function SettingsPage() {
         </div>
 
         {profileLoading ? (
-          <p className="text-sm text-gray-500">Loading company profile…</p>
+          <div className="space-y-2">
+            <SkeletonRow />
+            <SkeletonRow />
+            <SkeletonRow />
+          </div>
         ) : profileError ? (
           <p className="text-sm text-red-500">{profileError}</p>
         ) : isEditingProfile ? (
@@ -416,17 +414,6 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Settings
-        </h1>
-        <p className="text-gray-500 mt-2">
-          Pilot configuration and system setup.
-        </p>
-      </div>
-
-      {/* Trial Section */}
       <div
         className={`rounded-2xl border p-4 text-sm ${
           generationEnabled
@@ -434,15 +421,30 @@ export default function SettingsPage() {
             : "border-amber-200 bg-amber-50 text-amber-800"
         }`}
       >
-        <p className="font-medium">Generation Eligibility</p>
-        <p className="mt-1">{accessMessage}</p>
+        {summaryLoading && !entitlementSummary ? (
+          <div className="space-y-2">
+            <SkeletonRow />
+            <SkeletonRow />
+          </div>
+        ) : (
+          <>
+            <p className="font-medium">Generation Eligibility</p>
+            <p className="mt-1">{accessMessage}</p>
+          </>
+        )}
       </div>
 
       {!!summaryError && <p className="text-sm text-red-600">{summaryError}</p>}
       {trialActivateError && <p className="text-sm text-red-600">{trialActivateError}</p>}
       {trialCancelError && <p className="text-sm text-red-600">{trialCancelError}</p>}
 
-      {hasActiveSubscription && entitlementSummary ? (
+      {summaryLoading && !entitlementSummary ? (
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-3">
+          <SkeletonRow />
+          <SkeletonRow />
+          <SkeletonRow />
+        </div>
+      ) : hasActiveSubscription && entitlementSummary ? (
         <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div>
@@ -586,11 +588,9 @@ export default function SettingsPage() {
           )}
         </div>
       )}
-      {/* ERP Ingestion */}
+
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
-        <h2 className="text-xl font-medium">
-          ERP Code Ingestion
-        </h2>
+        <h2 className="text-xl font-medium">ERP Code Ingestion</h2>
         <p className="text-sm text-gray-600">
           Import ERP-generated serialization data via CSV upload.
         </p>
@@ -599,12 +599,11 @@ export default function SettingsPage() {
           href="/dashboard/settings/erp-integration"
           className="inline-flex px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
         >
-          Go to ERP Ingestion →
+          Go to ERP Ingestion
         </Link>
       </div>
 
-      {/* Tax Settings */}
-      {companyId && (
+      {companyId ? (
         <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
           <TaxSettingsPanel
             companyId={companyId}
@@ -625,8 +624,9 @@ export default function SettingsPage() {
             }}
           />
         </div>
+      ) : (
+        <div className="h-56 animate-pulse rounded-2xl border border-gray-200 bg-white" />
       )}
-
     </div>
   );
 }
