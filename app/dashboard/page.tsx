@@ -399,7 +399,7 @@ export default function DashboardPage() {
           <button
             type="button"
             disabled={!assemblyAllowed || summaryLoading}
-            onClick={() => router.push('/dashboard/generate')}
+            onClick={() => router.push('/dashboard/code-generation')}
             className={`rounded-lg px-8 py-4 text-lg font-medium text-white transition ${
               (!assemblyAllowed && !summaryLoading) || summaryLoading
                 ? 'cursor-not-allowed bg-orange-300'

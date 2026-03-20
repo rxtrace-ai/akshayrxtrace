@@ -118,7 +118,7 @@ export default function History() {
           <h1 className="text-4xl font-bold text-[#0052CC] mb-2">Scan Activity</h1>
           <p className="text-gray-600">View all verification scans</p>
         </div>
-        <Link href="/dashboard/generate">
+        <Link href="/dashboard/code-generation">
           <Button className="bg-orange-500 hover:bg-orange-600">Generate New Labels</Button>
         </Link>
       </div>
@@ -245,4 +245,3 @@ export default function History() {
     </div>
   );
 }
-
