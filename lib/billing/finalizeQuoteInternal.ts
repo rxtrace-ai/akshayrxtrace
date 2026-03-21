@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ensureInvoicePdfForInvoice } from "@/lib/billing/invoiceLifecycle";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { getAppUrl } from "@/lib/config";
+import { sendTransactionalEmail } from "@/lib/transactionalEmail";
 
 type JsonRecord = Record<string, any>;
 
@@ -379,6 +382,55 @@ export async function finalizeQuoteInternal(params: FinalizeQuoteParams): Promis
         quote_id: normalizedQuoteId,
         invoice_id: invoiceId,
         error: pdfResult.error || "UNKNOWN",
+      });
+    }
+
+    try {
+      const { data: company } = await supabase
+        .from("companies")
+        .select("user_id")
+        .eq("id", companyId)
+        .maybeSingle();
+
+      const ownerUserId = String((company as any)?.user_id || "").trim();
+      if (ownerUserId) {
+        const admin = getSupabaseAdmin();
+        const ownerResult = await admin.auth.admin.getUserById(ownerUserId);
+        const ownerEmail = String(ownerResult?.data?.user?.email || "").trim();
+        const ownerName =
+          String((ownerResult?.data?.user?.user_metadata as any)?.full_name || "").trim() || "there";
+
+        if (ownerEmail) {
+          const invoiceLink = `${getAppUrl()}/api/billing/invoice/${invoiceId}/pdf`;
+          const rawPdf = String(pdfResult.invoice_pdf_url || "");
+          const prefix = "data:application/pdf;base64,";
+          const attachments =
+            rawPdf.startsWith(prefix)
+              ? [
+                  {
+                    filename: `${invoiceReference.replace(/[^a-zA-Z0-9_.-]/g, "_")}.pdf`,
+                    contentBase64: rawPdf.slice(prefix.length),
+                    contentType: "application/pdf",
+                  },
+                ]
+              : [];
+
+          await sendTransactionalEmail({
+            to: ownerEmail,
+            event: "SUBSCRIPTION_PURCHASED",
+            payload: {
+              user_name: ownerName,
+              invoice_link: invoiceLink,
+            },
+            attachments,
+          });
+        }
+      }
+    } catch (emailError: any) {
+      console.error("SUBSCRIPTION_PURCHASE_EMAIL_FAILED", {
+        quote_id: normalizedQuoteId,
+        invoice_id: invoiceId,
+        error: String(emailError?.message || "UNKNOWN"),
       });
     }
   }

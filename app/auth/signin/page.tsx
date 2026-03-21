@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
-import { getAppUrl } from '@/lib/config';
 
 export default function SignIn() {
   const [email, setEmail] = useState('');
@@ -102,17 +101,14 @@ export default function SignIn() {
     setError('');
 
     try {
-      // Use production URL from config
-      const appUrl = getAppUrl();
-      const redirectUrl = `${appUrl}/auth/reset-password`;
-
-      const { data, error: resetError } = await supabaseClient().auth.resetPasswordForEmail(email, {
-        redirectTo: redirectUrl,
+      const response = await fetch('/api/auth/password-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
       });
-
-      if (resetError) {
-        console.error('Password reset error:', resetError);
-        setError('Failed to send reset email: ' + resetError.message);
+      const payload = await response.json().catch(() => ({} as any));
+      if (!response.ok) {
+        setError('Failed to send reset email: ' + String(payload?.error || 'Unknown error'));
         setLoading(false);
         return;
       }
