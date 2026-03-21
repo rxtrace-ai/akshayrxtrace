@@ -37,6 +37,10 @@ export default function ResetPassword() {
         const code = url.searchParams.get('code');
         const tokenHash = url.searchParams.get('token_hash');
         const type = url.searchParams.get('type');
+        const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+        const hashAccessToken = hashParams.get('access_token');
+        const hashRefreshToken = hashParams.get('refresh_token');
+        const hashType = hashParams.get('type');
 
         if (code) {
           const { error: codeError } = await client.auth.exchangeCodeForSession(code);
@@ -58,6 +62,19 @@ export default function ResetPassword() {
             }
           } else if (mounted) {
             setSessionReady(true);
+          }
+        } else if (hashAccessToken && hashRefreshToken && hashType === 'recovery') {
+          const { error: sessionError } = await client.auth.setSession({
+            access_token: hashAccessToken,
+            refresh_token: hashRefreshToken,
+          });
+          if (sessionError) {
+            if (mounted) {
+              setError('Reset link is invalid or expired. Please request a new one.');
+            }
+          } else if (mounted) {
+            setSessionReady(true);
+            window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
           }
         } else if (mounted) {
           setError('Reset link is invalid or missing. Please request a new one.');
