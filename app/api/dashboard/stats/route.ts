@@ -1,39 +1,187 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { supabaseServer } from '@/lib/supabase/server';
-import { getSupabaseAdmin } from '@/lib/supabase/admin';
-import { resolveCompanyForUser } from '@/lib/company/resolve';
-import { getCompanyEntitlementSnapshot } from '@/lib/entitlement/canonical';
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseServer } from "@/lib/supabase/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { resolveCompanyForUser } from "@/lib/company/resolve";
+import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-
-type Scope = 'full' | 'core' | 'activity';
-
-function parseScope(value: string | null): Scope {
-  if (value === 'core' || value === 'activity') return value;
-  return 'full';
-}
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function toNumber(value: unknown): number {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'bigint') return Number(value);
-  const n = Number(value);
+  const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
 }
 
-async function getRecentActivity(supabase: ReturnType<typeof getSupabaseAdmin>, companyId: string) {
-  const { data: recentActivity, error: activityErr } = await supabase
-    .from('audit_logs')
-    .select('id, action, status, metadata, created_at')
-    .eq('company_id', companyId)
-    .order('created_at', { ascending: false })
-    .limit(10);
+function getStatusView(params: {
+  subscription: any | null;
+  entitlement: Awaited<ReturnType<typeof getCompanyEntitlementSnapshot>>;
+  now: Date;
+}) {
+  const { subscription, entitlement, now } = params;
+  const raw = String(subscription?.status || "").trim().toLowerCase();
+  const periodEnd = subscription?.current_period_end ? new Date(subscription.current_period_end) : null;
+  const inAccessPeriod = Boolean(periodEnd && !Number.isNaN(periodEnd.getTime()) && periodEnd.getTime() > now.getTime());
 
-  if (activityErr) {
-    console.warn('Could not fetch recent activity:', activityErr.message);
-    return [];
+  const activeSet = new Set(["active", "authenticated", "activated", "charged"]);
+  const paymentDueSet = new Set(["past_due", "payment_due", "unpaid"]);
+  const cancelledSet = new Set(["cancelled", "canceled"]);
+
+  if (activeSet.has(raw)) {
+    return { label: "Active Subscription", code: "active_subscription" as const };
   }
-  return recentActivity ?? [];
+  if (paymentDueSet.has(raw)) {
+    return { label: "Payment Due", code: "payment_due" as const };
+  }
+  if (cancelledSet.has(raw) && inAccessPeriod) {
+    return { label: "Active Until End Date", code: "active_until_end_date" as const };
+  }
+  if (entitlement.trial_active) {
+    return { label: "Trial Active", code: "trial_active" as const };
+  }
+  if (entitlement.trial_expires_at) {
+    return { label: "Trial Expired", code: "trial_expired" as const };
+  }
+  return { label: "No Active Plan", code: "no_active_plan" as const };
+}
+
+async function getRecentActivity(supabase: ReturnType<typeof getSupabaseAdmin>, companyId: string) {
+  const { data, error } = await supabase
+    .from("audit_logs")
+    .select("id, action, status, metadata, created_at")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  if (error) return [];
+  return data ?? [];
+}
+
+async function getOverviewStats(params: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  companyId: string;
+  companyName: string | null;
+  includeActivity: boolean;
+  debug: boolean;
+}) {
+  const { supabase, companyId, companyName, includeActivity, debug } = params;
+  const now = new Date();
+
+  const [
+    entitlement,
+    subscriptionResult,
+    skusResult,
+    scansResult,
+    seatsResult,
+    handsetsResult,
+    unitsResult,
+    boxesResult,
+    cartonsResult,
+    palletsResult,
+    recentActivity,
+  ] = await Promise.all([
+    getCompanyEntitlementSnapshot(supabase, companyId),
+    supabase
+      .from("company_subscriptions")
+      .select(
+        "id, status, current_period_start, current_period_end, next_billing_at, start_date, renewal_date, cancel_at_period_end, billing_cycle, subscription_plan_templates(name)"
+      )
+      .eq("company_id", companyId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase.from("skus").select("id", { count: "exact", head: true }).eq("company_id", companyId).is("deleted_at", null),
+    supabase.from("scan_logs").select("id", { count: "exact", head: true }).eq("company_id", companyId),
+    supabase.from("seats").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("active", true),
+    supabase
+      .from("handsets")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .eq("status", "ACTIVE")
+      .is("disabled_at", null),
+    supabase.from("labels_units").select("id", { count: "exact", head: true }).eq("company_id", companyId),
+    supabase.from("boxes").select("id", { count: "exact", head: true }).eq("company_id", companyId),
+    supabase.from("cartons").select("id", { count: "exact", head: true }).eq("company_id", companyId),
+    supabase.from("pallets").select("id", { count: "exact", head: true }).eq("company_id", companyId),
+    includeActivity ? getRecentActivity(supabase, companyId) : Promise.resolve([]),
+  ]);
+
+  if (subscriptionResult.error) throw new Error(subscriptionResult.error.message);
+  if (skusResult.error) throw new Error(skusResult.error.message);
+  if (scansResult.error) throw new Error(scansResult.error.message);
+  if (seatsResult.error) throw new Error(seatsResult.error.message);
+  if (handsetsResult.error) throw new Error(handsetsResult.error.message);
+  if (unitsResult.error) throw new Error(unitsResult.error.message);
+  if (boxesResult.error) throw new Error(boxesResult.error.message);
+  if (cartonsResult.error) throw new Error(cartonsResult.error.message);
+  if (palletsResult.error) throw new Error(palletsResult.error.message);
+
+  const subscription = subscriptionResult.data || null;
+  const statusView = getStatusView({ subscription, entitlement, now });
+
+  const units = toNumber(unitsResult.count);
+  const boxes = toNumber(boxesResult.count);
+  const cartons = toNumber(cartonsResult.count);
+  const pallets = toNumber(palletsResult.count);
+  const totalLabelsGenerated = units + boxes + cartons + pallets;
+  const totalSsccGenerated = pallets;
+
+  const result = {
+    company_id: companyId,
+    company_name: companyName,
+    subscription: {
+      plan_name: String((subscription as any)?.subscription_plan_templates?.name || "No active plan"),
+      status: statusView.label,
+      status_code: statusView.code,
+      is_trial: Boolean(entitlement.trial_active),
+      trial_ends_at: entitlement.trial_expires_at,
+      subscription_starts_at: (subscription as any)?.start_date || (subscription as any)?.current_period_start || null,
+      subscription_ends_at: (subscription as any)?.current_period_end || null,
+      renewal_at: (subscription as any)?.renewal_date || (subscription as any)?.next_billing_at || null,
+    },
+    entitlement: {
+      seat_usage: toNumber(entitlement.usage.seat),
+      seat_limit: toNumber(entitlement.limits.seat),
+      generation_usage_total:
+        toNumber(entitlement.usage.unit) +
+        toNumber(entitlement.usage.box) +
+        toNumber(entitlement.usage.carton) +
+        toNumber(entitlement.usage.pallet),
+      generation_remaining_total:
+        toNumber(entitlement.remaining.unit) +
+        toNumber(entitlement.remaining.box) +
+        toNumber(entitlement.remaining.carton) +
+        toNumber(entitlement.remaining.pallet),
+      remaining: entitlement.remaining,
+      limits: entitlement.limits,
+      state: entitlement.state,
+    },
+    kpis: {
+      total_skus: toNumber(skusResult.count),
+      total_handsets: toNumber(handsetsResult.count),
+      total_scans: toNumber(scansResult.count),
+      total_seats: toNumber(seatsResult.count),
+      total_labels_generated: totalLabelsGenerated,
+      total_sscc_generated: totalSsccGenerated,
+    },
+    generation_breakdown: {
+      units,
+      boxes,
+      cartons,
+      pallets,
+    },
+    recent_activity: recentActivity,
+  };
+
+  if (debug) {
+    console.info("DASHBOARD_OVERVIEW_DEBUG", {
+      company_id: companyId,
+      subscription_status: result.subscription.status,
+      entitlement_state: entitlement.state,
+      kpis: result.kpis,
+      generation_breakdown: result.generation_breakdown,
+    });
+  }
+
+  return result;
 }
 
 export async function GET(request: NextRequest) {
@@ -44,130 +192,31 @@ export async function GET(request: NextRequest) {
     } = await (await supabaseServer()).auth.getUser();
 
     if (!user || authError) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
 
-    const scope = parseScope(request.nextUrl.searchParams.get('scope'));
     const supabase = getSupabaseAdmin();
-    const resolved = await resolveCompanyForUser(supabase, user.id, 'id, company_name');
+    const resolved = await resolveCompanyForUser(supabase, user.id, "id, company_name");
     if (!resolved) {
-      return NextResponse.json({ error: 'Company not found' }, { status: 404 });
+      return NextResponse.json({ error: "Company not found" }, { status: 404 });
     }
 
-    const companyId = resolved.companyId;
-    const company = resolved.company;
+    const includeActivity = request.nextUrl.searchParams.get("scope") !== "core";
+    const debug =
+      request.nextUrl.searchParams.get("debug") === "1" ||
+      String(process.env.DASHBOARD_OVERVIEW_DEBUG || "").toLowerCase() === "true";
 
-    if (scope === 'activity') {
-      const recentActivity = await getRecentActivity(supabase, companyId);
-      return NextResponse.json({
-        company_id: companyId,
-        company_name: (company?.company_name as string) ?? null,
-        recent_activity: recentActivity,
-      });
-    }
+    const stats = await getOverviewStats({
+      supabase,
+      companyId: resolved.companyId,
+      companyName: (resolved.company?.company_name as string) ?? null,
+      includeActivity,
+      debug,
+    });
 
-    const [
-      entitlement,
-      skusResult,
-      unitsResult,
-      palletsResult,
-      scansResult,
-      handsetsResult,
-      seatsResult,
-      recentActivity,
-      scanLogsResult,
-    ] = await Promise.all([
-      getCompanyEntitlementSnapshot(supabase, companyId).catch((err) => {
-        console.error('Failed to load entitlement snapshot:', err);
-        return null;
-      }),
-      supabase
-        .from('skus')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', companyId)
-        .is('deleted_at', null),
-      supabase
-        .from('labels_units')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', companyId),
-      supabase
-        .from('pallets')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', companyId),
-      supabase
-        .from('scan_logs')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', companyId),
-      supabase
-        .from('handsets')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', companyId)
-        .eq('status', 'ACTIVE'),
-      supabase
-        .from('seats')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', companyId)
-        .eq('active', true),
-      scope === 'full' ? getRecentActivity(supabase, companyId) : Promise.resolve([]),
-      scope === 'full'
-        ? supabase
-            .from('scan_logs')
-            .select('metadata, status')
-            .eq('company_id', companyId)
-        : Promise.resolve({ data: [], error: null } as any),
-    ]);
-
-    if (skusResult.error) return NextResponse.json({ error: skusResult.error.message }, { status: 500 });
-    if (unitsResult.error) return NextResponse.json({ error: unitsResult.error.message }, { status: 500 });
-    if (palletsResult.error) return NextResponse.json({ error: palletsResult.error.message }, { status: 500 });
-    if (scansResult.error) return NextResponse.json({ error: scansResult.error.message }, { status: 500 });
-    if (handsetsResult.error) return NextResponse.json({ error: handsetsResult.error.message }, { status: 500 });
-    if (seatsResult.error) return NextResponse.json({ error: seatsResult.error.message }, { status: 500 });
-    if (scanLogsResult.error) return NextResponse.json({ error: scanLogsResult.error.message }, { status: 500 });
-
-    const responseBody: Record<string, unknown> = {
-      company_id: companyId,
-      company_name: (company?.company_name as string) ?? null,
-      total_skus: skusResult.count ?? 0,
-      units_generated: unitsResult.count ?? 0,
-      sscc_generated: palletsResult.count ?? 0,
-      total_scans: scansResult.count ?? 0,
-      active_handsets: handsetsResult.count ?? 0,
-      active_seats: seatsResult.count ?? 0,
-      label_generation: {
-        unit: entitlement ? toNumber(entitlement.usage.unit) : 0,
-        box: entitlement ? toNumber(entitlement.usage.box) : 0,
-        carton: entitlement ? toNumber(entitlement.usage.carton) : 0,
-        pallet: entitlement ? toNumber(entitlement.usage.pallet) : 0,
-      },
-    };
-
-    if (scope === 'full') {
-      const scanLogs = (scanLogsResult.data as any[]) || [];
-      const validProductScans = scanLogs.filter((log) => {
-        const expiryStatus = log.metadata?.expiry_status;
-        return expiryStatus === 'VALID' || (!expiryStatus && log.status === 'SUCCESS');
-      }).length;
-
-      const expiredProductScans = scanLogs.filter((log) => {
-        const expiryStatus = log.metadata?.expiry_status;
-        return expiryStatus === 'EXPIRED' || log.metadata?.error_reason === 'PRODUCT_EXPIRED';
-      }).length;
-
-      const duplicateScans = scanLogs.filter((log) => log.metadata?.status === 'DUPLICATE').length;
-      const errorScans = scanLogs.filter((log) => log.status === 'ERROR' || log.status === 'FAILED').length;
-
-      responseBody.scan_breakdown = {
-        valid_product_scans: validProductScans,
-        expired_product_scans: expiredProductScans,
-        duplicate_scans: duplicateScans,
-        error_scans: errorScans,
-      };
-      responseBody.recent_activity = recentActivity;
-    }
-
-    return NextResponse.json(responseBody);
+    return NextResponse.json(stats);
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || String(err) }, { status: 500 });
   }
 }
+
