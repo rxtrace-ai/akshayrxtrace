@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabaseClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,13 +12,81 @@ export default function ResetPassword() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
+  const [sessionReady, setSessionReady] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const router = useRouter();
 
+  useEffect(() => {
+    let mounted = true;
+
+    const initializeRecoverySession = async () => {
+      try {
+        const client = supabaseClient();
+        const { data: sessionData } = await client.auth.getSession();
+        if (sessionData.session) {
+          if (mounted) {
+            setSessionReady(true);
+            setInitializing(false);
+          }
+          return;
+        }
+
+        const url = new URL(window.location.href);
+        const code = url.searchParams.get('code');
+        const tokenHash = url.searchParams.get('token_hash');
+        const type = url.searchParams.get('type');
+
+        if (code) {
+          const { error: codeError } = await client.auth.exchangeCodeForSession(code);
+          if (codeError) {
+            if (mounted) {
+              setError('Reset link is invalid or expired. Please request a new one.');
+            }
+          } else if (mounted) {
+            setSessionReady(true);
+          }
+        } else if (tokenHash && type === 'recovery') {
+          const { error: otpError } = await client.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: 'recovery',
+          });
+          if (otpError) {
+            if (mounted) {
+              setError('Reset link is invalid or expired. Please request a new one.');
+            }
+          } else if (mounted) {
+            setSessionReady(true);
+          }
+        } else if (mounted) {
+          setError('Reset link is invalid or missing. Please request a new one.');
+        }
+      } catch {
+        if (mounted) {
+          setError('Failed to validate reset session. Please request a new link.');
+        }
+      } finally {
+        if (mounted) {
+          setInitializing(false);
+        }
+      }
+    };
+
+    initializeRecoverySession();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    if (!sessionReady) {
+      setError('Auth session missing. Please open the latest reset link from your email.');
+      return;
+    }
 
     if (password !== confirmPassword) {
       setError('Passwords do not match');
@@ -79,6 +147,7 @@ export default function ResetPassword() {
     <Card className="p-8 shadow-2xl">
       <h1 className="text-3xl font-bold text-center mb-2 text-[#0052CC]">Reset Password</h1>
       <p className="text-center text-gray-600 mb-8">Enter your new password</p>
+      {initializing ? <p className="text-center text-sm text-gray-500 mb-4">Validating reset link...</p> : null}
       
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
@@ -95,7 +164,7 @@ export default function ResetPassword() {
             onChange={(e) => setPassword(e.target.value)} 
             required 
             minLength={8}
-            disabled={loading}
+            disabled={loading || initializing || !sessionReady}
           />
         </div>
         
@@ -107,14 +176,14 @@ export default function ResetPassword() {
             onChange={(e) => setConfirmPassword(e.target.value)} 
             required 
             minLength={8}
-            disabled={loading}
+            disabled={loading || initializing || !sessionReady}
           />
         </div>
         
         <Button 
           type="submit"
           className="w-full bg-orange-500 hover:bg-orange-600" 
-          disabled={loading}
+          disabled={loading || initializing || !sessionReady}
         >
           {loading ? 'Resetting Password...' : 'Reset Password'}
         </Button>
