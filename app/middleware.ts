@@ -2,6 +2,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { resolveCompanyForUser } from '@/lib/company/resolve';
+import { isTrustedOrigin, shouldEnforceCsrfForApi } from '@/lib/security/csrf';
 
 const COMPANY_SETUP_ROUTE = '/onboarding/company-setup';
 
@@ -34,6 +35,9 @@ export async function middleware(request: NextRequest) {
   );
 
   const pathname = request.nextUrl.pathname;
+  const isMachineAuthApiRoute =
+    pathname.startsWith('/api/internal/') ||
+    pathname === '/api/razorpay/webhook';
 
   // Exempt only explicitly public routes from auth checks.
   const publicPrefixes = [
@@ -64,6 +68,15 @@ export async function middleware(request: NextRequest) {
   
   // PHASE-1: Protect API routes (except public ones)
   if (pathname.startsWith('/api/')) {
+    if (isMachineAuthApiRoute) {
+      // Internal/webhook routes enforce their own shared-secret/signature checks.
+      return supabaseResponse;
+    }
+
+    if (shouldEnforceCsrfForApi(request, pathname) && !isTrustedOrigin(request)) {
+      return NextResponse.json({ error: 'CSRF_ORIGIN_DENIED' }, { status: 403 });
+    }
+
     const {
       data: { session },
     } = await supabase.auth.getSession();

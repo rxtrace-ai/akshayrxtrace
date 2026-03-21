@@ -1,5 +1,6 @@
 // app/api/labels/zpl/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { generateZpl } from "@/app/lib/labelGenerator";
 
 export async function POST(req: Request) {
@@ -7,7 +8,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { companyName, title, level, aiValues } = body;
     if (!aiValues || typeof aiValues !== "object")
-      return NextResponse.json({ success: false, error: "aiValues required" }, { status: 400 });
+      return apiJson({ success: false, error: "aiValues required" }, { status: 400 });
 
     const zpl = generateZpl({ companyName, title, level, aiValues });
     return new Response(zpl, {
@@ -15,6 +16,7 @@ export async function POST(req: Request) {
       headers: { "Content-Type": "text/plain" },
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message || String(err) }, { status: 500 });
+    return apiJson({ success: false, error: err.message || String(err) }, { status: 500 });
   }
 }
+

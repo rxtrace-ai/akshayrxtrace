@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { headers } from "next/headers";
 import { getOrGenerateCorrelationId, logWithContext } from "@/lib/observability";
 import { syncRazorpayPlansToTemplates } from "@/lib/billing/razorpaySync";
@@ -7,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function withCorrelation(payload: Record<string, unknown>, status: number, correlationId: string) {
-  const response = NextResponse.json(payload, { status });
+  const response = apiJson(payload, { status });
   response.headers.set("X-Correlation-Id", correlationId);
   return response;
 }
@@ -68,3 +69,4 @@ export async function POST() {
     );
   }
 }
+

@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
 import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
@@ -37,12 +38,12 @@ export async function GET() {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiJson({ error: "Unauthorized" }, { status: 401 });
     }
 
     const resolved = await resolveCompanyForUser(supabase, user.id, "id");
     if (!resolved) {
-      return NextResponse.json({ error: "Company not found" }, { status: 404 });
+      return apiJson({ error: "Company not found" }, { status: 404 });
     }
 
     const snapshot = await getCompanyEntitlementSnapshot(
@@ -58,7 +59,7 @@ export async function GET() {
       snapshot.remaining.pallet || 0
     );
 
-    return NextResponse.json({
+    return apiJson({
       trial_active: snapshot.trial_active,
       trial_expires_at: snapshot.trial_expires_at,
       trial_status: trialStatusFromSnapshot(snapshot),
@@ -102,9 +103,10 @@ export async function GET() {
   } catch (error: any) {
     console.error("DASHBOARD SUMMARY ERROR:", error);
 
-    return NextResponse.json(
+    return apiJson(
       { error: error?.message ?? "Dashboard summary failed" },
       { status: 500 }
     );
   }
 }
+

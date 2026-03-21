@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { generateCanonicalGS1 } from "@/lib/gs1Canonical";
 import { resolveCodeMode } from "@/lib/codeMode";
@@ -8,6 +7,7 @@ import { enforceEntitlement, refundEntitlement } from "@/lib/entitlement/enforce
 import { UsageType } from "@/lib/entitlement/usageTypes";
 import { getRequestIdFromRequest } from "@/lib/http/requestId";
 import { generateUnitSerial } from "@/lib/serial/unitSerial";
+import { fail, ok } from "@/lib/api/response";
 
 // ---------- utils ----------
 const MAX_UNITS_PER_REQUEST = 10000;
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   try {
     const authCompanyId = await resolveCompanyIdFromRequest(req);
     if (!authCompanyId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return fail("UNAUTHORIZED", "Unauthorized", 401);
     }
 
     const supabase = getSupabaseAdmin();
@@ -62,29 +62,23 @@ export async function POST(req: Request) {
       : getRequestIdFromRequest(req, "unit_create");
 
     if (requestedCompanyId && requestedCompanyId !== authCompanyId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return fail("FORBIDDEN", "Forbidden", 403);
     }
 
     if (!compliance_ack) {
-      return NextResponse.json({ error: "compliance_ack=true is required" }, { status: 400 });
+      return fail("VALIDATION_ERROR", "compliance_ack=true is required", 400);
     }
 
     if (!sku_code || !batch || !mfd || !expiry || mrp === undefined || !quantity) {
-      return NextResponse.json(
-        { error: "Invalid / missing fields" },
-        { status: 400 }
-      );
+      return fail("VALIDATION_ERROR", "Invalid / missing fields", 400);
     }
 
     const qty = Number(quantity);
     if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
-      return NextResponse.json({ error: "quantity must be a positive integer" }, { status: 400 });
+      return fail("VALIDATION_ERROR", "quantity must be a positive integer", 400);
     }
     if (qty > MAX_UNITS_PER_REQUEST) {
-      return NextResponse.json(
-        { error: `quantity exceeds limit (${MAX_UNITS_PER_REQUEST})`, code: "limit_exceeded", max: MAX_UNITS_PER_REQUEST },
-        { status: 400 }
-      );
+      return fail("VALIDATION_ERROR", `quantity exceeds limit (${MAX_UNITS_PER_REQUEST})`, 400);
     }
 
     const decision = await enforceEntitlement({
@@ -96,13 +90,10 @@ export async function POST(req: Request) {
     });
     if (!decision.allow) {
       const isQuotaError = String(decision.reason_code || "").toUpperCase().includes("QUOTA_EXCEEDED");
-      return NextResponse.json(
-        {
-          error: isQuotaError ? "Quota exceeded. Please purchase add-ons." : decision.reason_code,
-          code: decision.reason_code,
-          remaining: decision.remaining,
-        },
-        { status: 403 }
+      return fail(
+        String(decision.reason_code || "QUOTA_EXCEEDED"),
+        isQuotaError ? "Quota exceeded. Please purchase add-ons." : String(decision.reason_code || "QUOTA_EXCEEDED"),
+        403
       );
     }
 
@@ -114,10 +105,7 @@ export async function POST(req: Request) {
       const { validateGTIN } = await import("@/lib/gs1/gtin");
       const validation = validateGTIN(gtinForStorage);
       if (!validation.valid || !validation.normalized) {
-        return NextResponse.json(
-          { error: validation.error || "Invalid GTIN format" },
-          { status: 400 }
-        );
+        return fail("VALIDATION_ERROR", validation.error || "Invalid GTIN format", 400);
       }
       gtinForStorage = validation.normalized;
     }
@@ -133,7 +121,7 @@ export async function POST(req: Request) {
 
     if (skuErr) throw skuErr;
     if (!sku?.id) {
-      return NextResponse.json({ error: SKU_NOT_FOUND_ERROR }, { status: 404 });
+      return fail("NOT_FOUND", SKU_NOT_FOUND_ERROR, 404);
     }
 
     const expiryYYMMDD = (() => {
@@ -248,23 +236,19 @@ export async function POST(req: Request) {
       const isUniqueViolation =
         e?.code === "23505" || String(e?.message || "").toLowerCase().includes("unique");
       if (isUniqueViolation) {
-        return NextResponse.json({ error: "Duplicate serial detected after retries. Please try again." }, { status: 409 });
+        return fail("CONFLICT", "Duplicate serial detected after retries. Please try again.", 409);
       }
       throw e;
     }
 
-    return NextResponse.json({
-      success: true,
+    return ok({
       generated: rows.length,
       items: rows.map((r) => ({ serial: r.serial, gs1: r.payload ?? r.gs1_payload, payload: r.payload ?? r.gs1_payload })),
     });
   } catch (err: any) {
     if (err?.code === 'PAST_DUE' || err?.code === 'SUBSCRIPTION_INACTIVE') {
-      return NextResponse.json({ error: err.message, code: err.code }, { status: 402 });
+      return fail(String(err.code), err.message, 402);
     }
-    return NextResponse.json(
-      { error: err?.message || "Unit generation failed" },
-      { status: 500 }
-    );
+    return fail("INTERNAL_ERROR", err?.message || "Unit generation failed", 500);
   }
 }

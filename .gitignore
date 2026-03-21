@@ -19,6 +19,8 @@ dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.log
+logs/
 
 # IDE
 .vscode/
@@ -48,6 +50,12 @@ next-env.d.ts
 * for *
 * runtime *
 backup*.sql
+*.dump
+*.bak
+*.tmp
+*.temp
+tmp/
+.cache/
 .next
 .next-build
 node_modules

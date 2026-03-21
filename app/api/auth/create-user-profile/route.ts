@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -13,7 +14,7 @@ export async function POST(req: NextRequest) {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json(
+      return apiJson(
         { error: 'Unauthorized' },
         { status: 401 }
       );
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
     const { fullName } = await req.json();
 
     if (!user.email) {
-      return NextResponse.json(
+      return apiJson(
         { error: 'Authenticated user email is required' },
         { status: 400 }
       );
@@ -46,15 +47,16 @@ export async function POST(req: NextRequest) {
       // Don't return error - signup should continue even if profile save fails
     }
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       message: 'Profile created',
     });
   } catch (error) {
     console.error('Create profile error:', error);
-    return NextResponse.json(
+    return apiJson(
       { error: 'Failed to create profile' },
       { status: 500 }
     );
   }
 }
+

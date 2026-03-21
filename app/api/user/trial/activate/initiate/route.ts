@@ -1,5 +1,6 @@
 import Razorpay from "razorpay";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { headers } from "next/headers";
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { getOrGenerateCorrelationId } from "@/lib/observability/correlation";
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const idempotencyKey = normalizeIdempotencyKey((body as any)?.idempotency_key || headerKey);
   if (!idempotencyKey) {
-    return NextResponse.json({ error: "Missing Idempotency-Key header" }, { status: 400 });
+    return apiJson({ error: "Missing Idempotency-Key header" }, { status: 400 });
   }
   if (idempotencyKey && correlationId !== idempotencyKey) {
     correlationId = idempotencyKey;
@@ -49,10 +50,10 @@ export async function POST(req: NextRequest) {
     .select("trial_start, trial_end")
     .eq("company_id", owner.companyId)
     .maybeSingle();
-  if (trialErr) return NextResponse.json({ error: trialErr.message }, { status: 500 });
+  if (trialErr) return apiJson({ error: trialErr.message }, { status: 500 });
 
   if (trialRow?.trial_start || trialRow?.trial_end) {
-    return NextResponse.json({ error: "TRIAL_ALREADY_ACTIVATED" }, { status: 409 });
+    return apiJson({ error: "TRIAL_ALREADY_ACTIVATED" }, { status: 409 });
   }
 
   // Idempotency: reuse an existing created order for this company/idempotency key if present.
@@ -66,10 +67,10 @@ export async function POST(req: NextRequest) {
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (orderErr) return NextResponse.json({ error: orderErr.message }, { status: 500 });
+  if (orderErr) return apiJson({ error: orderErr.message }, { status: 500 });
 
   if (existingOrder?.order_id) {
-    return NextResponse.json({
+    return apiJson({
       success: true,
       replay: true,
       correlation_id: correlationId,
@@ -90,7 +91,7 @@ export async function POST(req: NextRequest) {
   const keyId = process.env.RAZORPAY_KEY_ID?.trim();
   const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
   if (!keyId || !keySecret) {
-    return NextResponse.json({ error: "RAZORPAY_NOT_CONFIGURED" }, { status: 503 });
+    return apiJson({ error: "RAZORPAY_NOT_CONFIGURED" }, { status: 503 });
   }
 
   // Create Razorpay order (server-side)
@@ -116,7 +117,7 @@ export async function POST(req: NextRequest) {
       code: error?.error?.code,
       correlation_id: correlationId,
     });
-    return NextResponse.json(
+    return apiJson(
       { error: "RAZORPAY_ORDER_CREATE_FAILED", correlation_id: correlationId },
       { status: 502 }
     );
@@ -131,7 +132,7 @@ export async function POST(req: NextRequest) {
       receipt,
       response: created,
     });
-    return NextResponse.json(
+    return apiJson(
       { error: "RAZORPAY_ORDER_CREATE_FAILED", detail: "Missing order id", correlation_id: correlationId },
       { status: 502 }
     );
@@ -149,10 +150,10 @@ export async function POST(req: NextRequest) {
     purpose,
   });
   if (insertErr) {
-    return NextResponse.json({ error: insertErr.message }, { status: 500 });
+    return apiJson({ error: insertErr.message }, { status: 500 });
   }
 
-  return NextResponse.json({
+  return apiJson({
     success: true,
     correlation_id: correlationId,
     trial: { duration_days: TRIAL_DURATION_DAYS, amount_paise: TRIAL_AMOUNT_PAISE, currency: "INR" },
@@ -164,3 +165,4 @@ export async function POST(req: NextRequest) {
     },
   });
 }
+

@@ -4,6 +4,7 @@ import { requireAdminRole } from "@/lib/auth/admin";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { errorResponse, successResponse } from "@/lib/admin/responses";
 import { getOrGenerateCorrelationId } from "@/lib/observability";
+import { buildSafeIlikePattern } from "@/lib/api/filter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,7 +39,12 @@ export async function GET(req: NextRequest) {
 
   if (status) query = query.eq("processing_status", status);
   if (type) query = query.ilike("event_type", `%${type}%`);
-  if (q) query = query.or(`event_id.ilike.%${q}%,correlation_id.ilike.%${q}%`);
+  if (q) {
+    const pattern = buildSafeIlikePattern(q, 80);
+    if (pattern) {
+      query = query.or(`event_id.ilike.${pattern},correlation_id.ilike.${pattern}`);
+    }
+  }
 
   const { data, error, count } = await query.range(from, to);
   if (error) {
@@ -57,4 +63,3 @@ export async function GET(req: NextRequest) {
     correlationId
   );
 }
-

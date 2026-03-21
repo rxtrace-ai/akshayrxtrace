@@ -1,20 +1,22 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { getCompanyUserContext, insertHandsetLog } from "@/lib/handset-v2/db";
 import { isHandsetV2Enabled } from "@/lib/handset-v2/config";
 
-export async function POST(req: Request, context: { params: { id: string } }) {
+export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   if (!isHandsetV2Enabled()) {
-    return NextResponse.json({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
+    return apiJson({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
   }
 
   const ctx = await getCompanyUserContext();
   if (!ctx.ok) {
-    return NextResponse.json({ success: false, error: ctx.error }, { status: ctx.status });
+    return apiJson({ success: false, error: ctx.error }, { status: ctx.status });
   }
 
-  const handsetId = String(context.params.id || "").trim();
+  const params = await context.params;
+  const handsetId = String(params.id || "").trim();
   if (!handsetId) {
-    return NextResponse.json({ success: false, error: "INVALID_HANDSET_ID" }, { status: 400 });
+    return apiJson({ success: false, error: "INVALID_HANDSET_ID" }, { status: 400 });
   }
 
   const { data: existing, error: fetchError } = await ctx.supabase
@@ -24,10 +26,10 @@ export async function POST(req: Request, context: { params: { id: string } }) {
     .maybeSingle();
 
   if (fetchError) {
-    return NextResponse.json({ success: false, error: fetchError.message }, { status: 500 });
+    return apiJson({ success: false, error: fetchError.message }, { status: 500 });
   }
   if (!existing || existing.company_id !== ctx.companyId) {
-    return NextResponse.json({ success: false, error: "HANDSET_NOT_FOUND" }, { status: 404 });
+    return apiJson({ success: false, error: "HANDSET_NOT_FOUND" }, { status: 404 });
   }
 
   const { data: updated, error } = await ctx.supabase
@@ -44,7 +46,7 @@ export async function POST(req: Request, context: { params: { id: string } }) {
     .single();
 
   if (error) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return apiJson({ success: false, error: error.message }, { status: 500 });
   }
 
   await insertHandsetLog({
@@ -56,5 +58,5 @@ export async function POST(req: Request, context: { params: { id: string } }) {
     metadata: { device_id: existing.device_id || null },
   });
 
-  return NextResponse.json({ success: true, handset: updated });
+  return apiJson({ success: true, handset: updated });
 }

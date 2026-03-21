@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
 
@@ -11,14 +12,14 @@ export async function POST(req: Request) {
 
     const companyId = await resolveCompanyIdFromRequest(req);
     if (!companyId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiJson({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await req.json();
     const { pallet_sscc, carton_sscc_list } = body;
 
     if (!pallet_sscc || !Array.isArray(carton_sscc_list) || carton_sscc_list.length === 0) {
-      return NextResponse.json(
+      return apiJson(
         { error: "pallet_sscc and carton_sscc_list are required" },
         { status: 400 }
       );
@@ -32,7 +33,7 @@ export async function POST(req: Request) {
       .single();
 
     if (palletErr || !pallet) {
-      return NextResponse.json({ error: "Pallet not found" }, { status: 404 });
+      return apiJson({ error: "Pallet not found" }, { status: 404 });
     }
 
     // update cartons
@@ -42,17 +43,17 @@ export async function POST(req: Request) {
       .in("sscc", carton_sscc_list);
 
     if (updateErr) {
-      return NextResponse.json({ error: updateErr.message }, { status: 500 });
+      return apiJson({ error: updateErr.message }, { status: 500 });
     }
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       aggregated_cartons: carton_sscc_list.length,
       pallet_sscc
     });
 
   } catch (err: any) {
-    return NextResponse.json(
+    return apiJson(
       { error: err?.message || "Aggregation failed" },
       { status: 500 }
     );

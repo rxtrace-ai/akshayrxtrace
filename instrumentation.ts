@@ -13,11 +13,14 @@ export async function register() {
   // Sentry: Initialize for both server and edge runtimes
   if (runtime === 'nodejs' || runtime === 'edge') {
     const Sentry = await import('@sentry/nextjs');
+    const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN || process.env.SENTRY_DSN;
+    if (!dsn) return;
+
     Sentry.init({
-      dsn: process.env.NEXT_PUBLIC_SENTRY_DSN ?? "https://cdbb5eaa8594966af74b2884d9bf0077@o4510710313451520.ingest.de.sentry.io/4510710315745360",
-      tracesSampleRate: 1,
+      dsn,
+      tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1,
       enableLogs: true,
-      sendDefaultPii: true,
+      sendDefaultPii: false,
     });
   }
 }

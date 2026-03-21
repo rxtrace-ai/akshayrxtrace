@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { ensureInvoicePdfForInvoice } from "@/lib/billing/invoiceLifecycle";
 
@@ -7,16 +8,17 @@ export const dynamic = "force-dynamic";
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  ctx: { params: Promise<{ id: string }> }
 ) {
   try {
+    const params = await ctx.params;
     const owner = await requireOwnerContext();
     if (!owner.ok) return owner.response;
 
     const { id } = params;
     const invoiceId = String(id || "").trim();
     if (!invoiceId) {
-      return NextResponse.json({ error: "INVOICE_ID_REQUIRED" }, { status: 400 });
+      return apiJson({ error: "INVOICE_ID_REQUIRED" }, { status: 400 });
     }
 
     const { data: invoice, error: readError } = await owner.supabase
@@ -25,15 +27,15 @@ export async function GET(
       .eq("id", invoiceId)
       .eq("company_id", owner.companyId)
       .maybeSingle();
-    if (readError) return NextResponse.json({ error: readError.message }, { status: 500 });
-    if (!invoice) return NextResponse.json({ error: "INVOICE_NOT_FOUND" }, { status: 404 });
+    if (readError) return apiJson({ error: readError.message }, { status: 500 });
+    if (!invoice) return apiJson({ error: "INVOICE_NOT_FOUND" }, { status: 404 });
 
     const pdfEnsure = await ensureInvoicePdfForInvoice({
       supabase: owner.supabase as any,
       invoiceId,
     });
     if (!pdfEnsure.ok || !pdfEnsure.invoice_pdf_url) {
-      return NextResponse.json({ error: pdfEnsure.error || "INVOICE_PDF_NOT_AVAILABLE" }, { status: 500 });
+      return apiJson({ error: pdfEnsure.error || "INVOICE_PDF_NOT_AVAILABLE" }, { status: 500 });
     }
 
     const pdfDataUrl = String(pdfEnsure.invoice_pdf_url || "");
@@ -55,7 +57,7 @@ export async function GET(
       },
     });
   } catch (error: any) {
-    return NextResponse.json(
+    return apiJson(
       { error: String(error?.message || "INVOICE_PDF_DOWNLOAD_FAILED") },
       { status: 500 }
     );

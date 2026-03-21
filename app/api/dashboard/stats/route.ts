@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
@@ -192,13 +193,13 @@ export async function GET(request: NextRequest) {
     } = await (await supabaseServer()).auth.getUser();
 
     if (!user || authError) {
-      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+      return apiJson({ error: "Not authenticated" }, { status: 401 });
     }
 
     const supabase = getSupabaseAdmin();
     const resolved = await resolveCompanyForUser(supabase, user.id, "id, company_name");
     if (!resolved) {
-      return NextResponse.json({ error: "Company not found" }, { status: 404 });
+      return apiJson({ error: "Company not found" }, { status: 404 });
     }
 
     const includeActivity = request.nextUrl.searchParams.get("scope") !== "core";
@@ -214,9 +215,10 @@ export async function GET(request: NextRequest) {
       debug,
     });
 
-    return NextResponse.json(stats);
+    return apiJson(stats);
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message || String(err) }, { status: 500 });
+    return apiJson({ error: err?.message || String(err) }, { status: 500 });
   }
 }
+
 

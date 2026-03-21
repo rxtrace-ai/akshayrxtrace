@@ -13,7 +13,8 @@ import { consumeRateLimit } from "@/lib/security/rateLimit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   const headersList = await headers();
   const correlationId = getOrGenerateCorrelationId(headersList, "admin");
   const companyId = params.id;
@@ -39,8 +40,9 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   return successResponse(200, { success: true, company: data }, correlationId);
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
+    const params = await ctx.params;
     const headersList = await headers();
     const correlationId = getOrGenerateCorrelationId(headersList, "admin");
     const companyId = params.id;
@@ -52,7 +54,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
       return errorResponse(403, "FORBIDDEN", "Super admin access required", correlationId);
     }
 
-    const limit = consumeRateLimit({
+    const limit = await consumeRateLimit({
       key: `admin-mutation:${auth.userId}`,
       refillPerMinute: 20,
       burst: 30,
@@ -109,3 +111,4 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return errorResponse(500, "INTERNAL_ERROR", error?.message || "Company delete failed", correlationId);
   }
 }
+

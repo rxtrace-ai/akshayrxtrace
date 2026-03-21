@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireAdmin } from "@/lib/auth/admin";
 import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
@@ -8,8 +9,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } }
+  ctx: { params: Promise<{ id: string }> }
 ) {
+  const params = await ctx.params;
   try {
     const { error: adminError } = await requireAdmin();
     if (adminError) return adminError;
@@ -58,7 +60,7 @@ export async function GET(
       },
     };
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       current_period: {
         usage: usageWithLimits,
@@ -79,6 +81,6 @@ export async function GET(
       historical: historical || [],
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiJson({ success: false, error: err.message }, { status: 500 });
   }
 }

@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -19,7 +20,7 @@ function normalizeText(value: unknown) {
 async function requireCompanyId() {
   const { data: { user } } = await (await supabaseServer()).auth.getUser();
   if (!user) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+    return { error: apiJson({ error: "Unauthorized" }, { status: 401 }) };
   }
 
   const supabaseAdmin = getSupabaseAdmin();
@@ -31,13 +32,14 @@ async function requireCompanyId() {
     .single();
 
   if (error || !company?.id) {
-    return { error: NextResponse.json({ error: "Company profile not found" }, { status: 400 }) };
+    return { error: apiJson({ error: "Company profile not found" }, { status: 400 }) };
   }
 
   return { companyId: company.id };
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   const auth = await requireCompanyId();
   if ("error" in auth) return auth.error;
 
@@ -48,7 +50,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const sku_name = normalizeText(body.sku_name);
 
   if (!sku_code || !sku_name) {
-    return NextResponse.json(
+    return apiJson(
       { error: "sku_code and sku_name are required" },
       { status: 400 }
     );
@@ -63,11 +65,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     .maybeSingle();
 
   if (fetchErr) {
-    return NextResponse.json({ error: fetchErr.message }, { status: 400 });
+    return apiJson({ error: fetchErr.message }, { status: 400 });
   }
 
   if (!existingSku?.id) {
-    return NextResponse.json({ error: "SKU not found" }, { status: 404 });
+    return apiJson({ error: "SKU not found" }, { status: 404 });
   }
 
   const { data: dup, error: dupErr } = await supabaseAdmin
@@ -80,11 +82,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     .maybeSingle();
 
   if (dupErr) {
-    return NextResponse.json({ error: dupErr.message }, { status: 400 });
+    return apiJson({ error: dupErr.message }, { status: 400 });
   }
 
   if (dup?.id) {
-    return NextResponse.json(
+    return apiJson(
       { error: `SKU code already exists: ${sku_code}` },
       { status: 409 }
     );
@@ -103,13 +105,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return apiJson({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ sku: updated });
+  return apiJson({ sku: updated });
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   const auth = await requireCompanyId();
   if ("error" in auth) return auth.error;
 
@@ -124,11 +127,11 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     .maybeSingle();
 
   if (fetchErr) {
-    return NextResponse.json({ error: fetchErr.message }, { status: 400 });
+    return apiJson({ error: fetchErr.message }, { status: 400 });
   }
 
   if (!sku?.id) {
-    return NextResponse.json({ error: "SKU not found" }, { status: 404 });
+    return apiJson({ error: "SKU not found" }, { status: 404 });
   }
 
   const { error } = await supabaseAdmin
@@ -138,8 +141,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     .eq("company_id", auth.companyId);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return apiJson({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ success: true });
+  return apiJson({ success: true });
 }

@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from '@/lib/supabase/server';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { writeAuditLog } from '@/lib/audit';
@@ -14,7 +15,7 @@ async function resolveAuthCompany() {
   const { data: { user }, error: userError } = await supabase.auth.getUser();
 
   if (userError || !user) {
-    return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
+    return { error: apiJson({ error: 'Unauthorized' }, { status: 401 }) };
   }
 
   const admin = getSupabaseAdmin();
@@ -25,7 +26,7 @@ async function resolveAuthCompany() {
     .single();
 
   if (companyError || !company?.id) {
-    return { error: NextResponse.json({ error: 'Company profile not found' }, { status: 400 }) };
+    return { error: apiJson({ error: 'Company profile not found' }, { status: 400 }) };
   }
 
   return { companyId: company.id, companyName: company.company_name || '', userId: user.id };
@@ -54,7 +55,7 @@ export async function POST(req: Request) {
 
     const ingestionMode = company?.erp_ingestion_mode;
     if (ingestionMode !== 'sscc' && ingestionMode !== 'both') {
-      return NextResponse.json(
+      return apiJson(
         {
           error: 'SSCC-level ERP ingestion is not enabled for your company. Please enable it in ERP Integration settings.',
           code: 'ingestion_mode_disabled',
@@ -67,14 +68,14 @@ export async function POST(req: Request) {
     const rows = Array.isArray(body.rows) ? body.rows : [];
 
     if (rows.length === 0) {
-      return NextResponse.json(
+      return apiJson(
         { error: 'No rows provided. CSV must contain SSCC code data.' },
         { status: 400 }
       );
     }
 
     if (rows.length > 10000) {
-      return NextResponse.json(
+      return apiJson(
         { error: 'Too many rows. Maximum 10,000 rows per import.' },
         { status: 400 }
       );
@@ -311,7 +312,7 @@ export async function POST(req: Request) {
 
       if (!consumption.ok) {
         const isQuotaError = String(consumption.error || "").toUpperCase().includes("QUOTA_EXCEEDED");
-        return NextResponse.json(
+        return apiJson(
           {
             error: isQuotaError ? "Quota exceeded. Please purchase add-ons." : consumption.error || "QUOTA_EXCEEDED",
             code: consumption.error || 'QUOTA_EXCEEDED',
@@ -353,7 +354,7 @@ export async function POST(req: Request) {
           // best-effort
         }
 
-        return NextResponse.json(
+        return apiJson(
           { error: `Failed to import SSCCs: ${insertError?.message || String(insertError)}`, results },
           { status: 500 }
         );
@@ -387,16 +388,17 @@ export async function POST(req: Request) {
       // Continue - ingestion succeeded, audit failure is logged
     }
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       message: `Imported ${results.imported} SSCC codes. ${results.duplicates} duplicates skipped. ${results.invalid} invalid rows.`,
       results,
     });
   } catch (err: any) {
     console.error('ERP SSCC Ingestion error:', err);
-    return NextResponse.json(
+    return apiJson(
       { error: err?.message || 'ERP SSCC code ingestion failed. Please try again or contact support.' },
       { status: 500 }
     );
   }
 }
+

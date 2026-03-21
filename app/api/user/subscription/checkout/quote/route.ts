@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { resolveActiveCoupon } from "@/lib/billing/coupons";
 import {
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
     const catalog = await loadCheckoutCatalog(owner.supabase);
     const coupon = couponCode ? await resolveActiveCoupon(owner.supabase, couponCode) : null;
     if (couponCode && !coupon) {
-      return NextResponse.json({ error: "INVALID_COUPON" }, { status: 400 });
+      return apiJson({ error: "INVALID_COUPON" }, { status: 400 });
     }
 
     const genericAddons = Array.isArray((body as any)?.addons) ? (body as any).addons : [];
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
       .select("id, status, expires_at")
       .single();
     if (quotePersistError) {
-      return NextResponse.json({ error: quotePersistError.message }, { status: 500 });
+      return apiJson({ error: quotePersistError.message }, { status: 500 });
     }
 
     console.log("ADDONS:", {
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest) {
     console.log("FINAL_TOTAL:", quote.totals.final_total_paise);
     console.log("QUOTE_ID:", (persistedQuote as any).id);
     console.log("QUOTE:", quote);
-    return NextResponse.json({
+    return apiJson({
       success: true,
       quote_id: (persistedQuote as any).id,
       quote_status: String((persistedQuote as any).status || "active"),
@@ -124,11 +125,12 @@ export async function POST(req: NextRequest) {
       message.includes("CHECKOUT_ITEM_REQUIRED") ||
       message.includes("FINAL_TOTAL_MUST_BE_GREATER_THAN_ZERO")
     ) {
-      return NextResponse.json({ error: message }, { status: 400 });
+      return apiJson({ error: message }, { status: 400 });
     }
     if (message.includes("CHECKOUT_SIGNING_SECRET_MISSING")) {
-      return NextResponse.json({ error: "Checkout signing secret is not configured" }, { status: 503 });
+      return apiJson({ error: "Checkout signing secret is not configured" }, { status: 503 });
     }
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiJson({ error: message }, { status: 500 });
   }
 }
+

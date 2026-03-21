@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { hashSeatInviteToken } from "@/lib/seats/invitations";
 import { consumeRateLimit } from "@/lib/security/rateLimit";
@@ -6,13 +7,13 @@ import { consumeRateLimit } from "@/lib/security/rateLimit";
 export async function POST(req: Request) {
   const forwarded = req.headers.get("x-forwarded-for") || "";
   const ip = forwarded.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
-  const rateLimit = consumeRateLimit({
+  const rateLimit = await consumeRateLimit({
     key: `seat-invite-accept:${ip}`,
     refillPerMinute: 10,
     burst: 10,
   });
   if (!rateLimit.allowed) {
-    return NextResponse.json(
+    return apiJson(
       { error: "RATE_LIMITED", retry_after_seconds: rateLimit.retryAfterSeconds },
       { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds ?? 60) } }
     );
@@ -25,17 +26,17 @@ export async function POST(req: Request) {
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return apiJson({ error: "Unauthorized" }, { status: 401 });
   }
 
   const body = await req.json().catch(() => ({}));
   const token = String(body.token || "").trim();
 
   if (!token) {
-    return NextResponse.json({ error: "INVITATION_TOKEN_REQUIRED" }, { status: 400 });
+    return apiJson({ error: "INVITATION_TOKEN_REQUIRED" }, { status: 400 });
   }
   if (!user.email) {
-    return NextResponse.json({ error: "EMAIL_REQUIRED" }, { status: 400 });
+    return apiJson({ error: "EMAIL_REQUIRED" }, { status: 400 });
   }
   const normalizedEmail = String(user.email).toLowerCase().trim();
   const fullName =
@@ -71,32 +72,34 @@ export async function POST(req: Request) {
   if (error) {
     const message = String(error.message || "Invitation acceptance failed");
     if (message.includes("INVITATION_NOT_FOUND")) {
-      return NextResponse.json({ error: "INVITATION_NOT_FOUND" }, { status: 404 });
+      return apiJson({ error: "INVITATION_NOT_FOUND" }, { status: 404 });
     }
     if (message.includes("INVITATION_ALREADY_USED")) {
-      return NextResponse.json({ error: "INVITATION_ALREADY_USED" }, { status: 409 });
+      return apiJson({ error: "INVITATION_ALREADY_USED" }, { status: 409 });
     }
     if (message.includes("INVITATION_EXPIRED")) {
-      return NextResponse.json({ error: "INVITATION_EXPIRED" }, { status: 410 });
+      return apiJson({ error: "INVITATION_EXPIRED" }, { status: 410 });
     }
     if (message.includes("INVITATION_REVOKED")) {
-      return NextResponse.json({ error: "INVITATION_REVOKED" }, { status: 409 });
+      return apiJson({ error: "INVITATION_REVOKED" }, { status: 409 });
     }
     if (message.includes("INVITATION_EMAIL_MISMATCH")) {
-      return NextResponse.json({ error: "INVITATION_EMAIL_MISMATCH" }, { status: 403 });
+      return apiJson({ error: "INVITATION_EMAIL_MISMATCH" }, { status: 403 });
     }
     if (message.includes("USER_ALREADY_MEMBER")) {
-      return NextResponse.json({ error: "USER_ALREADY_MEMBER" }, { status: 409 });
+      return apiJson({ error: "USER_ALREADY_MEMBER" }, { status: 409 });
     }
     if (message.includes("SEAT_LIMIT_EXCEEDED")) {
-      return NextResponse.json({ error: "SEAT_LIMIT_EXCEEDED" }, { status: 409 });
+      return apiJson({ error: "SEAT_LIMIT_EXCEEDED" }, { status: 409 });
     }
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiJson({ error: message }, { status: 500 });
   }
 
   const payload = Array.isArray(data) ? data[0] : data;
-  return NextResponse.json({
+  return apiJson({
     ...(payload ?? { success: true }),
     seat_status: "active",
   });
 }
+
+

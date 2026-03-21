@@ -1,12 +1,14 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
 import { writeAuditLog } from "@/lib/audit";
 
 export async function POST(
   _req: Request,
-  { params }: { params: { id: string } }
+  ctx: { params: Promise<{ id: string }> }
 ) {
+  const params = await ctx.params;
   const supabase = await supabaseServer();
   const {
     data: { user },
@@ -14,17 +16,17 @@ export async function POST(
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return apiJson({ error: "Unauthorized" }, { status: 401 });
   }
 
   const resolved = await resolveCompanyForUser(supabase, user.id, "id");
   if (!resolved || !resolved.isOwner) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return apiJson({ error: "Forbidden" }, { status: 403 });
   }
 
   const plantId = String(params?.id || "").trim();
   if (!plantId) {
-    return NextResponse.json({ error: "Invalid plant id" }, { status: 400 });
+    return apiJson({ error: "Invalid plant id" }, { status: 400 });
   }
 
   const { data: existing, error: findError } = await supabase
@@ -35,15 +37,15 @@ export async function POST(
     .maybeSingle();
 
   if (findError) {
-    return NextResponse.json({ error: findError.message }, { status: 500 });
+    return apiJson({ error: findError.message }, { status: 500 });
   }
 
   if (!existing) {
-    return NextResponse.json({ error: "Plant not found" }, { status: 404 });
+    return apiJson({ error: "Plant not found" }, { status: 404 });
   }
 
   if (existing.status === "deactivated") {
-    return NextResponse.json({ success: true, already_deactivated: true });
+    return apiJson({ success: true, already_deactivated: true });
   }
 
   const { data: updated, error: updateError } = await supabase
@@ -61,7 +63,7 @@ export async function POST(
     .single();
 
   if (updateError) {
-    return NextResponse.json({ error: updateError.message }, { status: 500 });
+    return apiJson({ error: updateError.message }, { status: 500 });
   }
 
   try {
@@ -76,5 +78,5 @@ export async function POST(
     // Non-blocking.
   }
 
-  return NextResponse.json({ success: true, plant: updated });
+  return apiJson({ success: true, plant: updated });
 }

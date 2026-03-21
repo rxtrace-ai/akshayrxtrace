@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -17,8 +18,9 @@ export async function GET() {
       .order("display_order", { ascending: true });
 
     if (error) throw error;
-    return NextResponse.json({ success: true, add_ons: data || [] });
+    return apiJson({ success: true, add_ons: data || [] });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiJson({ success: false, error: err.message }, { status: 500 });
   }
 }
+

@@ -1,7 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import PDFDocument from "pdfkit";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
+import { sanitizeFilterToken } from "@/lib/api/filter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +32,7 @@ export async function GET(req: Request) {
   } = await (await supabaseServer()).auth.getUser();
 
   if (!user || authError) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    return apiJson({ error: "Not authenticated" }, { status: 401 });
   }
 
   const { data: company, error: companyError } = await supabase
@@ -40,11 +42,11 @@ export async function GET(req: Request) {
     .maybeSingle();
 
   if (companyError) {
-    return NextResponse.json({ error: companyError.message }, { status: 500 });
+    return apiJson({ error: companyError.message }, { status: 500 });
   }
 
   if (!company?.id) {
-    return NextResponse.json({ error: "Company not found" }, { status: 404 });
+    return apiJson({ error: "Company not found" }, { status: 404 });
   }
 
   const companyId = company.id as string;
@@ -97,21 +99,30 @@ export async function GET(req: Request) {
      2️⃣ TRACEABILITY EXPORT (CSV / PDF)
      ====================================================== */
   if (type === "trace") {
-    const code = searchParams.get("code");
+    const code = sanitizeFilterToken(searchParams.get("code"), 120);
     const format = searchParams.get("format"); // csv | pdf
 
     if (!code || !format) {
-      return NextResponse.json(
+      return apiJson(
         { error: "code and format required" },
         { status: 400 }
       );
     }
 
-    const { data: rows } = await supabase
-      .from("packaging_hierarchy")
-      .select("*")
-      .eq("company_id", companyId)
-      .or(`parent_code.eq.${code},child_code.eq.${code}`);
+    const [parentRowsResult, childRowsResult] = await Promise.all([
+      supabase
+        .from("packaging_hierarchy")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("parent_code", code),
+      supabase
+        .from("packaging_hierarchy")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("child_code", code),
+    ]);
+
+    const rows = [...(parentRowsResult.data || []), ...(childRowsResult.data || [])];
 
     /* ---------- CSV ---------- */
     if (format === "csv") {
@@ -168,11 +179,12 @@ export async function GET(req: Request) {
       });
     }
 
-    return NextResponse.json({ error: "Invalid format" }, { status: 400 });
+    return apiJson({ error: "Invalid format" }, { status: 400 });
   }
 
-  return NextResponse.json(
+  return apiJson(
     { error: "Invalid export type" },
     { status: 400 }
   );
 }
+

@@ -18,6 +18,7 @@ describe("generateUnitSerial", () => {
 
 describe("generateCanonicalGS1", () => {
   it("builds the unit payload with AI 01, 17, 10, and 21 when optional fields are omitted", () => {
+    const gs = String.fromCharCode(29);
     const gs1 = generateCanonicalGS1({
       gtin: "12345678901231",
       expiry: "2026-12-31",
@@ -29,8 +30,8 @@ describe("generateCanonicalGS1", () => {
     expect(gs1).toContain("17261231");
     expect(gs1).toContain("10BATCH1");
     expect(gs1).toContain("21SERIAL1");
-    expect(gs1).not.toContain("11");
-    expect(gs1).not.toContain("91");
-    expect(gs1).not.toContain("92");
+    expect(gs1).not.toContain(`${gs}11`);
+    expect(gs1).not.toContain(`${gs}91`);
+    expect(gs1).not.toContain(`${gs}92`);
   });
 });

@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
@@ -16,13 +17,13 @@ export async function GET(_req: Request) {
     } = await supabase.auth.getUser();
 
     if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiJson({ error: "Unauthorized" }, { status: 401 });
     }
 
     const admin = getSupabaseAdmin();
     const resolved = await resolveCompanyForUser(admin, user.id, "id");
     if (!resolved) {
-      return NextResponse.json({ error: "Company not found" }, { status: 404 });
+      return apiJson({ error: "Company not found" }, { status: 404 });
     }
 
     const snapshot = await getCompanyEntitlementSnapshot(admin, resolved.companyId);
@@ -70,8 +71,9 @@ export async function GET(_req: Request) {
       },
     };
 
-    return NextResponse.json({ success: true, usage, state: snapshot.state });
+    return apiJson({ success: true, usage, state: snapshot.state });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return apiJson({ error: err.message }, { status: 500 });
   }
 }
+

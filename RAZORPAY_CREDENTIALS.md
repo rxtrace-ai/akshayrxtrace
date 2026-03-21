@@ -86,7 +86,7 @@ RAZORPAY_SUBSCRIPTION_PLAN_ID_ENTERPRISE_QUARTERLY=plan_
 
 ### Navigate to: Settings → Webhooks (Live Mode)
 
-- **URL:** https://yourdomain.com/api/webhooks/razorpay
+- **URL:** https://yourdomain.com/api/razorpay/webhook
   _(Update after Vercel deployment)_
 - **Secret:** 
 ```

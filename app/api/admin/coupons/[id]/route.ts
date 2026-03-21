@@ -29,8 +29,9 @@ function normalizeIso(value: unknown): string | null {
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  ctx: { params: Promise<{ id: string }> }
 ) {
+  const params = await ctx.params;
   const headersList = await headers();
   const correlationId = getOrGenerateCorrelationId(headersList, "admin");
   const endpoint = `/api/admin/coupons/${params.id}`;
@@ -39,7 +40,7 @@ export async function PATCH(
   const auth = await requireSuperAdmin();
   if (auth.error) return errorResponse(403, "FORBIDDEN", "Super admin access required", correlationId);
 
-  const limit = consumeRateLimit({ key: `admin-mutation:${auth.userId}`, refillPerMinute: 20, burst: 30 });
+  const limit = await consumeRateLimit({ key: `admin-mutation:${auth.userId}`, refillPerMinute: 20, burst: 30 });
   if (!limit.allowed) {
     const response = errorResponse(429, "RATE_LIMITED", "Too many mutation requests", correlationId);
     response.headers.set("Retry-After", String(limit.retryAfterSeconds));
@@ -145,3 +146,4 @@ export async function PATCH(
 
   return successResponse(200, payload, correlationId);
 }
+

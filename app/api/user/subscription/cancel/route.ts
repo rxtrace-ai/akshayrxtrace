@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { headers } from "next/headers";
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { getOrGenerateCorrelationId } from "@/lib/observability/correlation";
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
   const correlationId = getOrGenerateCorrelationId(await headers(), "user");
   const idempotencyKey = normalizeIdempotencyKey(req, body);
   if (!idempotencyKey) {
-    return NextResponse.json({ error: "Missing Idempotency-Key header" }, { status: 400 });
+    return apiJson({ error: "Missing Idempotency-Key header" }, { status: 400 });
   }
 
   const requestHash = hashRequestBody(body);
@@ -30,9 +31,9 @@ export async function POST(req: NextRequest) {
     idempotencyKey,
     requestHash,
   });
-  if (idem.kind === "missing_key") return NextResponse.json({ error: "Missing Idempotency-Key header" }, { status: 400 });
-  if (idem.kind === "conflict") return NextResponse.json({ error: "IDEMPOTENCY_CONFLICT" }, { status: 409 });
-  if (idem.kind === "replay") return NextResponse.json(idem.payload, { status: idem.statusCode });
+  if (idem.kind === "missing_key") return apiJson({ error: "Missing Idempotency-Key header" }, { status: 400 });
+  if (idem.kind === "conflict") return apiJson({ error: "IDEMPOTENCY_CONFLICT" }, { status: 409 });
+  if (idem.kind === "replay") return apiJson(idem.payload, { status: idem.statusCode });
 
   const now = new Date().toISOString();
   const { data: updated, error } = await owner.supabase
@@ -50,10 +51,10 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiJson({ error: error.message }, { status: 500 });
   }
   if (!updated) {
-    return NextResponse.json({ error: "NO_ACTIVE_SUBSCRIPTION" }, { status: 409 });
+    return apiJson({ error: "NO_ACTIVE_SUBSCRIPTION" }, { status: 409 });
   }
 
   const payload = {
@@ -78,5 +79,6 @@ export async function POST(req: NextRequest) {
     correlationId,
   });
 
-  return NextResponse.json(payload, { status: 200 });
+  return apiJson(payload, { status: 200 });
 }
+

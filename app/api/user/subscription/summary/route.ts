@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
 import { getUnifiedSubscriptionStatus } from "@/lib/billing/subscriptionStatus";
@@ -345,20 +346,21 @@ export async function GET(request: NextRequest) {
     const existing = summaryCache.get(cacheKey);
 
     if (existing?.payload && isFresh(existing)) {
-      return NextResponse.json(existing.payload);
+      return apiJson(existing.payload);
     }
 
     if (existing?.payload && isStaleWithinWindow(existing)) {
       computeAndStoreSummary(cacheKey, owner, view).catch(() => undefined);
-      return NextResponse.json(existing.payload);
+      return apiJson(existing.payload);
     }
 
     const payload = await computeAndStoreSummary(cacheKey, owner, view);
-    return NextResponse.json(payload);
+    return apiJson(payload);
   } catch (error: any) {
-    return NextResponse.json(
+    return apiJson(
       { error: error?.message ?? "Dashboard summary failed" },
       { status: 500 }
     );
   }
 }
+

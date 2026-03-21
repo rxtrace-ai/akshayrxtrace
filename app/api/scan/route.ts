@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
 import { parsePayload } from "@/lib/parsePayload";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { compareGS1Payloads, normalizeGS1Payload } from "@/lib/gs1Canonical";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
+import { fail, ok } from "@/lib/api/response";
 
 const GS = String.fromCharCode(29);
 
@@ -110,26 +110,69 @@ async function buildHierarchyForPallet(opts: {
   return { ...(pallet as any), cartons: cartonsWithChildren };
 }
 
+async function findRowBySsccOrCode(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  table: "cartons" | "boxes",
+  select: string,
+  companyId: string | null,
+  code: string
+) {
+  let base = supabase.from(table).select(select);
+  if (companyId) {
+    base = base.eq("company_id", companyId);
+  }
+
+  const { data: bySscc } = await base.eq("sscc", code).maybeSingle();
+  if (bySscc) return bySscc;
+
+  let codeBase = supabase.from(table).select(select);
+  if (companyId) {
+    codeBase = codeBase.eq("company_id", companyId);
+  }
+
+  const { data: byCode } = await codeBase.eq("code", code).maybeSingle();
+  return byCode ?? null;
+}
+
+async function findCompanyBySscc(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  sscc: string
+) {
+  const { data: palletRow } = await supabase
+    .from("pallets")
+    .select("company_id")
+    .eq("sscc", sscc)
+    .maybeSingle();
+  if (palletRow?.company_id) return palletRow.company_id;
+
+  const [cartonRow, boxRow] = await Promise.all([
+    findRowBySsccOrCode(supabase, "cartons", "company_id", null, sscc),
+    findRowBySsccOrCode(supabase, "boxes", "company_id", null, sscc),
+  ]);
+
+  return (cartonRow as any)?.company_id ?? (boxRow as any)?.company_id ?? null;
+}
+
 export async function POST(req: Request) {
   try {
     const supabase = getSupabaseAdmin();
     const authCompanyId = await resolveCompanyIdFromRequest(req);
     if (!authCompanyId) {
-      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+      return fail("UNAUTHORIZED", "Unauthorized", 401);
     }
 
     const { raw, company_id, device_context } = await req.json();
     if (company_id && company_id !== authCompanyId) {
-      return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
+      return fail("FORBIDDEN", "Forbidden", 403);
     }
 
     if (!raw) {
-      return NextResponse.json({ success: false, error: "Missing raw payload" }, { status: 400 });
+      return fail("VALIDATION_ERROR", "Missing raw payload", 400);
     }
 
     const parsedAny = parsePayload(raw);
     if (parsedAny.mode === "INVALID") {
-      return NextResponse.json({ success: false, error: parsedAny.error || "Invalid payload" }, { status: 400 });
+      return fail("VALIDATION_ERROR", parsedAny.error || "Invalid payload", 400);
     }
 
     const data =
@@ -157,46 +200,11 @@ export async function POST(req: Request) {
     }
 
     if (!resolvedCompanyId && data.sscc) {
-      const { data: palletRow } = await supabase
-        .from("pallets")
-        .select("company_id")
-        .eq("sscc", data.sscc)
-        .maybeSingle();
-
-      if (palletRow?.company_id) {
-        resolvedCompanyId = palletRow.company_id;
-      }
-
-      if (!resolvedCompanyId) {
-        const { data: cartonRow } = await supabase
-          .from("cartons")
-          .select("company_id")
-          .or(`sscc.eq.${data.sscc},code.eq.${data.sscc}`)
-          .maybeSingle();
-
-        if (cartonRow?.company_id) {
-          resolvedCompanyId = cartonRow.company_id;
-        }
-      }
-
-      if (!resolvedCompanyId) {
-        const { data: boxRow } = await supabase
-          .from("boxes")
-          .select("company_id")
-          .or(`sscc.eq.${data.sscc},code.eq.${data.sscc}`)
-          .maybeSingle();
-
-        if (boxRow?.company_id) {
-          resolvedCompanyId = boxRow.company_id;
-        }
-      }
+      resolvedCompanyId = await findCompanyBySscc(supabase, data.sscc);
     }
 
     if (!resolvedCompanyId) {
-      return NextResponse.json(
-        { success: false, error: "Cannot resolve company_id from GS1 payload or scanned entity" },
-        { status: 400 }
-      );
+      return fail("VALIDATION_ERROR", "Cannot resolve company_id from GS1 payload or scanned entity", 400);
     }
 
     let expiryStatus: "VALID" | "EXPIRED" = "VALID";
@@ -233,15 +241,24 @@ export async function POST(req: Request) {
           .from("cartons")
           .select("id, pallet_id, sscc, sscc_with_ai, code, sku_id, created_at, meta")
           .eq("company_id", resolvedCompanyId)
-          .or(`sscc.eq.${data.sscc},code.eq.${data.sscc}`)
+          .eq("sscc", data.sscc)
           .maybeSingle();
+        const cartonResolved = carton?.id
+          ? carton
+          : await findRowBySsccOrCode(
+              supabase,
+              "cartons",
+              "id, pallet_id, sscc, sscc_with_ai, code, sku_id, created_at, meta",
+              resolvedCompanyId,
+              data.sscc
+            );
 
-        if (carton?.id) {
+        if ((cartonResolved as any)?.id) {
           const { data: boxes } = await supabase
             .from("boxes")
             .select("id, carton_id, pallet_id, sscc, sscc_with_ai, code, sku_id, created_at, meta")
             .eq("company_id", resolvedCompanyId)
-            .eq("carton_id", carton.id)
+            .eq("carton_id", (cartonResolved as any).id)
             .order("created_at", { ascending: true });
 
           const boxIds = (boxes ?? []).map((b: any) => b.id).filter(Boolean);
@@ -268,12 +285,12 @@ export async function POST(req: Request) {
             units: unitsByBox.get((b as any).id) ?? [],
           }));
 
-          const palletNode = carton.pallet_id
-            ? await buildHierarchyForPallet({ supabase, palletId: carton.pallet_id, companyId: resolvedCompanyId })
+          const palletNode = (cartonResolved as any).pallet_id
+            ? await buildHierarchyForPallet({ supabase, palletId: (cartonResolved as any).pallet_id, companyId: resolvedCompanyId })
             : null;
 
           result = {
-            ...(carton as any),
+            ...(cartonResolved as any),
             boxes: boxesWithUnits,
             pallet: palletNode ? { id: palletNode.id, sscc: palletNode.sscc, sscc_with_ai: palletNode.sscc_with_ai } : null,
           };
@@ -286,26 +303,35 @@ export async function POST(req: Request) {
           .from("boxes")
           .select("id, carton_id, pallet_id, sscc, sscc_with_ai, code, sku_id, created_at, meta")
           .eq("company_id", resolvedCompanyId)
-          .or(`sscc.eq.${data.sscc},code.eq.${data.sscc}`)
+          .eq("sscc", data.sscc)
           .maybeSingle();
+        const boxResolved = box?.id
+          ? box
+          : await findRowBySsccOrCode(
+              supabase,
+              "boxes",
+              "id, carton_id, pallet_id, sscc, sscc_with_ai, code, sku_id, created_at, meta",
+              resolvedCompanyId,
+              data.sscc
+            );
 
-        if (box?.id) {
+        if ((boxResolved as any)?.id) {
           const { data: units } = await supabase
             .from("labels_units")
             .select("id, box_id, serial, created_at")
             .eq("company_id", resolvedCompanyId)
-            .eq("box_id", box.id)
+            .eq("box_id", (boxResolved as any).id)
             .order("created_at", { ascending: true });
 
-          const { data: cartonNode } = box.carton_id
+          const { data: cartonNode } = (boxResolved as any).carton_id
             ? await supabase
                 .from("cartons")
                 .select("id, pallet_id, sscc, sscc_with_ai, code, created_at")
-                .eq("id", box.carton_id)
+                .eq("id", (boxResolved as any).carton_id)
                 .maybeSingle()
             : { data: null as any };
 
-          const palletId = (cartonNode as any)?.pallet_id ?? box.pallet_id ?? null;
+          const palletId = (cartonNode as any)?.pallet_id ?? (boxResolved as any).pallet_id ?? null;
           const palletNode = palletId
             ? await supabase
                 .from("pallets")
@@ -315,7 +341,7 @@ export async function POST(req: Request) {
             : { data: null as any };
 
           result = {
-            ...(box as any),
+            ...(boxResolved as any),
             units: (units ?? []).map((u: any) => ({ uid: u.serial, id: u.id, created_at: u.created_at })),
             carton: cartonNode ?? null,
             pallet: (palletNode as any)?.data ?? null,
@@ -383,14 +409,7 @@ export async function POST(req: Request) {
               status: "FAILED",
             });
 
-            return NextResponse.json(
-              {
-                success: false,
-                error: "Payload mismatch - code may be tampered or invalid",
-                code: "PAYLOAD_MISMATCH",
-              },
-              { status: 400 }
-            );
+            return fail("PAYLOAD_MISMATCH", "Payload mismatch - code may be tampered or invalid", 400);
           }
         }
 
@@ -414,7 +433,7 @@ export async function POST(req: Request) {
     }
 
     if (!result || !level) {
-      return NextResponse.json({ success: false, error: "Code not found in hierarchy" }, { status: 404 });
+      return fail("CODE_NOT_FOUND", "Code not found in hierarchy", 404);
     }
 
     const { data: priorScans } = await supabase
@@ -453,12 +472,11 @@ export async function POST(req: Request) {
       status: scanStatus,
     });
 
-    return NextResponse.json({
-      success: true,
+    return ok({
       level,
-      data: result,
+      result,
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message || String(err) }, { status: 500 });
+    return fail("INTERNAL_ERROR", err.message || String(err), 500);
   }
 }

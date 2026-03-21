@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { sendWelcomeEmail } from '@/lib/auth/welcome';
 
 export const runtime = 'nodejs';
@@ -9,7 +10,7 @@ export async function POST(req: NextRequest) {
     const { email, fullName } = await req.json();
 
     if (!email || !/\S+@\S+\.\S+/.test(email)) {
-      return NextResponse.json(
+      return apiJson(
         { error: 'Invalid email address' },
         { status: 400 }
       );
@@ -17,15 +18,16 @@ export async function POST(req: NextRequest) {
 
     await sendWelcomeEmail(email, fullName || 'there');
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       message: 'Welcome email sent successfully',
     });
   } catch (error: any) {
     console.error('Send welcome email error:', error);
-    return NextResponse.json(
+    return apiJson(
       { error: error?.message || 'Failed to send welcome email' },
       { status: 500 }
     );
   }
 }
+

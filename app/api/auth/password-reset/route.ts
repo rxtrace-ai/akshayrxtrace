@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAppUrl } from "@/lib/config";
 import { sendTransactionalEmail } from "@/lib/transactionalEmail";
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
     const email = String(body.email || "").trim().toLowerCase();
 
     if (!email || !email.includes("@")) {
-      return NextResponse.json({ success: false, error: "INVALID_EMAIL" }, { status: 400 });
+      return apiJson({ success: false, error: "INVALID_EMAIL" }, { status: 400 });
     }
 
     const supabase = getSupabaseAdmin();
@@ -34,12 +35,12 @@ export async function POST(req: Request) {
     });
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message || "PASSWORD_RESET_LINK_FAILED" }, { status: 500 });
+      return apiJson({ success: false, error: error.message || "PASSWORD_RESET_LINK_FAILED" }, { status: 500 });
     }
 
     const resetLink = extractResetLink(data);
     if (!resetLink) {
-      return NextResponse.json({ success: false, error: "PASSWORD_RESET_LINK_MISSING" }, { status: 500 });
+      return apiJson({ success: false, error: "PASSWORD_RESET_LINK_MISSING" }, { status: 500 });
     }
 
     await sendTransactionalEmail({
@@ -51,12 +52,13 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({ success: true, message: "PASSWORD_RESET_EMAIL_SENT" });
+    return apiJson({ success: true, message: "PASSWORD_RESET_EMAIL_SENT" });
   } catch (error: any) {
-    return NextResponse.json(
+    return apiJson(
       { success: false, error: String(error?.message || "PASSWORD_RESET_EMAIL_FAILED") },
       { status: 500 }
     );
   }
 }
+
 

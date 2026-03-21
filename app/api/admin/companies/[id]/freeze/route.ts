@@ -17,8 +17,9 @@ function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
+    const params = await ctx.params;
     const headersList = await headers();
     const correlationId = getOrGenerateCorrelationId(headersList, "admin");
     const companyId = params.id;
@@ -34,7 +35,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       return errorResponse(403, "FORBIDDEN", "Super admin access required", correlationId);
     }
 
-    const limit = consumeRateLimit({
+    const limit = await consumeRateLimit({
       key: `admin-mutation:${auth.userId}`,
       refillPerMinute: 20,
       burst: 30,
@@ -101,3 +102,4 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     return errorResponse(500, "INTERNAL_ERROR", error?.message || "Freeze mutation failed", correlationId);
   }
 }
+

@@ -1,7 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { writeAuditLog } from "@/lib/audit";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
+import { sanitizeFilterToken } from "@/lib/api/filter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +23,7 @@ export async function GET(req: Request) {
   } = await (await supabaseServer()).auth.getUser();
 
   if (!user || authError) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    return apiJson({ error: "Not authenticated" }, { status: 401 });
   }
 
   const { data: company, error: companyError } = await supabase
@@ -31,11 +33,11 @@ export async function GET(req: Request) {
     .maybeSingle();
 
   if (companyError) {
-    return NextResponse.json({ error: companyError.message }, { status: 500 });
+    return apiJson({ error: companyError.message }, { status: 500 });
   }
 
   if (!company?.id) {
-    return NextResponse.json({ error: "Company not found" }, { status: 404 });
+    return apiJson({ error: "Company not found" }, { status: 404 });
   }
 
   const companyId = company.id as string;
@@ -58,7 +60,7 @@ export async function GET(req: Request) {
     } catch {
       // do not fail response because auditing failed
     }
-    return NextResponse.json(
+    return apiJson(
       { error: "Provide batch OR sku OR gtin OR pallet" },
       { status: 400 }
     );
@@ -102,7 +104,7 @@ export async function GET(req: Request) {
     } catch {
       // do not fail response because auditing failed
     }
-    return NextResponse.json(
+    return apiJson(
       { error: unitError.message },
       { status: 500 }
     );
@@ -131,7 +133,7 @@ export async function GET(req: Request) {
       } catch {
         // do not fail response because auditing failed
       }
-      return NextResponse.json(
+      return apiJson(
         { error: error.message },
         { status: 500 }
       );
@@ -148,15 +150,22 @@ export async function GET(req: Request) {
 
   for (const unit of units || []) {
     // Priority 1 fix: Use serial instead of unit_code (column name fix)
-    const unitSerial = unit.serial;
+    const unitSerial = sanitizeFilterToken(unit.serial, 120);
+    if (!unitSerial) continue;
 
-    const { data: path } = await supabase
-      .from("packaging_hierarchy")
-      .select("*")
-      .eq("company_id", companyId)
-      .or(
-        `child_code.eq.${unitSerial},parent_code.eq.${unitSerial}`
-      );
+    const [asChild, asParent] = await Promise.all([
+      supabase
+        .from("packaging_hierarchy")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("child_code", unitSerial),
+      supabase
+        .from("packaging_hierarchy")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("parent_code", unitSerial),
+    ]);
+    const path = [...(asChild.data || []), ...(asParent.data || [])];
 
     const box = path?.find((p) => p.child_level === "unit")?.parent_code;
     const carton = path?.find((p) => p.child_code === box)?.parent_code;
@@ -207,3 +216,4 @@ export async function GET(req: Request) {
     },
   });
 }
+

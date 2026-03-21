@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -12,7 +13,7 @@ export async function POST(req: Request) {
     const { handset_id, enabled } = payload;
 
     if (!handset_id || enabled === undefined) {
-      return NextResponse.json(
+      return apiJson(
         { success: false, error: "handset_id and enabled are required" },
         { status: 400 }
       );
@@ -20,7 +21,7 @@ export async function POST(req: Request) {
 
     const companyId = await resolveCompanyIdFromRequest(req);
     if (!companyId) {
-      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+      return apiJson({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
     const { data: handset, error: handsetError } = await supabase
@@ -29,10 +30,10 @@ export async function POST(req: Request) {
       .eq("id", handset_id)
       .maybeSingle();
     if (handsetError) {
-      return NextResponse.json({ success: false, error: handsetError.message }, { status: 500 });
+      return apiJson({ success: false, error: handsetError.message }, { status: 500 });
     }
     if (!handset || handset.company_id !== companyId) {
-      return NextResponse.json({ success: false, error: "Handset not found" }, { status: 404 });
+      return apiJson({ success: false, error: "Handset not found" }, { status: 404 });
     }
 
     const { data: updated, error: updateError } = await supabase
@@ -42,14 +43,15 @@ export async function POST(req: Request) {
       .select("*")
       .single();
     if (updateError) {
-      return NextResponse.json({ success: false, error: updateError.message }, { status: 500 });
+      return apiJson({ success: false, error: updateError.message }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, handset: updated });
+    return apiJson({ success: true, handset: updated });
   } catch (err: any) {
-    return NextResponse.json(
+    return apiJson(
       { success: false, error: err?.message || "Failed to update handset" },
       { status: 500 }
     );
   }
 }
+

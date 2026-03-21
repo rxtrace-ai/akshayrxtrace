@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { getMissingProductionEnv, hasWebhookSecret } from '@/lib/env';
 
 export async function GET() {
@@ -15,7 +16,7 @@ export async function GET() {
     (missingEnv.length > 0 || (hasRazorpayKeys && !webhookSecretOk));
   const status = hasCriticalGaps ? 'degraded' : 'ok';
 
-  return NextResponse.json(
+  return apiJson(
     {
       status,
       timestamp: new Date().toISOString(),
@@ -31,3 +32,4 @@ export async function GET() {
     { status: hasCriticalGaps ? 503 : 200 }
   );
 }
+

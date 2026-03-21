@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { headers } from "next/headers";
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { getOrGenerateCorrelationId } from "@/lib/observability/correlation";
@@ -15,7 +16,7 @@ export async function POST(req: NextRequest) {
     const correlationId = getOrGenerateCorrelationId(await headers(), "user");
     const body = await req.json().catch(() => ({}));
     const quoteId = String((body as any)?.quote_id || "").trim();
-    if (!quoteId) return NextResponse.json({ error: "quote_id is required" }, { status: 400 });
+    if (!quoteId) return apiJson({ error: "quote_id is required" }, { status: 400 });
 
     const result = await finalizeQuoteInternal({
       supabase: owner.supabase as any,
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
       correlationId,
     });
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       quote_id: result.quote_id,
       invoice_reference: result.invoice_reference,
@@ -35,17 +36,18 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     const message = String(error?.message || "");
     if (message.includes("PAYMENT_NOT_CAPTURED_YET")) {
-      return NextResponse.json({ error: "PAYMENT_NOT_CAPTURED_YET" }, { status: 409 });
+      return apiJson({ error: "PAYMENT_NOT_CAPTURED_YET" }, { status: 409 });
     }
     if (message.includes("QUOTE_FORBIDDEN")) {
-      return NextResponse.json({ error: "QUOTE_FORBIDDEN" }, { status: 403 });
+      return apiJson({ error: "QUOTE_FORBIDDEN" }, { status: 403 });
     }
     if (message.includes("QUOTE_NOT_FOUND")) {
-      return NextResponse.json({ error: "QUOTE_NOT_FOUND" }, { status: 404 });
+      return apiJson({ error: "QUOTE_NOT_FOUND" }, { status: 404 });
     }
-    return NextResponse.json(
+    return apiJson(
       { error: error?.message || "Failed to finalize checkout" },
       { status: 500 }
     );
   }
 }
+

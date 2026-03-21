@@ -180,7 +180,7 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: "Invalid signature" }), { status: 401 });
   }
 
-  const limit = consumeRateLimit({
+  const limit = await consumeRateLimit({
     key: "razorpay-webhook-global",
     refillPerMinute: 300,
     burst: 300,
@@ -296,3 +296,4 @@ export async function POST(req: Request) {
     });
   }
 }
+

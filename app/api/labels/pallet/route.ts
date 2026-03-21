@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import QRCode from "qrcode";
 import bwipjs from "bwip-js";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -13,7 +14,7 @@ export async function GET(req: Request) {
   const format = url.searchParams.get("format") || "json"; // json, qr, datamatrix
   const download = url.searchParams.get("download") === "true";
 
-  if (!sscc) return NextResponse.json({ error: "sscc required" }, { status: 400 });
+  if (!sscc) return apiJson({ error: "sscc required" }, { status: 400 });
 
   // Human-readable GS1 AI payload
   const humanReadable = `(00)${sscc}`;
@@ -22,7 +23,7 @@ export async function GET(req: Request) {
 
   // JSON response (default)
   if (format === "json") {
-    return NextResponse.json({ 
+    return apiJson({ 
       sscc, 
       payload: humanReadable,
       barcodeData: barcodeData,
@@ -52,7 +53,7 @@ export async function GET(req: Request) {
         }
       });
     } catch (err: any) {
-      return NextResponse.json({ error: "QR generation failed: " + err.message }, { status: 500 });
+      return apiJson({ error: "QR generation failed: " + err.message }, { status: 500 });
     }
   }
 
@@ -79,9 +80,10 @@ export async function GET(req: Request) {
         }
       });
     } catch (err: any) {
-      return NextResponse.json({ error: "DataMatrix generation failed: " + err.message }, { status: 500 });
+      return apiJson({ error: "DataMatrix generation failed: " + err.message }, { status: 500 });
     }
   }
 
-  return NextResponse.json({ error: "Invalid format. Use: json, qr, or datamatrix" }, { status: 400 });
+  return apiJson({ error: "Invalid format. Use: json, qr, or datamatrix" }, { status: 400 });
 }
+

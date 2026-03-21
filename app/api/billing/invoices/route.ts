@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 
 export const runtime = "nodejs";
@@ -17,10 +18,10 @@ export async function GET() {
     .order("created_at", { ascending: false });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiJson({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({
+  return apiJson({
     success: true,
     invoices: (data || []).map((row: any) => {
       const rawPdfUrl = String(row.invoice_pdf_url || "").trim();
@@ -35,3 +36,4 @@ export async function GET() {
     }),
   });
 }
+

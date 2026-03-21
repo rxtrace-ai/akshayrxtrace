@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { consumeRateLimit } from "@/lib/security/rateLimit";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { signDeviceAuthToken } from "@/lib/handset-v2/auth";
@@ -8,7 +9,7 @@ const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[
 
 export async function POST(req: Request) {
   if (!isHandsetV2Enabled()) {
-    return NextResponse.json({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
+    return apiJson({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
   }
 
   const ip = safeIpFromRequest(req);
@@ -27,35 +28,35 @@ export async function POST(req: Request) {
   const deviceName = String(body.device_name || "").trim();
 
   if (!token || !/^RX-[A-Z0-9]{6}-[A-Z0-9]{6}$/.test(token)) {
-    return NextResponse.json({ success: false, error: "INVALID_TOKEN" }, { status: 400 });
+    return apiJson({ success: false, error: "INVALID_TOKEN" }, { status: 400 });
   }
   if (!UUID_V4_REGEX.test(deviceId)) {
-    return NextResponse.json({ success: false, error: "INVALID_DEVICE_ID" }, { status: 400 });
+    return apiJson({ success: false, error: "INVALID_DEVICE_ID" }, { status: 400 });
   }
   if (platform !== "android") {
-    return NextResponse.json({ success: false, error: "INVALID_PLATFORM" }, { status: 400 });
+    return apiJson({ success: false, error: "INVALID_PLATFORM" }, { status: 400 });
   }
 
-  const ipLimit = consumeRateLimit({ key: `handset-v2:activate:ip:${ip}`, refillPerMinute: 20, burst: 20 });
-  const deviceLimit = consumeRateLimit({ key: `handset-v2:activate:device:${deviceId}`, refillPerMinute: 10, burst: 10 });
-  const tokenLimit = consumeRateLimit({ key: `handset-v2:activate:token:${hashActivationToken(token)}`, refillPerMinute: 30, burst: 30 });
+  const ipLimit = await consumeRateLimit({ key: `handset-v2:activate:ip:${ip}`, refillPerMinute: 20, burst: 20 });
+  const deviceLimit = await consumeRateLimit({ key: `handset-v2:activate:device:${deviceId}`, refillPerMinute: 10, burst: 10 });
+  const tokenLimit = await consumeRateLimit({ key: `handset-v2:activate:token:${hashActivationToken(token)}`, refillPerMinute: 30, burst: 30 });
 
   if (!ipLimit.allowed) {
-    return NextResponse.json(
+    return apiJson(
       { success: false, error: "RATE_LIMITED", retry_after_seconds: ipLimit.retryAfterSeconds },
       { status: 429 }
     );
   }
 
   if (!deviceLimit.allowed) {
-    return NextResponse.json(
+    return apiJson(
       { success: false, error: "RATE_LIMITED", retry_after_seconds: deviceLimit.retryAfterSeconds },
       { status: 429 }
     );
   }
 
   if (!tokenLimit.allowed) {
-    return NextResponse.json(
+    return apiJson(
       { success: false, error: "RATE_LIMITED", retry_after_seconds: tokenLimit.retryAfterSeconds },
       { status: 429 }
     );
@@ -86,12 +87,12 @@ export async function POST(req: Request) {
         : msg.includes("TOKEN_NOT_FOUND")
         ? "INVALID_TOKEN"
         : "ACTIVATION_FAILED";
-      return NextResponse.json({ success: false, error: mapped }, { status: mapped === "ACTIVATION_FAILED" ? 500 : 400 });
+      return apiJson({ success: false, error: mapped }, { status: mapped === "ACTIVATION_FAILED" ? 500 : 400 });
     }
 
     const row = Array.isArray(data) ? data[0] : data;
     if (!row?.handset_id || !row?.company_id) {
-      return NextResponse.json({ success: false, error: "ACTIVATION_FAILED" }, { status: 500 });
+      return apiJson({ success: false, error: "ACTIVATION_FAILED" }, { status: 500 });
     }
 
     const deviceAuthToken = signDeviceAuthToken({
@@ -100,7 +101,7 @@ export async function POST(req: Request) {
       deviceId,
     });
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       handset_id: String(row.handset_id),
       device_auth_token: deviceAuthToken,
@@ -116,9 +117,11 @@ export async function POST(req: Request) {
       },
     });
   } catch (err: any) {
-    return NextResponse.json(
+    return apiJson(
       { success: false, error: redactToken(String(err?.message || "ACTIVATION_FAILED")) },
       { status: 500 }
     );
   }
 }
+
+

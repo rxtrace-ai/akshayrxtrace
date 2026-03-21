@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { loadCheckoutCatalog } from "@/lib/billing/userCheckout";
 import { getUnifiedSubscriptionStatus } from "@/lib/billing/subscriptionStatus";
@@ -20,7 +21,7 @@ export async function GET() {
 
     const currentSubscription = subscriptionStatus.subscription ?? null;
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       company: {
         id: owner.companyId,
@@ -73,9 +74,10 @@ export async function GET() {
         : null,
     });
   } catch (error: any) {
-    return NextResponse.json(
+    return apiJson(
       { error: error?.message || "Failed to load checkout context" },
       { status: 500 }
     );
   }
 }
+

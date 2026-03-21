@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { consumeRateLimit } from "@/lib/security/rateLimit";
 import { getCompanyUserContext, insertHandsetLog } from "@/lib/handset-v2/db";
 import {
@@ -13,34 +14,34 @@ import {
 
 export async function POST(req: Request) {
   if (!isHandsetV2Enabled()) {
-    return NextResponse.json({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
+    return apiJson({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
   }
 
   const ctx = await getCompanyUserContext();
   if (!ctx.ok) {
-    return NextResponse.json({ success: false, error: ctx.error }, { status: ctx.status });
+    return apiJson({ success: false, error: ctx.error }, { status: ctx.status });
   }
 
-  const perUser = consumeRateLimit({
+  const perUser = await consumeRateLimit({
     key: `handset-v2:create:user:${ctx.userId}`,
     refillPerMinute: 6,
     burst: 6,
   });
-  const perCompany = consumeRateLimit({
+  const perCompany = await consumeRateLimit({
     key: `handset-v2:create:company:${ctx.companyId}`,
     refillPerMinute: 20,
     burst: 20,
   });
 
   if (!perUser.allowed) {
-    return NextResponse.json(
+    return apiJson(
       { success: false, error: "RATE_LIMITED", retry_after_seconds: perUser.retryAfterSeconds },
       { status: 429 }
     );
   }
 
   if (!perCompany.allowed) {
-    return NextResponse.json(
+    return apiJson(
       { success: false, error: "RATE_LIMITED", retry_after_seconds: perCompany.retryAfterSeconds },
       { status: 429 }
     );
@@ -78,7 +79,7 @@ export async function POST(req: Request) {
       .single();
 
     if (error || !row) {
-      return NextResponse.json({ success: false, error: error?.message || "TOKEN_CREATE_FAILED" }, { status: 500 });
+      return apiJson({ success: false, error: error?.message || "TOKEN_CREATE_FAILED" }, { status: 500 });
     }
 
     await insertHandsetLog({
@@ -93,7 +94,7 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       token: plainToken,
       token_id: row.id,
@@ -103,9 +104,11 @@ export async function POST(req: Request) {
       activation_count: row.activation_count,
     });
   } catch (err: any) {
-    return NextResponse.json(
+    return apiJson(
       { success: false, error: redactToken(String(err?.message || "TOKEN_CREATE_FAILED")) },
       { status: 500 }
     );
   }
 }
+
+

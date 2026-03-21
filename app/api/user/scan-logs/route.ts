@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
+import { buildSafeIlikePattern } from "@/lib/api/filter";
+import { fail, ok } from "@/lib/api/response";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,10 +43,12 @@ function applyFilters(query: any, params: URLSearchParams) {
     next = next.lte("scanned_at", `${to}T23:59:59`);
   }
   if (q) {
-    const escaped = q.replace(/,/g, " ");
-    next = next.or(
-      `raw_scan.ilike.%${escaped}%,parsed->>serialNo.ilike.%${escaped}%,parsed->>serial.ilike.%${escaped}%,parsed->>gtin.ilike.%${escaped}%,parsed->>batchNo.ilike.%${escaped}%,parsed->>batch.ilike.%${escaped}%`
-    );
+    const pattern = buildSafeIlikePattern(q, 80);
+    if (pattern) {
+      next = next.or(
+        `raw_scan.ilike.${pattern},parsed->>serialNo.ilike.${pattern},parsed->>serial.ilike.${pattern},parsed->>gtin.ilike.${pattern},parsed->>batchNo.ilike.${pattern},parsed->>batch.ilike.${pattern}`
+      );
+    }
   }
   return next;
 }
@@ -86,12 +89,12 @@ export async function GET(req: Request) {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return fail("UNAUTHORIZED", "Unauthorized", 401);
     }
 
     const resolved = await resolveCompanyForUser(admin, user.id, "id");
     if (!resolved) {
-      return NextResponse.json({ error: "Company not found" }, { status: 404 });
+      return fail("NOT_FOUND", "Company not found", 404);
     }
 
     const params = new URL(req.url).searchParams;
@@ -110,15 +113,14 @@ export async function GET(req: Request) {
     const { data, error, count } = await filtered;
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return fail("INTERNAL_ERROR", error.message, 500);
     }
 
     const rows = (data || []) as ScanLogRow[];
     const items = rows.map((row) => normalizeScanLog(row));
     const total = Number(count || 0);
 
-    return NextResponse.json({
-      success: true,
+    return ok({
       items,
       page,
       limit,
@@ -126,6 +128,6 @@ export async function GET(req: Request) {
       has_more: fromIndex + items.length < total,
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message || "Failed to fetch scan logs" }, { status: 500 });
+    return fail("INTERNAL_ERROR", err?.message || "Failed to fetch scan logs", 500);
   }
 }

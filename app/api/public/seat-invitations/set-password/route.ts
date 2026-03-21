@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { hashSeatInviteToken } from "@/lib/seats/invitations";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { consumeRateLimit } from "@/lib/security/rateLimit";
@@ -6,13 +7,13 @@ import { consumeRateLimit } from "@/lib/security/rateLimit";
 export async function POST(req: Request) {
   const forwarded = req.headers.get("x-forwarded-for") || "";
   const ip = forwarded.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
-  const rateLimit = consumeRateLimit({
+  const rateLimit = await consumeRateLimit({
     key: `seat-invite-set-password:${ip}`,
     refillPerMinute: 10,
     burst: 10,
   });
   if (!rateLimit.allowed) {
-    return NextResponse.json(
+    return apiJson(
       { error: "RATE_LIMITED", retry_after_seconds: rateLimit.retryAfterSeconds },
       { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds ?? 60) } }
     );
@@ -23,10 +24,10 @@ export async function POST(req: Request) {
   const password = String(body.password || "");
 
   if (!token) {
-    return NextResponse.json({ error: "INVITATION_TOKEN_REQUIRED" }, { status: 400 });
+    return apiJson({ error: "INVITATION_TOKEN_REQUIRED" }, { status: 400 });
   }
   if (password.length < 8) {
-    return NextResponse.json({ error: "PASSWORD_TOO_SHORT" }, { status: 400 });
+    return apiJson({ error: "PASSWORD_TOO_SHORT" }, { status: 400 });
   }
 
   const admin = getSupabaseAdmin();
@@ -39,24 +40,24 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   if (inviteError) {
-    return NextResponse.json({ error: inviteError.message }, { status: 500 });
+    return apiJson({ error: inviteError.message }, { status: 500 });
   }
   if (!invite) {
-    return NextResponse.json({ error: "INVITATION_NOT_FOUND" }, { status: 404 });
+    return apiJson({ error: "INVITATION_NOT_FOUND" }, { status: 404 });
   }
   if (invite.status === "revoked") {
-    return NextResponse.json({ error: "INVITATION_REVOKED" }, { status: 409 });
+    return apiJson({ error: "INVITATION_REVOKED" }, { status: 409 });
   }
   if (invite.status !== "pending" || invite.consumed_at) {
-    return NextResponse.json({ error: "INVITATION_ALREADY_USED" }, { status: 409 });
+    return apiJson({ error: "INVITATION_ALREADY_USED" }, { status: 409 });
   }
   if (invite.expires_at && Date.now() > new Date(invite.expires_at).getTime()) {
-    return NextResponse.json({ error: "INVITATION_EXPIRED" }, { status: 410 });
+    return apiJson({ error: "INVITATION_EXPIRED" }, { status: 410 });
   }
 
   const invitationEmail = String(invite.email || invite.sent_to_email || "").toLowerCase().trim();
   if (!invitationEmail) {
-    return NextResponse.json({ error: "INVITATION_EMAIL_MISSING" }, { status: 500 });
+    return apiJson({ error: "INVITATION_EMAIL_MISSING" }, { status: 500 });
   }
 
   const { data: existingUsers, error: existingUserError } = await admin
@@ -67,10 +68,10 @@ export async function POST(req: Request) {
     .limit(1);
 
   if (existingUserError) {
-    return NextResponse.json({ error: existingUserError.message }, { status: 500 });
+    return apiJson({ error: existingUserError.message }, { status: 500 });
   }
   if ((existingUsers || []).length > 0) {
-    return NextResponse.json({ error: "ACCOUNT_EXISTS" }, { status: 409 });
+    return apiJson({ error: "ACCOUNT_EXISTS" }, { status: 409 });
   }
 
   const { data: created, error: createError } = await admin.auth.admin.createUser({
@@ -80,7 +81,7 @@ export async function POST(req: Request) {
   });
 
   if (createError || !created.user?.id) {
-    return NextResponse.json(
+    return apiJson(
       { error: createError?.message || "ACCOUNT_CREATION_FAILED" },
       { status: 500 }
     );
@@ -100,8 +101,10 @@ export async function POST(req: Request) {
     // best effort
   }
 
-  return NextResponse.json({
+  return apiJson({
     success: true,
     invitation_email: invitationEmail,
   });
 }
+
+

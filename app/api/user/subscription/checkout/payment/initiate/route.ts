@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { headers } from "next/headers";
 import Razorpay from "razorpay";
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const quoteId = String((body as any)?.quote_id || "").trim();
     if (!quoteId) {
-      return NextResponse.json({ error: "quote_id is required" }, { status: 400 });
+      return apiJson({ error: "quote_id is required" }, { status: 400 });
     }
 
     const { data: quote, error: quoteError } = await owner.supabase
@@ -39,18 +40,18 @@ export async function POST(req: NextRequest) {
       .eq("company_id", owner.companyId)
       .eq("user_id", owner.userId)
       .maybeSingle();
-    if (quoteError) return NextResponse.json({ error: quoteError.message }, { status: 500 });
-    if (!quote) return NextResponse.json({ error: "QUOTE_NOT_FOUND" }, { status: 404 });
+    if (quoteError) return apiJson({ error: quoteError.message }, { status: 500 });
+    if (!quote) return apiJson({ error: "QUOTE_NOT_FOUND" }, { status: 404 });
 
     const quoteStatus = String((quote as any).status || "").trim().toLowerCase();
     if (quoteStatus !== "active") {
-      return NextResponse.json({ error: "QUOTE_NOT_ACTIVE" }, { status: 409 });
+      return apiJson({ error: "QUOTE_NOT_ACTIVE" }, { status: 409 });
     }
 
     const expiresAt = new Date(String((quote as any).expires_at || "")).getTime();
     if (Number.isNaN(expiresAt) || Date.now() > expiresAt) {
       await owner.supabase.from("quotes").update({ status: "expired" }).eq("id", quoteId);
-      return NextResponse.json({ error: "QUOTE_EXPIRED" }, { status: 409 });
+      return apiJson({ error: "QUOTE_EXPIRED" }, { status: 409 });
     }
 
     const totalsSnapshot = ((quote as any).totals_snapshot_json || {}) as Record<string, unknown>;
@@ -58,16 +59,16 @@ export async function POST(req: NextRequest) {
     const hasPlan = Object.keys(planSnapshot).length > 0;
     const finalAmountPaise = toPaise(totalsSnapshot.final_total_paise);
     if (!finalAmountPaise) {
-      return NextResponse.json({ error: "QUOTE_FINAL_TOTAL_MISSING" }, { status: 409 });
+      return apiJson({ error: "QUOTE_FINAL_TOTAL_MISSING" }, { status: 409 });
     }
     if (finalAmountPaise <= 0) {
-      return NextResponse.json({ error: "FINAL_TOTAL_MUST_BE_GREATER_THAN_ZERO" }, { status: 400 });
+      return apiJson({ error: "FINAL_TOTAL_MUST_BE_GREATER_THAN_ZERO" }, { status: 400 });
     }
 
     const keyId = process.env.RAZORPAY_KEY_ID?.trim();
     const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
     if (!keyId || !keySecret) {
-      return NextResponse.json({ error: "RAZORPAY_NOT_CONFIGURED" }, { status: 503 });
+      return apiJson({ error: "RAZORPAY_NOT_CONFIGURED" }, { status: 503 });
     }
 
     const { data: existingIntent, error: intentReadError } = await owner.supabase
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest) {
       .select("*")
       .eq("quote_id", quoteId)
       .maybeSingle();
-    if (intentReadError) return NextResponse.json({ error: intentReadError.message }, { status: 500 });
+    if (intentReadError) return apiJson({ error: intentReadError.message }, { status: 500 });
 
     if (existingIntent && String((existingIntent as any).razorpay_order_id || "").trim()) {
       if (hasPlan) {
@@ -114,7 +115,7 @@ export async function POST(req: NextRequest) {
         .update({ status: "pending_payment" })
         .eq("id", quoteId)
         .eq("status", "active");
-      return NextResponse.json({
+      return apiJson({
         success: true,
         replay: true,
         quote_id: quoteId,
@@ -145,7 +146,7 @@ export async function POST(req: NextRequest) {
     });
     const orderId = String(createdOrder?.id || "").trim();
     if (!orderId) {
-      return NextResponse.json({ error: "RAZORPAY_ORDER_CREATE_FAILED" }, { status: 502 });
+      return apiJson({ error: "RAZORPAY_ORDER_CREATE_FAILED" }, { status: 502 });
     }
 
     const payload = {
@@ -162,7 +163,7 @@ export async function POST(req: NextRequest) {
       .upsert(payload, { onConflict: "quote_id" })
       .select("id, razorpay_order_id")
       .single();
-    if (upsertError) return NextResponse.json({ error: upsertError.message }, { status: 500 });
+    if (upsertError) return apiJson({ error: upsertError.message }, { status: 500 });
 
     await owner.supabase
       .from("quotes")
@@ -201,7 +202,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       quote_id: quoteId,
       payment_intent_id: (savedIntent as any).id,
@@ -215,9 +216,10 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error: any) {
-    return NextResponse.json(
+    return apiJson(
       { error: error?.message || "Failed to initiate Razorpay checkout payment" },
       { status: 500 }
     );
   }
 }
+

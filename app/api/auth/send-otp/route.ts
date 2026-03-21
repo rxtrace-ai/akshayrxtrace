@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { getAdminClient, generateOTP, getExpiryDate, clearExistingOTPs, insertOTP, sendOTPEmail } from '@/lib/auth/otp';
+import { fail, ok } from '@/lib/api/response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,10 +12,7 @@ export async function POST(req: NextRequest) {
     const { email } = await req.json();
 
     if (!email || !/\S+@\S+\.\S+/.test(email)) {
-      return NextResponse.json(
-        { error: 'Invalid email address' },
-        { status: 400 }
-      );
+      return fail('INVALID_EMAIL', 'Invalid email address', 400);
     }
 
     // Generate OTP and expiry
@@ -32,10 +30,7 @@ export async function POST(req: NextRequest) {
 
     if (dbError) {
       console.error('Database error:', dbError);
-      return NextResponse.json(
-        { error: 'Failed to generate OTP. Please try again.' },
-        { status: 500 }
-      );
+      return fail('OTP_DB_ERROR', 'Failed to generate OTP. Please try again.', 500);
     }
 
     // Send email
@@ -48,23 +43,16 @@ export async function POST(req: NextRequest) {
         code: emailError?.code,
         response: emailError?.response?.data
       });
-      return NextResponse.json(
-        { error: `Failed to send OTP email: ${emailError?.message || 'Unknown error'}` },
-        { status: 500 }
-      );
+      return fail('OTP_EMAIL_SEND_FAILED', 'Failed to send OTP email', 500);
     }
 
-    return NextResponse.json({
-      success: true,
+    return ok({
       message: 'OTP sent successfully',
       expiresIn: 600, // seconds
     });
   } catch (error) {
     console.error('Send OTP error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return fail('INTERNAL_ERROR', 'Internal server error', 500);
   }
 }
 

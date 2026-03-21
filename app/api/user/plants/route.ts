@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
 import { getPlantEntitlement } from "@/lib/plants/entitlement";
@@ -14,12 +15,12 @@ export async function GET() {
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return apiJson({ error: "Unauthorized" }, { status: 401 });
   }
 
   const resolved = await resolveCompanyForUser(supabase, user.id, "id");
   if (!resolved || !resolved.isOwner) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return apiJson({ error: "Forbidden" }, { status: 403 });
   }
 
   const { data, error } = await supabase
@@ -29,13 +30,13 @@ export async function GET() {
     .order("created_at", { ascending: false });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiJson({ error: error.message }, { status: 500 });
   }
 
   const rows = data || [];
   const entitlement = await getPlantEntitlement(supabase, resolved.companyId);
 
-  return NextResponse.json({
+  return apiJson({
     success: true,
     summary: {
       allocated: entitlement.allocated,
@@ -56,12 +57,12 @@ export async function POST(req: Request) {
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return apiJson({ error: "Unauthorized" }, { status: 401 });
   }
 
   const resolved = await resolveCompanyForUser(supabase, user.id, "id");
   if (!resolved || !resolved.isOwner) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return apiJson({ error: "Forbidden" }, { status: 403 });
   }
 
   const body = await req.json().catch(() => ({}));
@@ -71,7 +72,7 @@ export async function POST(req: Request) {
   const location_description = String(body.location_description || "").trim();
 
   if (!name || !street_address || !city_state) {
-    return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    return apiJson({ error: "Missing required fields" }, { status: 400 });
   }
 
   const { data, error } = await supabase.rpc("activate_plant_atomic", {
@@ -86,23 +87,24 @@ export async function POST(req: Request) {
   if (error) {
     const message = String(error.message || "Plant activation failed");
     if (message.includes("TRIAL_EXPIRED")) {
-      return NextResponse.json({ error: "TRIAL_EXPIRED" }, { status: 403 });
+      return apiJson({ error: "TRIAL_EXPIRED" }, { status: 403 });
     }
     if (message.includes("PLANT_QUOTA_EXCEEDED")) {
-      return NextResponse.json({ error: "PLANT_QUOTA_EXCEEDED" }, { status: 403 });
+      return apiJson({ error: "PLANT_QUOTA_EXCEEDED" }, { status: 403 });
     }
     if (message.includes("COMPANY_FROZEN")) {
-      return NextResponse.json({ error: "COMPANY_FROZEN" }, { status: 403 });
+      return apiJson({ error: "COMPANY_FROZEN" }, { status: 403 });
     }
     if (message.includes("FORBIDDEN")) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return apiJson({ error: "Forbidden" }, { status: 403 });
     }
     if (message.includes("plants_company_normalized_name_key")) {
-      return NextResponse.json({ error: "PLANT_NAME_ALREADY_EXISTS" }, { status: 409 });
+      return apiJson({ error: "PLANT_NAME_ALREADY_EXISTS" }, { status: 409 });
     }
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiJson({ error: message }, { status: 500 });
   }
 
   const rpcPayload = Array.isArray(data) ? data[0] : data;
-  return NextResponse.json(rpcPayload ?? { success: true });
+  return apiJson(rpcPayload ?? { success: true });
 }
+

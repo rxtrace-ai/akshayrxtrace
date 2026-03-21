@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
@@ -26,12 +27,12 @@ export async function GET() {
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return apiJson({ error: "Unauthorized" }, { status: 401 });
   }
 
   const resolved = await resolveCompanyForUser(admin, user.id, "id");
   if (!resolved || !resolved.isOwner) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return apiJson({ error: "Forbidden" }, { status: 403 });
   }
 
   const entitlement = await getSeatEntitlement(admin, resolved.companyId);
@@ -54,7 +55,7 @@ export async function GET() {
     .order("created_at", { ascending: false });
 
   if (seatsError) {
-    return NextResponse.json({ error: seatsError.message }, { status: 500 });
+    return apiJson({ error: seatsError.message }, { status: 500 });
   }
 
   const seatIds = (seats || []).map((seat) => seat.id);
@@ -77,7 +78,7 @@ export async function GET() {
       : { data: [], error: null };
 
   if (assignmentsError) {
-    return NextResponse.json({ error: assignmentsError.message }, { status: 500 });
+    return apiJson({ error: assignmentsError.message }, { status: 500 });
   }
 
   const { data: invitations, error: invitesError } =
@@ -91,7 +92,7 @@ export async function GET() {
       : { data: [], error: null };
 
   if (invitesError) {
-    return NextResponse.json({ error: invitesError.message }, { status: 500 });
+    return apiJson({ error: invitesError.message }, { status: 500 });
   }
 
   const { data: profiles, error: profilesError } =
@@ -103,7 +104,7 @@ export async function GET() {
       : { data: [], error: null };
 
   if (profilesError) {
-    return NextResponse.json({ error: profilesError.message }, { status: 500 });
+    return apiJson({ error: profilesError.message }, { status: 500 });
   }
   const fullNameByUserId = new Map<string, string | null>();
   for (const profile of profiles || []) {
@@ -175,7 +176,7 @@ export async function GET() {
   );
   const blockedByTrial = entitlement.reason === "trial_expired";
 
-  return NextResponse.json({
+  return apiJson({
     success: true,
     summary: {
       allocated: entitlement.allocated,
@@ -188,3 +189,4 @@ export async function GET() {
     seats: rows,
   });
 }
+

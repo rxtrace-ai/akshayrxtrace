@@ -27,8 +27,9 @@ function parseBonusField(value: unknown): { ok: true; value: number } | { ok: fa
   return { ok: true, value };
 }
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
+    const params = await ctx.params;
     const headersList = await headers();
     const correlationId = getOrGenerateCorrelationId(headersList, "admin");
     const companyId = params.id;
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return errorResponse(403, "FORBIDDEN", "Super admin access required", correlationId);
     }
 
-    const limit = consumeRateLimit({
+    const limit = await consumeRateLimit({
       key: `admin-mutation:${auth.userId}`,
       refillPerMinute: 20,
       burst: 30,
@@ -124,3 +125,4 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return errorResponse(500, "INTERNAL_ERROR", error?.message || "Bonus quota allocation failed", correlationId);
   }
 }
+

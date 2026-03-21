@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { writeAuditLog } from "@/lib/audit";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -19,7 +20,7 @@ export async function GET(req: Request) {
   } = await (await supabaseServer()).auth.getUser();
 
   if (!user || authError) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    return apiJson({ error: "Not authenticated" }, { status: 401 });
   }
 
   const { data: company, error: companyError } = await supabase
@@ -29,11 +30,11 @@ export async function GET(req: Request) {
     .maybeSingle();
 
   if (companyError) {
-    return NextResponse.json({ error: companyError.message }, { status: 500 });
+    return apiJson({ error: companyError.message }, { status: 500 });
   }
 
   if (!company?.id) {
-    return NextResponse.json({ error: "Company not found" }, { status: 404 });
+    return apiJson({ error: "Company not found" }, { status: 404 });
   }
 
   const companyId = company.id as string;
@@ -80,7 +81,7 @@ export async function GET(req: Request) {
     } catch {
       // do not fail report generation because auditing failed
     }
-    return NextResponse.json(
+    return apiJson(
       { error: error.message },
       { status: 500 }
     );
@@ -126,3 +127,4 @@ export async function GET(req: Request) {
     },
   });
 }
+

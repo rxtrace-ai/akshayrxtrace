@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { createClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase/server';
 
@@ -12,7 +13,7 @@ export async function POST(req: NextRequest) {
     const { data: { user }, error: authError } = await (await supabaseServer()).auth.getUser();
 
     if (!user || authError) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+      return apiJson({ error: 'Not authenticated' }, { status: 401 });
     }
 
     const { company_name, phone, pan, gst_number, address } = await req.json();
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (companyError || !company) {
-      return NextResponse.json(
+      return apiJson(
         { error: 'Company not found' },
         { status: 404 }
       );
@@ -73,13 +74,13 @@ export async function POST(req: NextRequest) {
 
     if (updateError) {
       console.error('Company update error:', updateError);
-      return NextResponse.json(
+      return apiJson(
         { error: 'Failed to update company profile' },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       message: 'Company profile updated successfully',
       company: {
@@ -94,9 +95,10 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error('Update company profile error:', error);
-    return NextResponse.json(
+    return apiJson(
       { error: error.message || 'Failed to update company profile' },
       { status: 500 }
     );
   }
 }
+

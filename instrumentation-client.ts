@@ -4,28 +4,31 @@
 
 import * as Sentry from "@sentry/nextjs";
 
-Sentry.init({
-  dsn: "https://cdbb5eaa8594966af74b2884d9bf0077@o4510710313451520.ingest.de.sentry.io/4510710315745360",
+const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
-  // Add optional integrations for additional features
-  integrations: [Sentry.replayIntegration()],
+if (dsn) {
+  Sentry.init({
+    dsn,
 
-  // Define how likely traces are sampled. Adjust this value in production, or use tracesSampler for greater control.
-  tracesSampleRate: 1,
-  // Enable logs to be sent to Sentry
-  enableLogs: true,
+    // Add optional integrations for additional features
+    integrations: [Sentry.replayIntegration()],
 
-  // Define how likely Replay events are sampled.
-  // This sets the sample rate to be 10%. You may want this to be 100% while
-  // in development and sample at a lower rate in production
-  replaysSessionSampleRate: 0.1,
+    // Define how likely traces are sampled. Adjust this value in production, or use tracesSampler for greater control.
+    tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1,
+    // Enable logs to be sent to Sentry
+    enableLogs: true,
 
-  // Define how likely Replay events are sampled when an error occurs.
-  replaysOnErrorSampleRate: 1.0,
+    // Define how likely Replay events are sampled.
+    // This sets the sample rate to be 10%. You may want this to be 100% while
+    // in development and sample at a lower rate in production
+    replaysSessionSampleRate: process.env.NODE_ENV === "production" ? 0.05 : 0.1,
 
-  // Enable sending user PII (Personally Identifiable Information)
-  // https://docs.sentry.io/platforms/javascript/guides/nextjs/configuration/options/#sendDefaultPii
-  sendDefaultPii: true,
-});
+    // Define how likely Replay events are sampled when an error occurs.
+    replaysOnErrorSampleRate: process.env.NODE_ENV === "production" ? 0.5 : 1.0,
+
+    // Default to privacy-preserving client telemetry.
+    sendDefaultPii: false,
+  });
+}
 
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;

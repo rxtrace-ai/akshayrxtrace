@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { hashSeatInviteToken } from "@/lib/seats/invitations";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { consumeRateLimit } from "@/lib/security/rateLimit";
@@ -9,20 +10,20 @@ export async function GET(req: Request) {
 
   const forwarded = req.headers.get("x-forwarded-for") || "";
   const ip = forwarded.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
-  const rateLimit = consumeRateLimit({
+  const rateLimit = await consumeRateLimit({
     key: `seat-invite-preview:${ip}`,
     refillPerMinute: 30,
     burst: 30,
   });
   if (!rateLimit.allowed) {
-    return NextResponse.json(
+    return apiJson(
       { error: "RATE_LIMITED", retry_after_seconds: rateLimit.retryAfterSeconds },
       { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds ?? 60) } }
     );
   }
 
   if (!token) {
-    return NextResponse.json({ error: "INVITATION_TOKEN_REQUIRED" }, { status: 400 });
+    return apiJson({ error: "INVITATION_TOKEN_REQUIRED" }, { status: 400 });
   }
 
   const admin = getSupabaseAdmin();
@@ -35,30 +36,32 @@ export async function GET(req: Request) {
     .maybeSingle();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiJson({ error: error.message }, { status: 500 });
   }
   if (!invite) {
-    return NextResponse.json({ error: "INVITATION_NOT_FOUND" }, { status: 404 });
+    return apiJson({ error: "INVITATION_NOT_FOUND" }, { status: 404 });
   }
 
   if (invite.status === "revoked") {
-    return NextResponse.json({ error: "INVITATION_REVOKED" }, { status: 409 });
+    return apiJson({ error: "INVITATION_REVOKED" }, { status: 409 });
   }
   if (invite.status !== "pending" || invite.consumed_at) {
-    return NextResponse.json({ error: "INVITATION_ALREADY_USED" }, { status: 409 });
+    return apiJson({ error: "INVITATION_ALREADY_USED" }, { status: 409 });
   }
   if (invite.expires_at && Date.now() > new Date(invite.expires_at).getTime()) {
-    return NextResponse.json({ error: "INVITATION_EXPIRED" }, { status: 410 });
+    return apiJson({ error: "INVITATION_EXPIRED" }, { status: 410 });
   }
 
   const invitationEmail = String(invite.email || invite.sent_to_email || "").toLowerCase().trim();
   if (!invitationEmail) {
-    return NextResponse.json({ error: "INVITATION_EMAIL_MISSING" }, { status: 500 });
+    return apiJson({ error: "INVITATION_EMAIL_MISSING" }, { status: 500 });
   }
 
-  return NextResponse.json({
+  return apiJson({
     success: true,
     invitation_email: invitationEmail,
   });
 }
+
+
 

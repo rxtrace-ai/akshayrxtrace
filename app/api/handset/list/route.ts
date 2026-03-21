@@ -1,15 +1,16 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { getCompanyUserContext } from "@/lib/handset-v2/db";
 import { deriveTokenStatus, isHandsetV2Enabled } from "@/lib/handset-v2/config";
 
 export async function GET() {
   if (!isHandsetV2Enabled()) {
-    return NextResponse.json({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
+    return apiJson({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
   }
 
   const ctx = await getCompanyUserContext();
   if (!ctx.ok) {
-    return NextResponse.json({ success: false, error: ctx.error }, { status: ctx.status });
+    return apiJson({ success: false, error: ctx.error }, { status: ctx.status });
   }
 
   const [handsetsResult, tokensResult] = await Promise.all([
@@ -29,10 +30,10 @@ export async function GET() {
   ]);
 
   if (handsetsResult.error) {
-    return NextResponse.json({ success: false, error: handsetsResult.error.message }, { status: 500 });
+    return apiJson({ success: false, error: handsetsResult.error.message }, { status: 500 });
   }
   if (tokensResult.error) {
-    return NextResponse.json({ success: false, error: tokensResult.error.message }, { status: 500 });
+    return apiJson({ success: false, error: tokensResult.error.message }, { status: 500 });
   }
 
   const handsets = (handsetsResult.data || []).map((row: any) => ({
@@ -45,5 +46,6 @@ export async function GET() {
     status: deriveTokenStatus(row),
   }));
 
-  return NextResponse.json({ success: true, handsets, tokens });
+  return apiJson({ success: true, handsets, tokens });
 }
+

@@ -1,5 +1,6 @@
 // app/api/verify/route.ts - STATELESS VERIFICATION (No database lookup)
-import { NextResponse } from 'next/server';
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { createClient } from '@supabase/supabase-js';
 import { parsePayload } from '@/lib/parsePayload';
 
@@ -64,7 +65,7 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     // Accept different possible property names
     const rawInput = (body.gs1_raw || body.raw || body.code || body.qr || '').toString();
-    if (!rawInput) return NextResponse.json({ status: 'INVALID', message: 'No payload provided' }, { status: 400 });
+    if (!rawInput) return apiJson({ status: 'INVALID', message: 'No payload provided' }, { status: 400 });
 
     const parsedAny = parsePayload(rawInput);
 
@@ -83,7 +84,7 @@ export async function POST(req: Request) {
         ip: req.headers.get('x-forwarded-for') || null,
         metadata: { status: 'INVALID', reason: 'missing_required_fields' }
       }]);
-      return NextResponse.json({ 
+      return apiJson({ 
         status: 'INVALID', 
         message: parsedAny.error || 'Invalid payload',
         mode: 'INVALID',
@@ -110,7 +111,7 @@ export async function POST(req: Request) {
         ip: req.headers.get('x-forwarded-for') || null,
         metadata: { status: 'INVALID', reason: 'missing_required_fields', mode }
       }]);
-      return NextResponse.json({
+      return apiJson({
         status: 'INVALID',
         message: mode === 'GS1' ? 'Missing serial or GTIN' : 'Missing serial',
         mode,
@@ -129,7 +130,7 @@ export async function POST(req: Request) {
         ip: req.headers.get('x-forwarded-for') || null,
         metadata: { status: 'INVALID', reason: 'invalid_gtin_format', mode }
       }]);
-      return NextResponse.json({ 
+      return apiJson({ 
         status: 'INVALID', 
         message: 'Invalid GTIN format',
         mode,
@@ -148,7 +149,7 @@ export async function POST(req: Request) {
         ip: req.headers.get('x-forwarded-for') || null,
         metadata: { status: 'EXPIRED', reason: 'past_expiry_date', expiry, mode }
       }]);
-      return NextResponse.json({ 
+      return apiJson({ 
         status: 'EXPIRED', 
         message: 'Product has expired', 
         mode,
@@ -181,7 +182,7 @@ export async function POST(req: Request) {
           mode
         }
       }]);
-      return NextResponse.json({ 
+      return apiJson({ 
         status: 'DUPLICATE', 
         message: 'Code already scanned', 
         mode,
@@ -201,7 +202,7 @@ export async function POST(req: Request) {
       metadata: { status: 'VALID', serial, gtin, batch, expiry }
     }]);
 
-    return NextResponse.json({ 
+    return apiJson({ 
       status: 'VALID', 
       message: 'Authentic product', 
       mode,
@@ -219,6 +220,7 @@ export async function POST(req: Request) {
     console.error('verify route error', err);
     const msg = err?.message || 'internal_error';
     const status = msg === 'Unauthorized' ? 401 : 500;
-    return NextResponse.json({ status: 'ERROR', message: msg }, { status });
+    return apiJson({ status: 'ERROR', message: msg }, { status });
   }
 }
+

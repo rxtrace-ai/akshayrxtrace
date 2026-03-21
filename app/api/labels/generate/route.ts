@@ -1,6 +1,7 @@
 // app/api/labels/generate/route.ts
 // Universal Label Generation API - supports PNG/PDF/ZPL/EPL formats
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { generatePng, generateZpl, convertToFNC1 } from "@/app/lib/labelGenerator";
 import PDFDocument from "pdfkit";
 import { Readable } from "stream";
@@ -21,7 +22,7 @@ export async function POST(req: Request) {
     } = body;
 
     if (!aiValues || typeof aiValues !== "object") {
-      return NextResponse.json({ error: "aiValues required" }, { status: 400 });
+      return apiJson({ error: "aiValues required" }, { status: 400 });
     }
 
     // Generate filename based on AI values
@@ -96,11 +97,11 @@ export async function POST(req: Request) {
       });
     }
 
-    return NextResponse.json({ error: "Invalid format. Use: png, pdf, zpl, or epl" }, { status: 400 });
+    return apiJson({ error: "Invalid format. Use: png, pdf, zpl, or epl" }, { status: 400 });
 
   } catch (err: any) {
     console.error("Label generation error:", err);
-    return NextResponse.json({ 
+    return apiJson({ 
       error: "Label generation failed", 
       details: err.message || String(err) 
     }, { status: 500 });
@@ -188,3 +189,4 @@ async function generatePdf({
     }
   });
 }
+

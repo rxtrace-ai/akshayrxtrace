@@ -1,10 +1,10 @@
-import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { resolveCompanyIdFromRequest } from '@/lib/company/resolve';
 import { consumeEntitlementBatch, refundEntitlementBatch, type EntitlementBatchItem } from '@/lib/entitlement/enforce';
 import { UsageType } from '@/lib/entitlement/usageTypes';
 import { getRequestIdFromRequest } from '@/lib/http/requestId';
 import { computeGs1CheckDigit } from '@/app/lib/sscc';
+import { fail, ok } from '@/lib/api/response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -103,7 +103,7 @@ export async function POST(req: Request) {
 
     const authCompanyId = await resolveCompanyIdFromRequest(req);
     if (!authCompanyId)
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return fail('UNAUTHORIZED', 'Unauthorized', 401);
 
     const {
       sku_code,
@@ -122,17 +122,11 @@ export async function POST(req: Request) {
     } = body;
 
     if (!generate_box && !generate_carton && !generate_pallet) {
-      return NextResponse.json(
-        { error: 'Select at least one container type (Box, Carton, Pallet)' },
-        { status: 400 }
-      );
+      return fail('VALIDATION_ERROR', 'Select at least one container type (Box, Carton, Pallet)', 400);
     }
 
     if (compliance_ack !== true)
-      return NextResponse.json(
-        { error: 'compliance_ack=true is required' },
-        { status: 400 }
-      );
+      return fail('VALIDATION_ERROR', 'compliance_ack=true is required', 400);
 
     const normalizedExpiry = normalizeDateInput(expiry_date);
     const palletsCount = Number(number_of_pallets);
@@ -142,19 +136,19 @@ export async function POST(req: Request) {
     const cartonsPerPallet = Number(cartons_per_pallet || 1);
 
     if (!Number.isInteger(palletsCount) || palletsCount <= 0) {
-      return NextResponse.json({ error: 'number_of_pallets must be a positive integer' }, { status: 400 });
+      return fail('VALIDATION_ERROR', 'number_of_pallets must be a positive integer', 400);
     }
     if (generate_box && (!Number.isInteger(unitsPerBox) || unitsPerBox <= 0)) {
-      return NextResponse.json({ error: 'units_per_box must be a positive integer' }, { status: 400 });
+      return fail('VALIDATION_ERROR', 'units_per_box must be a positive integer', 400);
     }
     if ((generate_box || generate_carton) && (!Number.isInteger(boxesPerCarton) || boxesPerCarton <= 0)) {
-      return NextResponse.json({ error: 'boxes_per_carton must be a positive integer' }, { status: 400 });
+      return fail('VALIDATION_ERROR', 'boxes_per_carton must be a positive integer', 400);
     }
     if ((generate_box || generate_carton || generate_pallet) && (!Number.isInteger(cartonsPerPallet) || cartonsPerPallet <= 0)) {
-      return NextResponse.json({ error: 'cartons_per_pallet must be a positive integer' }, { status: 400 });
+      return fail('VALIDATION_ERROR', 'cartons_per_pallet must be a positive integer', 400);
     }
     if (!normalizedExpiry) {
-      return NextResponse.json({ error: 'expiry_date is invalid' }, { status: 400 });
+      return fail('VALIDATION_ERROR', 'expiry_date is invalid', 400);
     }
 
     const sku = await resolveSkuForSscc({
@@ -196,12 +190,10 @@ export async function POST(req: Request) {
 
     if (!consumption.ok) {
       const isQuotaError = String(consumption.error || "").toUpperCase().includes("QUOTA_EXCEEDED");
-      return NextResponse.json(
-        {
-          error: isQuotaError ? "Quota exceeded. Please purchase add-ons." : consumption.error || "QUOTA_EXCEEDED",
-          code: consumption.error || "QUOTA_EXCEEDED",
-        },
-        { status: 403 }
+      return fail(
+        String(consumption.error || "QUOTA_EXCEEDED"),
+        isQuotaError ? "Quota exceeded. Please purchase add-ons." : String(consumption.error || "QUOTA_EXCEEDED"),
+        403
       );
     }
 
@@ -300,8 +292,7 @@ export async function POST(req: Request) {
         ? (await supabase.from('boxes').insert(boxes).select()).data
         : [];
 
-    return NextResponse.json({
-      ok: true,
+    return ok({
       pallets: insertedPallets,
       cartons: insertedCartons,
       boxes: insertedBoxes
@@ -317,14 +308,11 @@ export async function POST(req: Request) {
     }
 
     if (err?.message === SKU_NOT_FOUND_ERROR)
-      return NextResponse.json({ error: err.message }, { status: 404 });
+      return fail('NOT_FOUND', err.message, 404);
 
     if (err?.message === SKU_GTIN_REQUIRED_ERROR)
-      return NextResponse.json({ error: err.message }, { status: 400 });
+      return fail('VALIDATION_ERROR', err.message, 400);
 
-    return NextResponse.json(
-      { error: err?.message || 'SSCC generation failed' },
-      { status: 500 }
-    );
+    return fail('INTERNAL_ERROR', err?.message || 'SSCC generation failed', 500);
   }
 }

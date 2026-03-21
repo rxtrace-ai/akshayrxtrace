@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { verifyDeviceAuthToken } from "@/lib/handset-v2/auth";
@@ -6,7 +7,7 @@ import { isHandsetV2Enabled } from "@/lib/handset-v2/config";
 
 export async function POST(req: Request) {
   if (!isHandsetV2Enabled()) {
-    return NextResponse.json({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
+    return apiJson({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
   }
 
   const authHeader = req.headers.get("authorization");
@@ -14,7 +15,7 @@ export async function POST(req: Request) {
 
   if (deviceAuth.ok) {
     const enabled = Boolean((deviceAuth.handset as any).high_scan_enabled);
-    return NextResponse.json({
+    return apiJson({
       success: true,
       allowed: enabled,
       handset_id: deviceAuth.handsetId,
@@ -25,12 +26,12 @@ export async function POST(req: Request) {
   const payload = (await req.json().catch(() => ({}))) as { handset_id?: string };
   const handsetId = String(payload.handset_id || "").trim();
   if (!handsetId) {
-    return NextResponse.json({ success: false, error: "handset_id is required" }, { status: 400 });
+    return apiJson({ success: false, error: "handset_id is required" }, { status: 400 });
   }
 
   const companyId = await resolveCompanyIdFromRequest(req);
   if (!companyId) {
-    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    return apiJson({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 
   const supabase = getSupabaseAdmin();
@@ -41,14 +42,14 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   if (error) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return apiJson({ success: false, error: error.message }, { status: 500 });
   }
   if (!handset || handset.company_id !== companyId) {
-    return NextResponse.json({ success: false, error: "Handset not found" }, { status: 404 });
+    return apiJson({ success: false, error: "Handset not found" }, { status: 404 });
   }
 
   const active = String(handset.status || "").toUpperCase() === "ACTIVE" && !handset.disabled_at;
-  return NextResponse.json({
+  return apiJson({
     success: true,
     allowed: active && Boolean(handset.high_scan_enabled),
     handset_id: handset.id,

@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
 import { sendInviteEmail } from "@/lib/email";
@@ -17,12 +18,12 @@ export async function POST(req: Request) {
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return apiJson({ error: "Unauthorized" }, { status: 401 });
   }
 
   const resolved = await resolveCompanyForUser(supabase, user.id, "id, company_name");
   if (!resolved) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return apiJson({ error: "Forbidden" }, { status: 403 });
   }
 
   let canInvite = resolved.isOwner;
@@ -37,14 +38,14 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (inviterSeatError) {
-      return NextResponse.json({ error: inviterSeatError.message }, { status: 500 });
+      return apiJson({ error: inviterSeatError.message }, { status: 500 });
     }
 
     canInvite = Boolean(inviterSeat?.id);
   }
 
   if (!canInvite) {
-    return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+    return apiJson({ error: "FORBIDDEN" }, { status: 403 });
   }
 
   const body = await req.json().catch(() => ({}));
@@ -55,10 +56,10 @@ export async function POST(req: Request) {
     : [];
 
   if (!email || !email.includes("@")) {
-    return NextResponse.json({ error: "INVALID_EMAIL" }, { status: 400 });
+    return apiJson({ error: "INVALID_EMAIL" }, { status: 400 });
   }
   if (plantIds.length === 0) {
-    return NextResponse.json({ error: "PLANT_SELECTION_REQUIRED" }, { status: 400 });
+    return apiJson({ error: "PLANT_SELECTION_REQUIRED" }, { status: 400 });
   }
 
   const { data, error } = await supabase.rpc("create_seat_invitation_atomic", {
@@ -72,24 +73,24 @@ export async function POST(req: Request) {
   if (error) {
     const message = String(error.message || "Seat invite failed");
     if (message.includes("TRIAL_EXPIRED")) {
-      return NextResponse.json({ error: "TRIAL_EXPIRED" }, { status: 403 });
+      return apiJson({ error: "TRIAL_EXPIRED" }, { status: 403 });
     }
     if (message.includes("SEAT_QUOTA_EXCEEDED") || message.includes("SEAT_LIMIT_EXCEEDED")) {
-      return NextResponse.json({ error: "SEAT_QUOTA_EXCEEDED" }, { status: 403 });
+      return apiJson({ error: "SEAT_QUOTA_EXCEEDED" }, { status: 403 });
     }
     if (message.includes("PLANT_SELECTION_REQUIRED")) {
-      return NextResponse.json({ error: "PLANT_SELECTION_REQUIRED" }, { status: 400 });
+      return apiJson({ error: "PLANT_SELECTION_REQUIRED" }, { status: 400 });
     }
     if (message.includes("INVALID_PLANT_SELECTION")) {
-      return NextResponse.json({ error: "INVALID_PLANT_SELECTION" }, { status: 400 });
+      return apiJson({ error: "INVALID_PLANT_SELECTION" }, { status: 400 });
     }
     if (message.includes("SEAT_ALREADY_EXISTS")) {
-      return NextResponse.json({ error: "SEAT_ALREADY_EXISTS" }, { status: 409 });
+      return apiJson({ error: "SEAT_ALREADY_EXISTS" }, { status: 409 });
     }
     if (message.includes("FORBIDDEN")) {
-      return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+      return apiJson({ error: "FORBIDDEN" }, { status: 403 });
     }
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiJson({ error: message }, { status: 500 });
   }
 
   const rpcPayload = Array.isArray(data) ? data[0] : data;
@@ -131,7 +132,7 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({
+  return apiJson({
     success: true,
     inviteCreated: true,
     emailSent,
@@ -149,3 +150,4 @@ export async function POST(req: Request) {
     email_error: emailError,
   });
 }
+

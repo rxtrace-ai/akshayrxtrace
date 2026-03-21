@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getOrGenerateCorrelationId } from "@/lib/observability/correlation";
 
@@ -15,7 +16,7 @@ function requireInternalAuth(req: NextRequest): boolean {
 export async function POST(req: NextRequest) {
   const correlationId = getOrGenerateCorrelationId(req.headers, "internal");
   if (!requireInternalAuth(req)) {
-    return NextResponse.json({ error: "Forbidden", correlation_id: correlationId }, { status: 403 });
+    return apiJson({ error: "Forbidden", correlation_id: correlationId }, { status: 403 });
   }
 
   const supabase = getSupabaseAdmin();
@@ -30,14 +31,14 @@ export async function POST(req: NextRequest) {
     .limit(500);
 
   if (error) {
-    return NextResponse.json({ error: error.message, correlation_id: correlationId }, { status: 500 });
+    return apiJson({ error: error.message, correlation_id: correlationId }, { status: 500 });
   }
 
   const missingPeriod = (subscriptions || []).filter(
     (row: any) => row.status === "active" && (!row.current_period_start || !row.current_period_end)
   );
 
-  return NextResponse.json({
+  return apiJson({
     success: true,
     correlation_id: correlationId,
     checked: (subscriptions || []).length,
@@ -50,4 +51,5 @@ export async function POST(req: NextRequest) {
     note: "Reconciliation scaffold only (no external Razorpay fetch in this phase).",
   });
 }
+
 

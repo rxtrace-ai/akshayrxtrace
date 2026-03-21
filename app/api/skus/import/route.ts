@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -19,7 +20,7 @@ function normalizeText(value: unknown) {
 async function requireCompanyId() {
   const { data: { user } } = await (await supabaseServer()).auth.getUser();
   if (!user) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+    return { error: apiJson({ error: "Unauthorized" }, { status: 401 }) };
   }
 
   const supabaseAdmin = getSupabaseAdmin();
@@ -31,7 +32,7 @@ async function requireCompanyId() {
     .single();
 
   if (error || !company?.id) {
-    return { error: NextResponse.json({ error: "Company profile not found" }, { status: 400 }) };
+    return { error: apiJson({ error: "Company profile not found" }, { status: 400 }) };
   }
 
   return { companyId: company.id };
@@ -47,11 +48,11 @@ export async function POST(req: Request) {
   const rows = Array.isArray(body.rows) ? body.rows : [];
 
   if (rows.length === 0) {
-    return NextResponse.json({ error: "No rows provided" }, { status: 400 });
+    return apiJson({ error: "No rows provided" }, { status: 400 });
   }
 
   if (rows.length > 5000) {
-    return NextResponse.json({ error: "Too many rows (max 5000)" }, { status: 400 });
+    return apiJson({ error: "Too many rows (max 5000)" }, { status: 400 });
   }
 
   const payload = rows
@@ -68,7 +69,7 @@ export async function POST(req: Request) {
     .filter(Boolean) as Array<any>;
 
   if (payload.length === 0) {
-    return NextResponse.json({ error: "No valid rows (need sku_code and sku_name)" }, { status: 400 });
+    return apiJson({ error: "No valid rows (need sku_code and sku_name)" }, { status: 400 });
   }
 
   const { data, error } = await supabaseAdmin
@@ -77,11 +78,12 @@ export async function POST(req: Request) {
     .select("id");
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return apiJson({ error: error.message }, { status: 400 });
   }
 
   const imported = (data ?? []).length;
   const skipped = rows.length - imported;
 
-  return NextResponse.json({ imported, skipped });
+  return apiJson({ imported, skipped });
 }
+

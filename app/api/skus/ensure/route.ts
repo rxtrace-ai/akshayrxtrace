@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -22,7 +23,7 @@ async function requireCompanyId() {
   } = await (await supabaseServer()).auth.getUser();
 
   if (!user) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+    return { error: apiJson({ error: "Unauthorized" }, { status: 401 }) };
   }
 
   const supabaseAdmin = getSupabaseAdmin();
@@ -34,7 +35,7 @@ async function requireCompanyId() {
     .single();
 
   if (error || !company?.id) {
-    return { error: NextResponse.json({ error: "Company profile not found" }, { status: 400 }) };
+    return { error: apiJson({ error: "Company profile not found" }, { status: 400 }) };
   }
 
   return { companyId: company.id, userId: user.id };
@@ -53,7 +54,7 @@ export async function POST(req: Request) {
   const gtinRaw = String(body.gtin ?? "").trim();
 
   if (!sku_code) {
-    return NextResponse.json({ error: "sku_code is required" }, { status: 400 });
+    return apiJson({ error: "sku_code is required" }, { status: 400 });
   }
 
   let gtin: string | null = null;
@@ -62,11 +63,11 @@ export async function POST(req: Request) {
       const { validateGTIN } = await import("@/lib/gs1/gtin");
       const validation = validateGTIN(gtinRaw);
       if (!validation.valid) {
-        return NextResponse.json({ error: validation.error || "Invalid GTIN" }, { status: 400 });
+        return apiJson({ error: validation.error || "Invalid GTIN" }, { status: 400 });
       }
       gtin = validation.normalized || null;
     } catch {
-      return NextResponse.json({ error: "Invalid GTIN" }, { status: 400 });
+      return apiJson({ error: "Invalid GTIN" }, { status: 400 });
     }
   }
 
@@ -86,8 +87,9 @@ export async function POST(req: Request) {
     .single();
 
   if (error || !sku) {
-    return NextResponse.json({ error: error?.message ?? "Failed to ensure SKU" }, { status: 400 });
+    return apiJson({ error: error?.message ?? "Failed to ensure SKU" }, { status: 400 });
   }
 
-  return NextResponse.json({ sku });
+  return apiJson({ sku });
 }
+

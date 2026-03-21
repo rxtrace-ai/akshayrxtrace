@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,5 +52,6 @@ export async function GET() {
     quotas: plan.quotas,
   }));
 
-  return NextResponse.json({ success: true, plans });
+  return apiJson({ success: true, plans });
 }
+

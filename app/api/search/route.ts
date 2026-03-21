@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
 import { Pool } from "pg";
 import { parseGS1 } from "@/lib/parseGS1";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
+import { fail, ok } from "@/lib/api/response";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +23,12 @@ if (parsedConnectionString) {
 }
 
 const connectionString = parsedConnectionString?.toString();
+const databaseSslCa = process.env.DATABASE_SSL_CA?.trim();
+const databaseSslCaBase64 = process.env.DATABASE_SSL_CA_BASE64?.trim();
+const resolvedSslCa =
+  databaseSslCaBase64 && databaseSslCaBase64.length > 0
+    ? Buffer.from(databaseSslCaBase64, "base64").toString("utf8")
+    : databaseSslCa;
 
 let pool: Pool | null = null;
 
@@ -31,9 +37,14 @@ if (connectionString) {
     (global as any)._rxtrace_pool = new Pool({
       connectionString,
       max: 3,
-      ssl: {
-        rejectUnauthorized: false,
-      },
+      ssl: resolvedSslCa
+        ? {
+            rejectUnauthorized: true,
+            ca: resolvedSslCa,
+          }
+        : {
+            rejectUnauthorized: true,
+          },
     });
   }
 
@@ -313,7 +324,7 @@ export async function GET(req: Request) {
   try {
     const authCompanyId = await resolveCompanyIdFromRequest(req);
     if (!authCompanyId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return fail("UNAUTHORIZED", "Unauthorized", 401);
     }
 
     const { searchParams } = new URL(req.url);
@@ -321,26 +332,23 @@ export async function GET(req: Request) {
     const requestedCompanyId = searchParams.get("company_id")?.trim();
 
     if (!code) {
-      return NextResponse.json({ error: "code required" }, { status: 400 });
+      return fail("VALIDATION_ERROR", "code required", 400);
     }
 
     if (!requestedCompanyId) {
-      return NextResponse.json({ error: "company_id required" }, { status: 400 });
+      return fail("VALIDATION_ERROR", "company_id required", 400);
     }
 
     if (!UUID_RE.test(requestedCompanyId)) {
-      return NextResponse.json({ error: "invalid company_id" }, { status: 400 });
+      return fail("VALIDATION_ERROR", "invalid company_id", 400);
     }
 
     if (requestedCompanyId !== authCompanyId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return fail("FORBIDDEN", "Forbidden", 403);
     }
 
     if (!pool) {
-      return NextResponse.json(
-        { error: "DATABASE_URL not configured" },
-        { status: 500 }
-      );
+      return fail("INTERNAL_ERROR", "DATABASE_URL not configured", 500);
     }
 
     const identifiers = extractIdentifiers(code);
@@ -355,10 +363,10 @@ export async function GET(req: Request) {
     const row = result.rows[0];
 
     if (!row) {
-      return NextResponse.json({ error: "CODE_NOT_FOUND" }, { status: 404 });
+      return fail("CODE_NOT_FOUND", "CODE_NOT_FOUND", 404);
     }
 
-    return NextResponse.json(
+    return ok(
       buildTraceability({
         ...row,
         units_in_box: toInt(row.units_in_box),
@@ -371,14 +379,6 @@ export async function GET(req: Request) {
     );
   } catch (error: any) {
     console.error("TRACEABILITY ERROR:", error);
-    console.error("STACK:", error?.stack);
-
-    return NextResponse.json(
-      {
-        error: error?.message ?? "Internal server error",
-        stack: error?.stack,
-      },
-      { status: 500 }
-    );
+    return fail("INTERNAL_ERROR", error?.message ?? "Internal server error", 500);
   }
 }

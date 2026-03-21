@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -19,7 +20,7 @@ function normalizeText(value: unknown) {
 async function requireCompanyId() {
   const { data: { user } } = await (await supabaseServer()).auth.getUser();
   if (!user) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+    return { error: apiJson({ error: "Unauthorized" }, { status: 401 }) };
   }
 
   const supabaseAdmin = getSupabaseAdmin();
@@ -31,7 +32,7 @@ async function requireCompanyId() {
     .single();
 
   if (error || !company?.id) {
-    return { error: NextResponse.json({ error: "Company profile not found" }, { status: 400 }) };
+    return { error: apiJson({ error: "Company profile not found" }, { status: 400 }) };
   }
 
   return { companyId: company.id, userId: user.id };
@@ -51,10 +52,10 @@ export async function GET() {
     .order("created_at", { ascending: false });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return apiJson({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ company_id: auth.companyId, skus: data ?? [] });
+  return apiJson({ company_id: auth.companyId, skus: data ?? [] });
 }
 
 export async function POST(req: Request) {
@@ -68,7 +69,7 @@ export async function POST(req: Request) {
   const sku_name = normalizeText(body.sku_name);
 
   if (!sku_code || !sku_name) {
-    return NextResponse.json(
+    return apiJson(
       { error: "sku_code and sku_name are required" },
       { status: 400 }
     );
@@ -83,11 +84,11 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   if (existingErr) {
-    return NextResponse.json({ error: existingErr.message }, { status: 400 });
+    return apiJson({ error: existingErr.message }, { status: 400 });
   }
 
   if (existing?.id) {
-    return NextResponse.json(
+    return apiJson(
       { error: `SKU code already exists: ${sku_code}` },
       { status: 409 }
     );
@@ -104,8 +105,9 @@ export async function POST(req: Request) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return apiJson({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ sku: inserted });
+  return apiJson({ sku: inserted });
 }
+

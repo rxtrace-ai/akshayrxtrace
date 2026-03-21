@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { createClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase/server';
 
@@ -12,7 +13,7 @@ export async function POST(req: NextRequest) {
     const { data: { user }, error: authError } = await (await supabaseServer()).auth.getUser();
 
     if (!user || authError) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+      return apiJson({ error: 'Not authenticated' }, { status: 401 });
     }
 
     const { full_name, phone } = await req.json();
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest) {
 
     if (profileError) {
       console.error('Profile update error:', profileError);
-      return NextResponse.json(
+      return apiJson(
         { error: 'Failed to update profile' },
         { status: 500 }
       );
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
       },
     }).catch(err => console.warn('Failed to update auth metadata:', err));
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       message: 'Profile updated successfully',
       profile: {
@@ -65,9 +66,10 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error('Update profile error:', error);
-    return NextResponse.json(
+    return apiJson(
       { error: error.message || 'Failed to update profile' },
       { status: 500 }
     );
   }
 }
+

@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { resolveActiveCoupon } from "@/lib/billing/coupons";
 import { buildPricingBreakdown } from "@/lib/billing/pricing";
@@ -17,12 +18,12 @@ export async function POST(req: NextRequest) {
     const addonsAmountPaise = Math.max(0, Math.trunc(Number((body as any)?.addons_amount_paise || 0)));
 
     if (!code) {
-      return NextResponse.json({ error: "code is required" }, { status: 400 });
+      return apiJson({ error: "code is required" }, { status: 400 });
     }
 
     const coupon = await resolveActiveCoupon(owner.supabase, code);
     if (!coupon) {
-      return NextResponse.json({ error: "INVALID_COUPON" }, { status: 400 });
+      return apiJson({ error: "INVALID_COUPON" }, { status: 400 });
     }
 
     const pricing = buildPricingBreakdown({
@@ -31,7 +32,7 @@ export async function POST(req: NextRequest) {
       coupon,
     });
     const discountAmount = pricing.discount_paise;
-    return NextResponse.json({
+    return apiJson({
       success: true,
       coupon: {
         id: coupon.id,
@@ -42,9 +43,10 @@ export async function POST(req: NextRequest) {
       discount_amount: discountAmount,
     });
   } catch (error: any) {
-    return NextResponse.json(
+    return apiJson(
       { error: error?.message || "Failed to apply coupon" },
       { status: 500 }
     );
   }
 }
+

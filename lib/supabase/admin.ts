@@ -1,9 +1,4 @@
 import { createClient } from "@supabase/supabase-js";
-import https from "https";
-
-const agent = new https.Agent({
-  rejectUnauthorized: false,
-});
 
 export function getSupabaseAdmin() {
   const supabaseUrl =
@@ -24,10 +19,6 @@ export function getSupabaseAdmin() {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
-    },
-    global: {
-      fetch: (url, options: any = {}) =>
-        fetch(url, { ...options, agent }),
     },
   });
 }

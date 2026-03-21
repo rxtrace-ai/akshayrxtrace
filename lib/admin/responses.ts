@@ -8,8 +8,14 @@ export function errorResponse(
 ) {
   return NextResponse.json(
     {
-      error,
-      message,
+      success: false,
+      error: {
+        code: error,
+        message,
+      },
+      // Backward-compatible fields
+      legacy_error: error,
+      legacy_message: message,
       correlation_id: correlationId,
     },
     {
@@ -28,6 +34,9 @@ export function successResponse<T extends Record<string, unknown>>(
 ) {
   return NextResponse.json(
     {
+      success: true,
+      data: payload,
+      // Backward-compatible fields
       ...payload,
       correlation_id: correlationId,
     },

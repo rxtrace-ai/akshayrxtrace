@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from "@/lib/supabase/server";
 
 export async function POST() {
@@ -10,7 +11,7 @@ export async function POST() {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiJson({ error: "Unauthorized" }, { status: 401 });
     }
 
     const normalizedEmail = user.email ? String(user.email).toLowerCase().trim() : null;
@@ -31,11 +32,12 @@ export async function POST() {
     );
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return apiJson({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true });
+    return apiJson({ success: true });
   } catch (error: any) {
-    return NextResponse.json({ error: error?.message || "Failed to ensure profile" }, { status: 500 });
+    return apiJson({ error: error?.message || "Failed to ensure profile" }, { status: 500 });
   }
 }
+

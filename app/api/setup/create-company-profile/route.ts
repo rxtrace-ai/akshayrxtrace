@@ -1,6 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from '@/lib/supabase/server';
 import { isIndustryOption } from '@/lib/companies/industry';
+import { sanitizeFilterToken } from '@/lib/api/filter';
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,7 +13,7 @@ export async function POST(req: NextRequest) {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json(
+      return apiJson(
         { error: 'Unauthorized' },
         { status: 401 }
       );
@@ -41,7 +43,7 @@ export async function POST(req: NextRequest) {
     // Validate required fields
     const resolvedCompanyName = String(company_name || name || '').trim();
     if (!resolvedCompanyName || !resolvedContactPerson || !address || !phone || !industry || !business_type) {
-      return NextResponse.json(
+      return apiJson(
         { error: 'Missing required fields.' },
         { status: 400 }
       );
@@ -52,7 +54,7 @@ export async function POST(req: NextRequest) {
     const normalizedBusinessType = String(business_type || '').trim().toLowerCase();
     const normalizedIndustry = String(industry || '').trim();
     if (!isIndustryOption(normalizedIndustry)) {
-      return NextResponse.json(
+      return apiJson(
         { error: 'Invalid industry selection.' },
         { status: 400 }
       );
@@ -66,7 +68,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (existingCompany) {
-      return NextResponse.json(
+      return apiJson(
         { error: 'Company profile already exists for this user' },
         { status: 409 }
       );
@@ -95,7 +97,7 @@ export async function POST(req: NextRequest) {
 
     if (insertError) {
       console.error('Database insert error:', insertError);
-      return NextResponse.json(
+      return apiJson(
         { error: 'Failed to create company profile. Please try again.' },
         { status: 500 }
       );
@@ -105,23 +107,33 @@ export async function POST(req: NextRequest) {
     // the owner should not need an invite.
     try {
       const ownerEmail = String(user.email ?? '').trim().toLowerCase();
+      const safeOwnerEmail = sanitizeFilterToken(ownerEmail, 120);
 
       // Avoid duplicates if the setup flow is retried.
-      const { data: existingSeat } = await supabase
+      const { data: existingSeatByUser } = await supabase
         .from('seats')
         .select('id')
         .eq('company_id', company.id)
-        .or(`user_id.eq.${user.id},email.eq.${ownerEmail}`)
+        .eq('user_id', user.id)
         .maybeSingle();
 
-      if (!existingSeat) {
+      const { data: existingSeatByEmail } = !existingSeatByUser && safeOwnerEmail
+        ? await supabase
+            .from('seats')
+            .select('id')
+            .eq('company_id', company.id)
+            .eq('email', safeOwnerEmail)
+            .maybeSingle()
+        : { data: null as any };
+
+      if (!existingSeatByUser && !existingSeatByEmail) {
         const now = new Date().toISOString();
         await supabase
           .from('seats')
           .insert({
             company_id: company.id,
             user_id: user.id,
-            email: ownerEmail || null,
+            email: safeOwnerEmail || null,
             role: 'admin',
             active: true,
             status: 'active',
@@ -135,7 +147,7 @@ export async function POST(req: NextRequest) {
       console.error('Failed to auto-create owner seat:', seatError);
     }
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       message: 'Company profile created successfully',
       company: {
@@ -145,7 +157,7 @@ export async function POST(req: NextRequest) {
     }, { status: 201 });
   } catch (error) {
     console.error('Create company profile error:', error);
-    return NextResponse.json(
+    return apiJson(
       { error: 'Internal server error' },
       { status: 500 }
     );
@@ -153,8 +165,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  return NextResponse.json(
+  return apiJson(
     { error: 'Method not allowed. Use POST.' },
     { status: 405 }
   );
 }
+

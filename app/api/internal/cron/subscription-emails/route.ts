@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { headers } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAppUrl } from "@/lib/config";
@@ -37,7 +38,7 @@ export async function POST() {
   const headersList = await headers();
   const authHeader = headersList.get("authorization");
   if (!isAuthorized(authHeader)) {
-    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    return apiJson({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 
   const admin = getSupabaseAdmin();
@@ -60,7 +61,7 @@ export async function POST() {
     .select("id, company_name, user_id");
 
   if (companyError) {
-    return NextResponse.json({ success: false, error: companyError.message }, { status: 500 });
+    return apiJson({ success: false, error: companyError.message }, { status: 500 });
   }
 
   for (const company of companies || []) {
@@ -147,9 +148,10 @@ export async function POST() {
     }
   }
 
-  return NextResponse.json({
+  return apiJson({
     success: true,
     ...stats,
   });
 }
+
 

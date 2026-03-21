@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse  } from 'next/server';
+import { apiJson } from '@/lib/api/response';
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
 
@@ -14,7 +15,7 @@ export async function POST(req: Request) {
     const companyId = await resolveCompanyIdFromRequest(req);
 
     if (!companyId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiJson({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await req.json();
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
     const { box_sscc, unit_serials } = body;
 
     if (!box_sscc || !Array.isArray(unit_serials) || unit_serials.length === 0) {
-      return NextResponse.json(
+      return apiJson(
         { error: "box_sscc and unit_serials are required" },
         { status: 400 }
       );
@@ -37,7 +38,7 @@ export async function POST(req: Request) {
     if (boxErr) throw boxErr;
 
     if (!box || box.company_id !== companyId) {
-      return NextResponse.json({ error: "Box not found" }, { status: 404 });
+      return apiJson({ error: "Box not found" }, { status: 404 });
     }
 
     const { error: updateErr } = await supabase
@@ -48,7 +49,7 @@ export async function POST(req: Request) {
 
     if (updateErr) throw updateErr;
 
-    return NextResponse.json({
+    return apiJson({
       success: true,
       aggregated_units: unit_serials.length,
       box_sscc
@@ -56,7 +57,7 @@ export async function POST(req: Request) {
 
   } catch (err: any) {
 
-    return NextResponse.json(
+    return apiJson(
       { error: err?.message || "Aggregation failed" },
       { status: 500 }
     );

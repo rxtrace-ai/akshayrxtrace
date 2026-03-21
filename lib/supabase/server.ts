@@ -1,10 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import https from "https";
-
-const agent = new https.Agent({
-  rejectUnauthorized: false,
-});
 
 export async function supabaseServer() {
   const cookieStore = await cookies();
@@ -26,12 +21,6 @@ export async function supabaseServer() {
             );
           } catch {}
         },
-      },
-      global: {
-        fetch: (
-          url: Parameters<typeof fetch>[0],
-          options: Parameters<typeof fetch>[1] = {}
-        ) => fetch(url, { ...(options || {}), agent } as any),
       },
     }
   );

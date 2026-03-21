@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { getAdminClient, fetchLatestOTP, deleteOTPById, markOTPVerified } from '@/lib/auth/otp';
+import { fail, ok } from '@/lib/api/response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,17 +12,11 @@ export async function POST(req: NextRequest) {
     const { email, otp } = await req.json();
 
     if (!email || !/\S+@\S+\.\S+/.test(email)) {
-      return NextResponse.json(
-        { error: 'Invalid email address' },
-        { status: 400 }
-      );
+      return fail('INVALID_EMAIL', 'Invalid email address', 400);
     }
 
     if (!otp || otp.length !== 6 || !/^\d{6}$/.test(otp)) {
-      return NextResponse.json(
-        { error: 'Invalid OTP format. Must be 6 digits.' },
-        { status: 400 }
-      );
+      return fail('INVALID_OTP_FORMAT', 'Invalid OTP format. Must be 6 digits.', 400);
     }
 
     const supabase = getAdminClient();
@@ -31,17 +26,11 @@ export async function POST(req: NextRequest) {
 
     if (fetchError) {
       console.error('Database fetch error:', fetchError);
-      return NextResponse.json(
-        { error: 'Failed to verify OTP. Please try again.' },
-        { status: 500 }
-      );
+      return fail('OTP_FETCH_FAILED', 'Failed to verify OTP. Please try again.', 500);
     }
 
     if (!otpRecord) {
-      return NextResponse.json(
-        { error: 'No OTP found. Please request a new one.' },
-        { status: 404 }
-      );
+      return fail('OTP_NOT_FOUND', 'No OTP found. Please request a new one.', 404);
     }
 
     // Check if OTP has expired
@@ -52,18 +41,12 @@ export async function POST(req: NextRequest) {
       // Delete expired OTP
       await deleteOTPById(otpRecord.id, supabase);
 
-      return NextResponse.json(
-        { error: 'OTP has expired. Please request a new one.' },
-        { status: 410 }
-      );
+      return fail('OTP_EXPIRED', 'OTP has expired. Please request a new one.', 410);
     }
 
     // Verify OTP matches
     if (otpRecord.otp !== otp) {
-      return NextResponse.json(
-        { error: 'Invalid OTP. Please check and try again.' },
-        { status: 401 }
-      );
+      return fail('INVALID_OTP', 'Invalid OTP. Please check and try again.', 401);
     }
 
     // Mark OTP as verified in database
@@ -71,10 +54,7 @@ export async function POST(req: NextRequest) {
 
     if (updateError) {
       console.error('Update error:', updateError);
-      return NextResponse.json(
-        { error: 'Failed to verify OTP. Please try again.' },
-        { status: 500 }
-      );
+      return fail('OTP_VERIFY_UPDATE_FAILED', 'Failed to verify OTP. Please try again.', 500);
     }
 
     // Schedule deletion of OTP record after 1 hour (cleanup)
@@ -89,24 +69,17 @@ export async function POST(req: NextRequest) {
       }
     }, 60 * 60 * 1000); // 1 hour
 
-    return NextResponse.json({
-      success: true,
+    return ok({
       message: 'Email verified successfully',
       email: email.toLowerCase(),
       verified_at: new Date().toISOString(),
     });
   } catch (error) {
     console.error('Verify OTP error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return fail('INTERNAL_ERROR', 'Internal server error', 500);
   }
 }
 
 export async function GET(req: NextRequest) {
-  return NextResponse.json(
-    { error: 'Method not allowed. Use POST.' },
-    { status: 405 }
-  );
+  return fail('METHOD_NOT_ALLOWED', 'Method not allowed. Use POST.', 405);
 }
