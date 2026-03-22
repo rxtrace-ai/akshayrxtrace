@@ -7,6 +7,112 @@ import { isHandsetV2Enabled, normalizeActivationToken, hashActivationToken, reda
 
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+async function activateHandsetFallback(params: {
+  supabase: any;
+  tokenHash: string;
+  deviceId: string;
+  platform: string;
+  appVersion: string;
+  deviceName: string;
+}) {
+  const { supabase, tokenHash, deviceId, platform, appVersion, deviceName } = params;
+
+  const { data: tokenRow, error: tokenErr } = await supabase
+    .from("handset_activation_tokens")
+    .select("id, company_id, activation_count, max_activations, expires_at, revoked_at")
+    .eq("token_hash", tokenHash)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (tokenErr) throw new Error(`FALLBACK_TOKEN_QUERY_FAILED:${String(tokenErr.message || tokenErr)}`);
+  if (!tokenRow) throw new Error("TOKEN_NOT_FOUND");
+  if (tokenRow.revoked_at) throw new Error("TOKEN_REVOKED");
+  if (new Date(tokenRow.expires_at).getTime() <= Date.now()) throw new Error("TOKEN_EXPIRED");
+
+  const activationCount = Number(tokenRow.activation_count || 0);
+  const maxActivations = Number(tokenRow.max_activations || 0);
+  if (activationCount >= maxActivations) throw new Error("TOKEN_EXHAUSTED");
+
+  const { error: incErr } = await supabase
+    .from("handset_activation_tokens")
+    .update({ activation_count: activationCount + 1 })
+    .eq("id", tokenRow.id);
+  if (incErr) throw new Error(`FALLBACK_TOKEN_UPDATE_FAILED:${String(incErr.message || incErr)}`);
+
+  const normalizedPlatform = String(platform || "android").toLowerCase();
+  const normalizedAppVersion = String(appVersion || "").trim() || null;
+  const normalizedDeviceName = String(deviceName || "").trim() || null;
+
+  let handsetId = "";
+  const { data: existing, error: existingErr } = await supabase
+    .from("handsets")
+    .select("id")
+    .eq("company_id", tokenRow.company_id)
+    .eq("device_id", deviceId)
+    .maybeSingle();
+  if (existingErr) throw new Error(`FALLBACK_HANDSET_QUERY_FAILED:${String(existingErr.message || existingErr)}`);
+
+  if (existing?.id) {
+    const { data: updated, error: updErr } = await supabase
+      .from("handsets")
+      .update({
+        status: "ACTIVE",
+        platform: normalizedPlatform,
+        app_version: normalizedAppVersion,
+        device_name: normalizedDeviceName,
+        activated_at: new Date().toISOString(),
+        disabled_by: null,
+        disabled_at: null,
+      })
+      .eq("id", existing.id)
+      .select("id")
+      .single();
+    if (updErr) throw new Error(`FALLBACK_HANDSET_UPDATE_FAILED:${String(updErr.message || updErr)}`);
+    handsetId = String(updated?.id || existing.id);
+  } else {
+    const { data: inserted, error: insErr } = await supabase
+      .from("handsets")
+      .insert({
+        company_id: tokenRow.company_id,
+        status: "ACTIVE",
+        device_id: deviceId,
+        platform: normalizedPlatform,
+        app_version: normalizedAppVersion,
+        device_name: normalizedDeviceName,
+        activated_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+    if (insErr) throw new Error(`FALLBACK_HANDSET_INSERT_FAILED:${String(insErr.message || insErr)}`);
+    handsetId = String(inserted?.id || "");
+  }
+
+  await supabase.from("handset_logs").insert({
+    company_id: tokenRow.company_id,
+    handset_id: handsetId || null,
+    event_type: "token_activated",
+    metadata: {
+      token_id: tokenRow.id,
+      activation_count: activationCount + 1,
+      max_activations: maxActivations,
+      device_id: deviceId,
+      platform: normalizedPlatform,
+      source: "api_fallback",
+    },
+    created_by: null,
+  }).then(() => undefined).catch(() => undefined);
+
+  return {
+    token_id: String(tokenRow.id),
+    company_id: String(tokenRow.company_id),
+    handset_id: handsetId,
+    activation_count: activationCount + 1,
+    max_activations: maxActivations,
+    expires_at: String(tokenRow.expires_at),
+  };
+}
+
 export async function POST(req: Request) {
   if (!isHandsetV2Enabled()) {
     return apiJson({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
@@ -74,7 +180,8 @@ export async function POST(req: Request) {
       p_actor_user_id: null,
     });
 
-    if (error) {
+    let row = Array.isArray(data) ? data[0] : data;
+    if (error || !row?.handset_id || !row?.company_id) {
       const msg = String(error.message || "ACTIVATION_FAILED");
       const mapped = msg.includes("TOKEN_EXPIRED")
         ? "TOKEN_EXPIRED"
@@ -86,13 +193,40 @@ export async function POST(req: Request) {
         ? "INVALID_TOKEN"
         : msg.includes("TOKEN_NOT_FOUND")
         ? "INVALID_TOKEN"
-        : "ACTIVATION_FAILED";
-      return apiJson({ success: false, error: mapped }, { status: mapped === "ACTIVATION_FAILED" ? 500 : 400 });
-    }
+        : "";
 
-    const row = Array.isArray(data) ? data[0] : data;
-    if (!row?.handset_id || !row?.company_id) {
-      return apiJson({ success: false, error: "ACTIVATION_FAILED" }, { status: 500 });
+      if (mapped) {
+        return apiJson({ success: false, error: mapped }, { status: 400 });
+      }
+
+      // Fallback path: handles environments where RPC is unavailable/misaligned.
+      try {
+        row = await activateHandsetFallback({
+          supabase,
+          tokenHash,
+          deviceId,
+          platform,
+          appVersion,
+          deviceName,
+        });
+      } catch (fallbackErr: any) {
+        const fallbackMsg = String(fallbackErr?.message || "ACTIVATION_FAILED");
+        const fallbackMapped = fallbackMsg.includes("TOKEN_EXPIRED")
+          ? "TOKEN_EXPIRED"
+          : fallbackMsg.includes("TOKEN_REVOKED")
+          ? "TOKEN_REVOKED"
+          : fallbackMsg.includes("TOKEN_EXHAUSTED")
+          ? "TOKEN_EXHAUSTED"
+          : fallbackMsg.includes("TOKEN_NOT_FOUND")
+          ? "INVALID_TOKEN"
+          : fallbackMsg.includes("INVALID_TOKEN")
+          ? "INVALID_TOKEN"
+          : "ACTIVATION_FAILED";
+        return apiJson(
+          { success: false, error: fallbackMapped, detail: redactToken(fallbackMsg) },
+          { status: fallbackMapped === "ACTIVATION_FAILED" ? 500 : 400 }
+        );
+      }
     }
 
     const deviceAuthToken = signDeviceAuthToken({
