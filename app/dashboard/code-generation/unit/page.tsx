@@ -72,6 +72,10 @@ const MAX_CODES_PER_REQUEST = 10000;
 const MAX_CODES_PER_ROW = 1000;
 
 // ---------- Helpers ----------
+function toNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
 function isoDateToYYMMDD(iso?: string): string | undefined {
   if (!iso) return undefined;
   const d = new Date(iso);
@@ -390,30 +394,38 @@ export default function UnitCodeGenerationPage() {
 
   useEffect(() => {
     (async () => {
-      const { data: { user } } = await supabaseClient().auth.getUser();
-      if (user) {
-        const { data } = await supabaseClient()
-          .from('companies')
-          .select('id, company_name, profile_completed')
-          .eq('user_id', user.id)
-          .single();
-        if (data?.company_name) {
-          setCompany(data.company_name);
-          setCompanyId(data.id);
-        }
-        if (data?.profile_completed !== undefined) {
-          setProfileCompleted(data.profile_completed);
-        }
+      try {
+        const { data: { user } } = await supabaseClient().auth.getUser();
+        if (user) {
+          const { data } = await supabaseClient()
+            .from('companies')
+            .select('id, company_name, profile_completed')
+            .eq('user_id', user.id)
+            .single();
+          if (data?.company_name) {
+            setCompany(data.company_name);
+            setCompanyId(data.id);
+          }
+          if (data?.profile_completed !== undefined) {
+            setProfileCompleted(data.profile_completed);
+          }
 
-        // Fetch SKUs
-        const skuRes = await fetch('/api/skus', { cache: 'no-store' });
-        const skuData = await skuRes.json();
-        if (skuData?.skus) {
-          const validSkus = (skuData.skus as SkuOption[]).filter(
-            (sku) => typeof sku?.sku_code === 'string' && sku.sku_code.trim().length > 0
-          );
-          setSkus(validSkus);
+          // Fetch SKUs
+          const skuRes = await fetch('/api/skus', { cache: 'no-store' });
+          if (!skuRes.ok) {
+            throw new Error(`SKU_FETCH_FAILED:${skuRes.status}`);
+          }
+          const skuData = await skuRes.json();
+          if (Array.isArray(skuData?.skus)) {
+            const validSkus = (skuData.skus as SkuOption[]).filter(
+              (sku) => typeof sku?.sku_code === 'string' && sku.sku_code.trim().length > 0
+            );
+            setSkus(validSkus);
+          }
         }
+      } catch (err) {
+        console.error('[unit/page] bootstrap_failed', err);
+        setError('Unable to load company/SKU data right now. Please refresh and try again.');
       }
     })();
   }, []);
@@ -1073,21 +1085,28 @@ export default function UnitCodeGenerationPage() {
                     <p className="text-xs mt-1">Generate codes using the form</p>
                   </div>
                 ) : (
-                  batch.slice(0, 5).map((b) => (
-                    <div key={b.id} className="p-3 border border-gray-200 rounded-lg bg-gray-50">
-                      <div className="text-xs font-mono text-gray-600 mb-2 break-all line-clamp-2">{b.payload}</div>
-                      <div className="flex justify-center py-2 bg-white rounded overflow-hidden">
-                        {b.codeType === 'QR' ? (
-                          <QRCodeComponent value={b.payload} size={70} />
-                        ) : (
-                          <DataMatrixComponent value={b.payload} size={70} />
-                        )}
+                  batch.slice(0, 5).map((b) => {
+                    const codeValue = toNonEmptyString(b.payload);
+                    return (
+                      <div key={b.id} className="p-3 border border-gray-200 rounded-lg bg-gray-50">
+                        <div className="text-xs font-mono text-gray-600 mb-2 break-all line-clamp-2">{codeValue || 'INVALID_CODE_PAYLOAD'}</div>
+                        <div className="flex justify-center py-2 bg-white rounded overflow-hidden">
+                          {codeValue ? (
+                            b.codeType === 'QR' ? (
+                              <QRCodeComponent value={codeValue} size={70} />
+                            ) : (
+                              <DataMatrixComponent value={codeValue} size={70} />
+                            )
+                          ) : (
+                            <span className="text-xs text-red-600">Invalid code payload</span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-600 mt-2">
+                          GTIN: {b.fields.gtin} | Serial: {b.fields.serial || 'N/A'}
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-600 mt-2">
-                        GTIN: {b.fields.gtin} | Serial: {b.fields.serial || 'N/A'}
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
                 {batch.length > 5 && (
                   <div className="text-center text-sm text-gray-500 py-2">

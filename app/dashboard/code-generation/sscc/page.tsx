@@ -109,6 +109,10 @@ function findSkuBySelection(
   return skus.find((sku) => sku.id === selectedValue || sku.sku_code === selectedValue) || null;
 }
 
+function toNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
 // ---------- CSV Template Generation ----------
 function downloadSSCCCSVTemplate(companyName: string, companyId: string) {
   const headers = [
@@ -364,33 +368,41 @@ export default function SSCCCodeGenerationPage() {
 
   useEffect(() => {
     (async () => {
-      const { data: { user } } = await supabaseClient().auth.getUser();
-      if (user) {
-        const { data } = await supabaseClient()
-          .from('companies')
-          .select('id, company_name, profile_completed')
-          .eq('user_id', user.id)
-          .single();
-        if (data) {
-          setCompanyId(data.id);
-          setCompanyName(data.company_name || '');
-        }
-        if (data?.profile_completed !== undefined) {
-          setProfileCompleted(data.profile_completed);
-        }
+      try {
+        const { data: { user } } = await supabaseClient().auth.getUser();
+        if (user) {
+          const { data } = await supabaseClient()
+            .from('companies')
+            .select('id, company_name, profile_completed')
+            .eq('user_id', user.id)
+            .single();
+          if (data) {
+            setCompanyId(data.id);
+            setCompanyName(data.company_name || '');
+          }
+          if (data?.profile_completed !== undefined) {
+            setProfileCompleted(data.profile_completed);
+          }
 
-        // Fetch SKUs
-        const skuRes = await fetch('/api/skus', { cache: 'no-store' });
-        const skuData = await skuRes.json();
-        if (skuData?.skus) {
-          const validSkus = (skuData.skus as SkuOption[]).filter(
-            (sku) => typeof sku?.sku_code === 'string' && sku.sku_code.trim().length > 0
-          );
-          setSkus(validSkus);
-          if (validSkus.length > 0) {
-            setForm(prev => ({ ...prev, skuId: validSkus[0].sku_code }));
+          // Fetch SKUs
+          const skuRes = await fetch('/api/skus', { cache: 'no-store' });
+          if (!skuRes.ok) {
+            throw new Error(`SKU_FETCH_FAILED:${skuRes.status}`);
+          }
+          const skuData = await skuRes.json();
+          if (Array.isArray(skuData?.skus)) {
+            const validSkus = (skuData.skus as SkuOption[]).filter(
+              (sku) => typeof sku?.sku_code === 'string' && sku.sku_code.trim().length > 0
+            );
+            setSkus(validSkus);
+            if (validSkus.length > 0) {
+              setForm(prev => ({ ...prev, skuId: validSkus[0].sku_code }));
+            }
           }
         }
+      } catch (err) {
+        console.error('[sscc/page] bootstrap_failed', err);
+        setError('Unable to load company/SKU data right now. Please refresh and try again.');
       }
     })();
   }, []);
@@ -1103,21 +1115,27 @@ export default function SSCCCodeGenerationPage() {
                     <p className="text-sm">No SSCC codes generated yet</p>
                   </div>
                 ) : (
-                  ssccLabels.map((label) => (
+                  ssccLabels.map((label) => {
+                    const codeValue = toNonEmptyString(label.sscc_with_ai);
+                    return (
                     <div key={label.id} className="p-3 border border-gray-200 rounded-lg bg-gray-50">
-                      <div className="text-xs font-mono text-gray-600 mb-2 break-all line-clamp-2">{label.sscc_with_ai}</div>
+                      <div className="text-xs font-mono text-gray-600 mb-2 break-all line-clamp-2">{codeValue || 'INVALID_CODE_PAYLOAD'}</div>
                       <div className="flex justify-center py-2 bg-white rounded overflow-hidden">
-                        {form.codeType === 'QR' ? (
-                          <QRCodeComponent value={label.sscc_with_ai} size={70} />
+                        {codeValue ? (
+                          form.codeType === 'QR' ? (
+                            <QRCodeComponent value={codeValue} size={70} />
+                          ) : (
+                            <DataMatrixComponent value={codeValue} size={70} />
+                          )
                         ) : (
-                          <DataMatrixComponent value={label.sscc_with_ai} size={70} />
+                          <span className="text-xs text-red-600">Invalid code payload</span>
                         )}
                       </div>
                       <div className="text-xs text-gray-600 mt-2">
                         SSCC: {label.sscc} | Level: {label.level}
                       </div>
                     </div>
-                  ))
+                  )})
                 )}
               </div>
 
