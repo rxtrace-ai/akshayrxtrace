@@ -22,6 +22,13 @@ import { useSubscriptionSummary } from '@/lib/hooks/useSubscriptionSummary';
 type CodeType = 'QR' | 'DATAMATRIX';
 type GenerationLevel = 'BOX' | 'CARTON' | 'PALLET';
 
+type SkuOption = {
+  id: string;
+  sku_code: string;
+  sku_name: string | null;
+  gtin?: string | null;
+};
+
 type SSCCLabel = {
   id: string;
   sscc: string;
@@ -96,7 +103,7 @@ function estimateSsccCodes(params: {
 }
 
 function findSkuBySelection(
-  skus: Array<{ id: string; sku_code: string; sku_name: string | null; gtin?: string | null }>,
+  skus: SkuOption[],
   selectedValue: string,
 ) {
   return skus.find((sku) => sku.id === selectedValue || sku.sku_code === selectedValue) || null;
@@ -346,8 +353,14 @@ export default function SSCCCodeGenerationPage() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvValidation, setCsvValidation] = useState<{ valid: boolean; errors: CSVValidationError[] } | null>(null);
   const [csvProcessing, setCsvProcessing] = useState(false);
-  const [skus, setSkus] = useState<Array<{ id: string; sku_code: string; sku_name: string | null; gtin?: string | null }>>([]);
+  const [skus, setSkus] = useState<SkuOption[]>([]);
   const [profileCompleted, setProfileCompleted] = useState<boolean | null>(null);
+
+  const normalizedSkus = React.useMemo(() => {
+    return (skus || []).filter((sku): sku is SkuOption => {
+      return typeof sku?.sku_code === 'string' && sku.sku_code.trim().length > 0;
+    });
+  }, [skus]);
 
   useEffect(() => {
     (async () => {
@@ -370,16 +383,19 @@ export default function SSCCCodeGenerationPage() {
         const skuRes = await fetch('/api/skus', { cache: 'no-store' });
         const skuData = await skuRes.json();
         if (skuData?.skus) {
-          setSkus(skuData.skus);
-          if (skuData.skus.length > 0) {
-            setForm(prev => ({ ...prev, skuId: skuData.skus[0].sku_code }));
+          const validSkus = (skuData.skus as SkuOption[]).filter(
+            (sku) => typeof sku?.sku_code === 'string' && sku.sku_code.trim().length > 0
+          );
+          setSkus(validSkus);
+          if (validSkus.length > 0) {
+            setForm(prev => ({ ...prev, skuId: validSkus[0].sku_code }));
           }
         }
       }
     })();
   }, []);
 
-  const isGs1Eligible = skus.some((s) => typeof s.gtin === 'string' && s.gtin.trim().length > 0);
+  const isGs1Eligible = normalizedSkus.some((s) => typeof s.gtin === 'string' && s.gtin.trim().length > 0);
 
   function update<K extends keyof SSCCFormState>(k: K, v: SSCCFormState[K]) {
     setForm(s => {
@@ -455,7 +471,7 @@ export default function SSCCCodeGenerationPage() {
       return;
     }
 
-    const selectedSku = findSkuBySelection(skus, form.skuId);
+    const selectedSku = findSkuBySelection(normalizedSkus, form.skuId);
     if (!selectedSku) {
       setError('SKU not found. Create SKU in SKU Master first.');
       setLoading(false);
@@ -762,7 +778,7 @@ export default function SSCCCodeGenerationPage() {
                       <SelectValue placeholder="Select SKU" />
                     </SelectTrigger>
                     <SelectContent>
-                      {skus.map((s) => (
+                      {normalizedSkus.map((s) => (
                         <SelectItem key={s.id} value={s.sku_code}>
                           {s.sku_code} {s.sku_name ? `- ${s.sku_name}` : ''}
                         </SelectItem>

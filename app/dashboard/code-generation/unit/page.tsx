@@ -35,6 +35,12 @@ type Gs1Fields = {
 
 type CodeType = 'QR' | 'DATAMATRIX';
 
+type SkuOption = {
+  id: string;
+  sku_code: string;
+  sku_name: string | null;
+};
+
 type UnitFormState = {
   sku: string;
   batch: string;
@@ -373,8 +379,14 @@ export default function UnitCodeGenerationPage() {
   const [csvValidation, setCsvValidation] = useState<{ valid: boolean; errors: CSVValidationError[] } | null>(null);
   const [csvProcessing, setCsvProcessing] = useState(false);
   const [generatingSingle, setGeneratingSingle] = useState(false);
-  const [skus, setSkus] = useState<Array<{ id: string; sku_code: string; sku_name: string | null }>>([]);
+  const [skus, setSkus] = useState<SkuOption[]>([]);
   const [profileCompleted, setProfileCompleted] = useState<boolean | null>(null);
+
+  const normalizedSkus = React.useMemo(() => {
+    return (skus || []).filter((sku): sku is SkuOption => {
+      return typeof sku?.sku_code === 'string' && sku.sku_code.trim().length > 0;
+    });
+  }, [skus]);
 
   useEffect(() => {
     (async () => {
@@ -397,7 +409,10 @@ export default function UnitCodeGenerationPage() {
         const skuRes = await fetch('/api/skus', { cache: 'no-store' });
         const skuData = await skuRes.json();
         if (skuData?.skus) {
-          setSkus(skuData.skus);
+          const validSkus = (skuData.skus as SkuOption[]).filter(
+            (sku) => typeof sku?.sku_code === 'string' && sku.sku_code.trim().length > 0
+          );
+          setSkus(validSkus);
         }
       }
     })();
@@ -745,7 +760,7 @@ export default function UnitCodeGenerationPage() {
                       <SelectValue placeholder="Select SKU" />
                     </SelectTrigger>
                     <SelectContent>
-                      {skus.map((s) => (
+                      {normalizedSkus.map((s) => (
                         <SelectItem key={s.id} value={s.sku_code}>
                           {s.sku_code} {s.sku_name ? `- ${s.sku_name}` : ''}
                         </SelectItem>
