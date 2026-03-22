@@ -182,7 +182,7 @@ export async function POST(req: Request) {
 
     let row = Array.isArray(data) ? data[0] : data;
     if (error || !row?.handset_id || !row?.company_id) {
-      const msg = String(error.message || "ACTIVATION_FAILED");
+      const msg = String(error?.message || "ACTIVATION_FAILED");
       const mapped = msg.includes("TOKEN_EXPIRED")
         ? "TOKEN_EXPIRED"
         : msg.includes("TOKEN_REVOKED")
