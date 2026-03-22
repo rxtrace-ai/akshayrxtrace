@@ -6,6 +6,80 @@ import { signDeviceAuthToken } from "@/lib/handset-v2/auth";
 import { isHandsetV2Enabled, normalizeActivationToken, hashActivationToken, redactToken, safeIpFromRequest } from "@/lib/handset-v2/config";
 
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+type ActivationErrorCode =
+  | "FEATURE_DISABLED"
+  | "INVALID_TOKEN"
+  | "INVALID_DEVICE_ID"
+  | "INVALID_PLATFORM"
+  | "RATE_LIMITED"
+  | "TOKEN_EXPIRED"
+  | "TOKEN_REVOKED"
+  | "TOKEN_EXHAUSTED"
+  | "ACTIVATION_FAILED"
+  | "SECRET_MISSING";
+
+function activationMessage(code: ActivationErrorCode): string {
+  switch (code) {
+    case "FEATURE_DISABLED":
+      return "Handset activation is disabled.";
+    case "INVALID_TOKEN":
+      return "Activation token is invalid.";
+    case "INVALID_DEVICE_ID":
+      return "Device ID must be a valid UUID v4.";
+    case "INVALID_PLATFORM":
+      return "Unsupported platform. Android is required.";
+    case "RATE_LIMITED":
+      return "Too many requests. Please retry shortly.";
+    case "TOKEN_EXPIRED":
+      return "Activation token has expired.";
+    case "TOKEN_REVOKED":
+      return "Activation token has been revoked.";
+    case "TOKEN_EXHAUSTED":
+      return "Activation token has reached max activations.";
+    case "SECRET_MISSING":
+      return "Server configuration missing signing secret.";
+    default:
+      return "Handset activation failed.";
+  }
+}
+
+function activationStatus(code: ActivationErrorCode): number {
+  if (code === "RATE_LIMITED") return 429;
+  if (code === "ACTIVATION_FAILED" || code === "SECRET_MISSING") return 500;
+  if (code === "FEATURE_DISABLED") return 403;
+  return 400;
+}
+
+function activationError(code: ActivationErrorCode, detail?: string, extra?: Record<string, unknown>) {
+  const payload = {
+    success: false,
+    error: {
+      code,
+      message: activationMessage(code),
+      ...(detail ? { detail } : {}),
+      ...(extra || {}),
+    },
+  };
+  return apiJson(payload, { status: activationStatus(code) });
+}
+
+function inferActivationCode(input: unknown): ActivationErrorCode | null {
+  const text = String(input || "").toUpperCase();
+  if (!text) return null;
+  if (text.includes("TOKEN_EXPIRED")) return "TOKEN_EXPIRED";
+  if (text.includes("TOKEN_REVOKED")) return "TOKEN_REVOKED";
+  if (text.includes("TOKEN_EXHAUSTED")) return "TOKEN_EXHAUSTED";
+  if (text.includes("TOKEN_NOT_FOUND")) return "INVALID_TOKEN";
+  if (text.includes("INVALID_TOKEN")) return "INVALID_TOKEN";
+  if (text.includes("INVALID_DEVICE_ID")) return "INVALID_DEVICE_ID";
+  if (text.includes("INVALID_PLATFORM")) return "INVALID_PLATFORM";
+  if (text.includes("RATE_LIMITED")) return "RATE_LIMITED";
+  return null;
+}
+
+function logActivation(event: string, meta: Record<string, unknown>) {
+  console.info(`[handset.activate] ${event}`, meta);
+}
 
 async function activateHandsetFallback(params: {
   supabase: any;
@@ -115,7 +189,8 @@ async function activateHandsetFallback(params: {
 
 export async function POST(req: Request) {
   if (!isHandsetV2Enabled()) {
-    return apiJson({ success: false, error: "FEATURE_DISABLED" }, { status: 403 });
+    logActivation("feature_disabled", {});
+    return activationError("FEATURE_DISABLED");
   }
 
   const ip = safeIpFromRequest(req);
@@ -134,13 +209,16 @@ export async function POST(req: Request) {
   const deviceName = String(body.device_name || "").trim();
 
   if (!token || !/^RX-[A-Z0-9]{6}-[A-Z0-9]{6}$/.test(token)) {
-    return apiJson({ success: false, error: "INVALID_TOKEN" }, { status: 400 });
+    logActivation("invalid_token_format", { token_present: Boolean(token) });
+    return activationError("INVALID_TOKEN");
   }
   if (!UUID_V4_REGEX.test(deviceId)) {
-    return apiJson({ success: false, error: "INVALID_DEVICE_ID" }, { status: 400 });
+    logActivation("invalid_device_id", { deviceId });
+    return activationError("INVALID_DEVICE_ID");
   }
   if (platform !== "android") {
-    return apiJson({ success: false, error: "INVALID_PLATFORM" }, { status: 400 });
+    logActivation("invalid_platform", { platform });
+    return activationError("INVALID_PLATFORM");
   }
 
   const ipLimit = await consumeRateLimit({ key: `handset-v2:activate:ip:${ip}`, refillPerMinute: 20, burst: 20 });
@@ -148,29 +226,31 @@ export async function POST(req: Request) {
   const tokenLimit = await consumeRateLimit({ key: `handset-v2:activate:token:${hashActivationToken(token)}`, refillPerMinute: 30, burst: 30 });
 
   if (!ipLimit.allowed) {
-    return apiJson(
-      { success: false, error: "RATE_LIMITED", retry_after_seconds: ipLimit.retryAfterSeconds },
-      { status: 429 }
-    );
+    logActivation("rate_limited_ip", { ip, retry_after_seconds: ipLimit.retryAfterSeconds });
+    return activationError("RATE_LIMITED", undefined, { retry_after_seconds: ipLimit.retryAfterSeconds });
   }
 
   if (!deviceLimit.allowed) {
-    return apiJson(
-      { success: false, error: "RATE_LIMITED", retry_after_seconds: deviceLimit.retryAfterSeconds },
-      { status: 429 }
-    );
+    logActivation("rate_limited_device", { deviceId, retry_after_seconds: deviceLimit.retryAfterSeconds });
+    return activationError("RATE_LIMITED", undefined, { retry_after_seconds: deviceLimit.retryAfterSeconds });
   }
 
   if (!tokenLimit.allowed) {
-    return apiJson(
-      { success: false, error: "RATE_LIMITED", retry_after_seconds: tokenLimit.retryAfterSeconds },
-      { status: 429 }
-    );
+    logActivation("rate_limited_token", { token: redactToken(token), retry_after_seconds: tokenLimit.retryAfterSeconds });
+    return activationError("RATE_LIMITED", undefined, { retry_after_seconds: tokenLimit.retryAfterSeconds });
   }
 
   const supabase = getSupabaseAdmin();
   try {
     const tokenHash = hashActivationToken(token);
+    logActivation("activation_attempt", {
+      token: redactToken(token),
+      device_id: deviceId,
+      platform,
+      app_version: appVersion || null,
+      device_name: deviceName || null,
+      ip,
+    });
     const { data, error } = await supabase.rpc("activate_handset_v2", {
       p_token_hash: tokenHash,
       p_device_id: deviceId,
@@ -182,25 +262,31 @@ export async function POST(req: Request) {
 
     let row = Array.isArray(data) ? data[0] : data;
     if (error || !row?.handset_id || !row?.company_id) {
-      const msg = String(error?.message || "ACTIVATION_FAILED");
-      const mapped = msg.includes("TOKEN_EXPIRED")
-        ? "TOKEN_EXPIRED"
-        : msg.includes("TOKEN_REVOKED")
-        ? "TOKEN_REVOKED"
-        : msg.includes("TOKEN_EXHAUSTED")
-        ? "TOKEN_EXHAUSTED"
-        : msg.includes("INVALID_TOKEN")
-        ? "INVALID_TOKEN"
-        : msg.includes("TOKEN_NOT_FOUND")
-        ? "INVALID_TOKEN"
-        : "";
+      if (error) {
+        logActivation("rpc_error", {
+          token: redactToken(token),
+          code: (error as any)?.code || null,
+          message: (error as any)?.message || null,
+          details: (error as any)?.details || null,
+          hint: (error as any)?.hint || null,
+        });
+      } else {
+        logActivation("rpc_empty_row", { token: redactToken(token), rpc_data: row || null });
+      }
+
+      const mapped =
+        inferActivationCode((error as any)?.message) ||
+        inferActivationCode((error as any)?.code) ||
+        inferActivationCode((error as any)?.details) ||
+        inferActivationCode((error as any)?.hint);
 
       if (mapped) {
-        return apiJson({ success: false, error: mapped }, { status: 400 });
+        return activationError(mapped, redactToken(String((error as any)?.message || mapped)));
       }
 
       // Fallback path: handles environments where RPC is unavailable/misaligned.
       try {
+        logActivation("fallback_start", { token: redactToken(token), device_id: deviceId });
         row = await activateHandsetFallback({
           supabase,
           tokenHash,
@@ -209,30 +295,45 @@ export async function POST(req: Request) {
           appVersion,
           deviceName,
         });
+        logActivation("fallback_success", {
+          token: redactToken(token),
+          handset_id: row?.handset_id || null,
+          company_id: row?.company_id || null,
+          activation_count: row?.activation_count || null,
+        });
       } catch (fallbackErr: any) {
         const fallbackMsg = String(fallbackErr?.message || "ACTIVATION_FAILED");
-        const fallbackMapped = fallbackMsg.includes("TOKEN_EXPIRED")
-          ? "TOKEN_EXPIRED"
-          : fallbackMsg.includes("TOKEN_REVOKED")
-          ? "TOKEN_REVOKED"
-          : fallbackMsg.includes("TOKEN_EXHAUSTED")
-          ? "TOKEN_EXHAUSTED"
-          : fallbackMsg.includes("TOKEN_NOT_FOUND")
-          ? "INVALID_TOKEN"
-          : fallbackMsg.includes("INVALID_TOKEN")
-          ? "INVALID_TOKEN"
-          : "ACTIVATION_FAILED";
-        return apiJson(
-          { success: false, error: fallbackMapped, detail: redactToken(fallbackMsg) },
-          { status: fallbackMapped === "ACTIVATION_FAILED" ? 500 : 400 }
-        );
+        logActivation("fallback_error", {
+          token: redactToken(token),
+          detail: redactToken(fallbackMsg),
+        });
+        const fallbackMapped = inferActivationCode(fallbackMsg) || "ACTIVATION_FAILED";
+        return activationError(fallbackMapped, redactToken(fallbackMsg));
       }
     }
 
-    const deviceAuthToken = signDeviceAuthToken({
-      handsetId: String(row.handset_id),
-      companyId: String(row.company_id),
-      deviceId,
+    let deviceAuthToken = "";
+    try {
+      deviceAuthToken = signDeviceAuthToken({
+        handsetId: String(row.handset_id),
+        companyId: String(row.company_id),
+        deviceId,
+      });
+    } catch (signErr: any) {
+      const signMsg = String(signErr?.message || "ACTIVATION_FAILED");
+      logActivation("token_sign_error", { detail: redactToken(signMsg) });
+      if (signMsg.includes("HANDSET_DEVICE_AUTH_SECRET")) {
+        return activationError("SECRET_MISSING", redactToken(signMsg));
+      }
+      return activationError("ACTIVATION_FAILED", redactToken(signMsg));
+    }
+
+    logActivation("activation_success", {
+      token: redactToken(token),
+      handset_id: String(row.handset_id),
+      company_id: String(row.company_id),
+      activation_count: Number(row.activation_count || 0),
+      max_activations: Number(row.max_activations || 0),
     });
 
     return apiJson({
@@ -251,10 +352,9 @@ export async function POST(req: Request) {
       },
     });
   } catch (err: any) {
-    return apiJson(
-      { success: false, error: redactToken(String(err?.message || "ACTIVATION_FAILED")) },
-      { status: 500 }
-    );
+    const msg = redactToken(String(err?.message || "ACTIVATION_FAILED"));
+    logActivation("activation_exception", { detail: msg });
+    return activationError("ACTIVATION_FAILED", msg);
   }
 }
 
