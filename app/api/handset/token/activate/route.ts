@@ -117,6 +117,7 @@ async function activateHandsetFallback(params: {
   const normalizedPlatform = String(platform || "android").toLowerCase();
   const normalizedAppVersion = String(appVersion || "").trim() || null;
   const normalizedDeviceName = String(deviceName || "").trim() || null;
+  const normalizedDeviceFingerprint = deviceId;
 
   let handsetId = "";
   const { data: existing, error: existingErr } = await supabase
@@ -132,6 +133,7 @@ async function activateHandsetFallback(params: {
       .from("handsets")
       .update({
         status: "ACTIVE",
+        device_fingerprint: normalizedDeviceFingerprint,
         platform: normalizedPlatform,
         app_version: normalizedAppVersion,
         device_name: normalizedDeviceName,
@@ -151,6 +153,7 @@ async function activateHandsetFallback(params: {
         company_id: tokenRow.company_id,
         status: "ACTIVE",
         device_id: deviceId,
+        device_fingerprint: normalizedDeviceFingerprint,
         platform: normalizedPlatform,
         app_version: normalizedAppVersion,
         device_name: normalizedDeviceName,
