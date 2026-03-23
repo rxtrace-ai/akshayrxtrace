@@ -1,45 +1,34 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
 import { parsePayload } from "@/lib/parsePayload";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { compareGS1Payloads, normalizeGS1Payload } from "@/lib/gs1Canonical";
 import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
-import { fail, ok } from "@/lib/api/response";
+import { isExpiredStrict } from "@/lib/scanner/expiry";
+import { beginScannerIdempotency, completeScannerIdempotency, waitForScannerReplay } from "@/lib/scanner/idempotency";
+import { insertScanLogSafe, recordSerialScanAtomic } from "@/lib/scanner/logging";
+import { scanRequestBodySchema } from "@/lib/scanner/schemas";
+import { logError } from "@/lib/observability/logging";
 
 const GS = String.fromCharCode(29);
+
+function okPayload(data: any) {
+  return { success: true, data };
+}
+
+function failPayload(code: string, message: string) {
+  return { success: false, error: { code, message } };
+}
+
+function json(statusCode: number, payload: any) {
+  return NextResponse.json(payload, { status: statusCode });
+}
 
 function normalizeMachinePayload(input: string): string {
   return String(input || "")
     .replace(/[()]/g, "")
     .replace(/[\u001D\u00F1]/g, GS)
     .replace(/\s/g, "");
-}
-
-function isExpired(expiryStr: string): boolean {
-  try {
-    let year: number;
-    let month: number;
-    let day: number;
-
-    if (expiryStr.includes("-")) {
-      const parts = expiryStr.split("-");
-      year = parseInt(parts[0]);
-      month = parseInt(parts[1]);
-      day = parseInt(parts[2]);
-    } else if (expiryStr.length === 6) {
-      year = 2000 + parseInt(expiryStr.substring(0, 2));
-      month = parseInt(expiryStr.substring(2, 4));
-      day = parseInt(expiryStr.substring(4, 6));
-    } else {
-      return false;
-    }
-
-    const expiryDate = new Date(year, month - 1, day);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    return expiryDate < today;
-  } catch {
-    return false;
-  }
 }
 
 async function buildHierarchyForPallet(opts: {
@@ -153,36 +142,108 @@ async function findCompanyBySscc(
   return (cartonRow as any)?.company_id ?? (boxRow as any)?.company_id ?? null;
 }
 
+const scanRequestSchema = scanRequestBodySchema.extend({
+  raw: z.string().trim().min(1).max(4096),
+});
+
 export async function POST(req: Request) {
+  const supabase = getSupabaseAdmin();
+
+  const authCompanyId = await resolveCompanyIdFromRequest(req);
+  if (!authCompanyId) {
+    return json(401, failPayload("UNAUTHORIZED", "Unauthorized"));
+  }
+
+  const rawBody = await req.json().catch(() => null);
+  if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
+    return json(400, failPayload("INVALID_REQUEST", "Request body must be a JSON object"));
+  }
+
+  const parsedBody = scanRequestSchema.safeParse(rawBody);
+  if (!parsedBody.success) {
+    return json(400, failPayload("INVALID_REQUEST", "Invalid scan request payload"));
+  }
+
+  const body = parsedBody.data;
+  if (body.company_id && body.company_id !== authCompanyId) {
+    return json(403, failPayload("FORBIDDEN", "Forbidden"));
+  }
+
+  const scopeKey = `company:${authCompanyId}`;
+  const idem = await beginScannerIdempotency({
+    supabase,
+    endpoint: "/api/scan",
+    scopeKey,
+    req,
+    body,
+    requestHashPayload: {
+      raw: body.raw,
+      company_id: body.company_id ?? null,
+      device_context: body.device_context ?? null,
+    },
+  });
+
+  if (idem.kind === "missing_key") {
+    return json(400, failPayload("INVALID_REQUEST", "Missing Idempotency-Key header"));
+  }
+  if (idem.kind === "conflict") {
+    return json(409, failPayload("INVALID_REQUEST", "Idempotency key conflict"));
+  }
+  if (idem.kind === "replay") {
+    return json(idem.statusCode, idem.payload);
+  }
+  if (idem.kind === "pending") {
+    const wait = await waitForScannerReplay({
+      supabase,
+      endpoint: "/api/scan",
+      scopeKey,
+      idempotencyKey: idem.key,
+      requestHash: idem.requestHash,
+      timeoutMs: 3500,
+    });
+    if (wait.kind === "replay") {
+      return json(wait.statusCode, wait.payload);
+    }
+    return json(409, failPayload("INVALID_REQUEST", "Request already in progress"));
+  }
+
+  const finalize = async (statusCode: number, payload: any) => {
+    try {
+      await completeScannerIdempotency({
+        supabase,
+        endpoint: "/api/scan",
+        scopeKey,
+        idempotencyKey: idem.key,
+        requestHash: idem.requestHash,
+        statusCode,
+        payload,
+      });
+    } catch (error: any) {
+      logError("Failed to finalize scan idempotency", {
+        route: "/api/scan",
+        companyId: authCompanyId,
+        error: String(error?.message || error),
+      });
+    }
+    return json(statusCode, payload);
+  };
+
   try {
-    const supabase = getSupabaseAdmin();
-    const authCompanyId = await resolveCompanyIdFromRequest(req);
-    if (!authCompanyId) {
-      return fail("UNAUTHORIZED", "Unauthorized", 401);
-    }
-
-    const { raw, company_id, device_context } = await req.json();
-    if (company_id && company_id !== authCompanyId) {
-      return fail("FORBIDDEN", "Forbidden", 403);
-    }
-
-    if (!raw) {
-      return fail("VALIDATION_ERROR", "Missing raw payload", 400);
-    }
-
-    const parsedAny = parsePayload(raw);
+    const parsedAny = parsePayload(body.raw);
     if (parsedAny.mode === "INVALID") {
-      return fail("VALIDATION_ERROR", parsedAny.error || "Invalid payload", 400);
+      const payload = failPayload("INVALID_CODE", parsedAny.error || "Invalid payload");
+      return finalize(400, payload);
     }
 
     const data =
       parsedAny.mode === "GS1"
         ? (parsedAny.parsed as any)
         : ({
-            raw,
+            raw: body.raw,
             parsed: true,
             serialNo: parsedAny.parsed.serial,
             sscc: undefined,
+            expiryDate: undefined,
           } as any);
 
     let resolvedCompanyId = authCompanyId;
@@ -204,18 +265,22 @@ export async function POST(req: Request) {
     }
 
     if (!resolvedCompanyId) {
-      return fail("VALIDATION_ERROR", "Cannot resolve company_id from GS1 payload or scanned entity", 400);
+      return finalize(400, failPayload("INVALID_REQUEST", "Cannot resolve company from scanned payload"));
     }
 
     let expiryStatus: "VALID" | "EXPIRED" = "VALID";
-    let scanStatus: "SUCCESS" | "ERROR" = "SUCCESS";
+    let logStatus: "SUCCESS" | "ERROR" = "SUCCESS";
     let errorReason: string | null = null;
 
     if (data.expiryDate) {
-      const expired = isExpired(data.expiryDate);
-      if (expired) {
+      const expiry = isExpiredStrict(data.expiryDate);
+      if (!expiry.valid) {
+        return finalize(400, failPayload("INVALID_CODE", "Invalid expiry in scanned code"));
+      }
+      data.expiryDate = expiry.isoDate;
+      if (expiry.expired) {
         expiryStatus = "EXPIRED";
-        scanStatus = "ERROR";
+        logStatus = "ERROR";
         errorReason = "PRODUCT_EXPIRED";
       }
     }
@@ -390,26 +455,26 @@ export async function POST(req: Request) {
         if (storedPayload) {
           const payloadsMatch =
             codeMode === "GS1"
-              ? compareGS1Payloads(storedPayload, raw)
-              : normalizeMachinePayload(storedPayload) === normalizeMachinePayload(raw);
+              ? compareGS1Payloads(storedPayload, body.raw)
+              : normalizeMachinePayload(storedPayload) === normalizeMachinePayload(body.raw);
           if (!payloadsMatch) {
-            await supabase.from("scan_logs").insert({
+            await insertScanLogSafe(supabase, {
               company_id: unit.company_id || resolvedCompanyId,
-              handset_id: null,
-              raw_scan: raw,
-              parsed: data,
+              raw_scan: body.raw,
+              parsed: { serialNo: data.serialNo || null },
+              status: "FAILED",
+              endpoint: "scan",
+              idempotency_key: idem.key,
+              request_hash: idem.requestHash,
               metadata: {
                 level: "unit",
                 status: "PAYLOAD_MISMATCH",
                 stored_payload: codeMode === "GS1" ? normalizeGS1Payload(storedPayload) : normalizeMachinePayload(storedPayload),
-                scanned_payload: codeMode === "GS1" ? normalizeGS1Payload(raw) : normalizeMachinePayload(raw),
+                scanned_payload: codeMode === "GS1" ? normalizeGS1Payload(body.raw) : normalizeMachinePayload(body.raw),
                 unit_id: unit.id,
-                device_context: device_context || null,
               },
-              status: "FAILED",
             });
-
-            return fail("PAYLOAD_MISMATCH", "Payload mismatch - code may be tampered or invalid", 400);
+            return finalize(400, failPayload("INVALID_CODE", "Payload mismatch - code may be tampered"));
           }
         }
 
@@ -433,50 +498,63 @@ export async function POST(req: Request) {
     }
 
     if (!result || !level) {
-      return fail("CODE_NOT_FOUND", "Code not found in hierarchy", 404);
+      return finalize(404, failPayload("INVALID_CODE", "Code not found in hierarchy"));
     }
 
-    const { data: priorScans } = await supabase
-      .from("scan_logs")
-      .select("id, scanned_at, metadata")
-      .eq("company_id", resolvedCompanyId)
-      .eq("metadata->>serial", data.serialNo || "")
-      .order("scanned_at", { ascending: true })
-      .limit(1);
-
-    const isDuplicate = Boolean(priorScans && priorScans.length > 0 && data.serialNo);
-    if (isDuplicate) {
-      scanStatus = "SUCCESS";
+    const serial = String(data.serialNo || "").trim();
+    let duplicateInfo: { isDuplicate: boolean; firstScannedAt: string | null; scanCount: number } | null = null;
+    if (serial) {
+      duplicateInfo = await recordSerialScanAtomic({
+        supabase,
+        companyId: resolvedCompanyId,
+        serial,
+      });
     }
 
-    const metadata: any = {
-      level,
-      serial: data.serialNo || null,
-      expiry_status: expiryStatus,
-      ...(isDuplicate ? { status: "DUPLICATE", first_scanned_at: priorScans?.[0]?.scanned_at } : {}),
-      ...(device_context ? { device_context } : {}),
-    };
+    const status = expiryStatus === "EXPIRED" ? "EXPIRED" : duplicateInfo?.isDuplicate ? "DUPLICATE" : "VALID";
 
-    if (errorReason) {
-      metadata.error_reason = errorReason;
-    }
-
-    await supabase.from("scan_logs").insert({
+    await insertScanLogSafe(supabase, {
       company_id: resolvedCompanyId,
-      handset_id: null,
-      raw_scan: raw,
-      parsed: data,
+      raw_scan: body.raw,
+      parsed: {
+        mode: parsedAny.mode,
+        serialNo: serial || null,
+        sscc: data.sscc || null,
+        expiryDate: data.expiryDate || null,
+      },
       code_id: result?.id || null,
-      scanned_at: new Date().toISOString(),
-      metadata,
-      status: scanStatus,
+      status: logStatus,
+      endpoint: "scan",
+      idempotency_key: idem.key,
+      request_hash: idem.requestHash,
+      metadata: {
+        level,
+        serial: serial || null,
+        expiry_status: expiryStatus,
+        status,
+        first_scanned_at: duplicateInfo?.firstScannedAt ?? null,
+        scan_count: duplicateInfo?.scanCount ?? null,
+        error_reason: errorReason,
+        device_context: body.device_context || null,
+        quota_consumed: false,
+      },
     });
 
-    return ok({
+    const payload = okPayload({
+      status,
       level,
+      duplicate: Boolean(duplicateInfo?.isDuplicate),
+      firstScanAt: duplicateInfo?.firstScannedAt ?? null,
       result,
     });
+
+    return finalize(200, payload);
   } catch (err: any) {
-    return fail("INTERNAL_ERROR", err.message || String(err), 500);
+    logError("scan route failure", {
+      route: "/api/scan",
+      companyId: authCompanyId,
+      error: String(err?.message || err),
+    });
+    return finalize(500, failPayload("INTERNAL_ERROR", "Unable to process scan"));
   }
 }

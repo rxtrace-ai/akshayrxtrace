@@ -139,6 +139,7 @@ async function getOverviewStats(params: {
       renewal_at: (subscription as any)?.renewal_date || (subscription as any)?.next_billing_at || null,
     },
     entitlement: {
+      scanner_usage_policy: "SCANS_DO_NOT_CONSUME_GENERATION_QUOTA",
       seat_usage: toNumber(entitlement.usage.seat),
       seat_limit: toNumber(entitlement.limits.seat),
       generation_usage_total:

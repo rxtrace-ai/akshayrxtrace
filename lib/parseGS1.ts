@@ -64,9 +64,6 @@ export function parseGS1(data: string): GS1Data {
     return result;
   }
 
-  console.log('Parsing GS1 data:', data);
-  console.log('Data with visible GS:', data.replace(/\x1D/g, '<GS>'));
-
   // Remove any FNC1 characters that might be at the start
   // FNC1 is often encoded as ASCII 0x1D or a special symbol; scanners may map it differently.
   let cleanData = data.replace(/^[\u00F1\xF1]/, '');
@@ -107,14 +104,12 @@ function parseGS1WithParentheses(data: string): GS1Data {
   const ssccMatch = data.match(/\(00\)(\d{18})/);
   if (ssccMatch) {
     result.sscc = ssccMatch[1];
-    console.log('Extracted SSCC:', result.sscc);
   }
 
   // (01) GTIN - 14 digits
   const gtinMatch = data.match(/\(01\)(\d{14})/);
   if (gtinMatch) {
     result.gtin = gtinMatch[1];
-    console.log('Extracted GTIN:', result.gtin);
   }
 
   // (17) Expiry Date - 6 digits YYMMDD
@@ -122,14 +117,12 @@ function parseGS1WithParentheses(data: string): GS1Data {
   if (expiryMatch) {
     const yymmdd = expiryMatch[1];
     result.expiryDate = formatGS1Date(yymmdd);
-    console.log('Extracted Expiry:', result.expiryDate, 'from', yymmdd);
   }
 
   // (10) Batch/Lot Number - variable length (up to next "(" or end)
   const batchMatch = data.match(/\(10\)([^\(]+)/);
   if (batchMatch) {
     result.batchNo = batchMatch[1].trim();
-    console.log('Extracted Batch:', result.batchNo);
   }
 
   // (11) MFG Date - 6 digits YYMMDD
@@ -137,28 +130,24 @@ function parseGS1WithParentheses(data: string): GS1Data {
   if (mfgMatch) {
     const yymmdd = mfgMatch[1];
     result.mfgDate = formatGS1Date(yymmdd);
-    console.log('Extracted MFG Date:', result.mfgDate, 'from', yymmdd);
   }
 
   // (21) Serial Number - variable length
   const serialMatch = data.match(/\(21\)([^\(]+)/);
   if (serialMatch) {
     result.serialNo = serialMatch[1].trim();
-    console.log('Extracted Serial:', result.serialNo);
   }
 
   // (91) MRP - variable length (internal use)
   const mrpMatch = data.match(/\(91\)([^\(]+)/);
   if (mrpMatch) {
     result.mrp = mrpMatch[1].trim();
-    console.log('Extracted MRP (AI 91):', result.mrp);
   }
 
   // (92) SKU / Product Name - variable length (internal use)
   const skuMatch = data.match(/\(92\)([^\(]+)/);
   if (skuMatch) {
     result.skuName = skuMatch[1].trim();
-    console.log('Extracted SKU (AI 92):', result.skuName);
   }
 
   return result;
@@ -186,27 +175,21 @@ function parseGS1WithoutParentheses(data: string): GS1Data {
   let position = 0;
   const GS = String.fromCharCode(29); // Group Separator
 
-  console.log('Parsing without parentheses, length:', data.length);
-
   while (position < data.length) {
     // Read AI (2 digits)
     const ai = data.substring(position, position + 2);
     position += 2;
 
-    console.log('Found AI:', ai, 'at position', position - 2);
-
     switch (ai) {
       case '00': { // SSCC - 18 digits (fixed length) - Serial Shipping Container Code
         result.sscc = data.substring(position, position + 18);
         position += 18;
-        console.log('Extracted SSCC:', result.sscc);
         break;
       }
 
       case '01': { // GTIN - 14 digits (fixed length)
         result.gtin = data.substring(position, position + 14);
         position += 14;
-        console.log('Extracted GTIN:', result.gtin);
         break;
       }
 
@@ -214,7 +197,6 @@ function parseGS1WithoutParentheses(data: string): GS1Data {
         const expiryYYMMDD = data.substring(position, position + 6);
         result.expiryDate = formatGS1Date(expiryYYMMDD);
         position += 6;
-        console.log('Extracted Expiry:', result.expiryDate, 'from', expiryYYMMDD);
         break;
       }
 
@@ -222,7 +204,6 @@ function parseGS1WithoutParentheses(data: string): GS1Data {
         const mfgYYMMDD = data.substring(position, position + 6);
         result.mfgDate = formatGS1Date(mfgYYMMDD);
         position += 6;
-        console.log('Extracted MFG Date:', result.mfgDate, 'from', mfgYYMMDD);
         break;
       }
 
@@ -241,7 +222,6 @@ function parseGS1WithoutParentheses(data: string): GS1Data {
             position = data.length;
           }
         }
-        console.log('Extracted Batch:', result.batchNo);
         break;
       }
 
@@ -254,7 +234,6 @@ function parseGS1WithoutParentheses(data: string): GS1Data {
           result.serialNo = data.substring(position);
           position = data.length;
         }
-        console.log('Extracted Serial:', result.serialNo);
         break;
       }
 
@@ -273,7 +252,6 @@ function parseGS1WithoutParentheses(data: string): GS1Data {
             position = data.length;
           }
         }
-        console.log('Extracted MRP (AI 91):', result.mrp);
         break;
       }
 
@@ -292,13 +270,11 @@ function parseGS1WithoutParentheses(data: string): GS1Data {
             position = data.length;
           }
         }
-        console.log('Extracted SKU (AI 92):', result.skuName);
         break;
       }
 
       default:
         // Unknown AI, stop parsing to avoid garbage
-        console.warn('Unknown AI:', ai, '- stopping parse');
         position = data.length;
         break;
     }
@@ -332,7 +308,7 @@ function findNextAI(data: string, startPos: number): number {
 }
 
 /**
- * Convert GS1 date format (YYMMDD) to human-readable format (DD-MM-YYYY)
+ * Convert GS1 date format (YYMMDD) to strict ISO format (YYYY-MM-DD)
  * 
  * GS1 dates are encoded as 6 digits: YYMMDD
  * - YY: Two-digit year (00-49 = 2000-2049, 50-99 = 1950-1999)
@@ -340,7 +316,7 @@ function findNextAI(data: string, startPos: number): number {
  * - DD: Day (01-31)
  * 
  * @param yymmdd - GS1 date string in YYMMDD format (6 digits)
- * @returns Formatted date string in DD-MM-YYYY format
+ * @returns Formatted date string in YYYY-MM-DD format
  * @internal
  */
 function formatGS1Date(yymmdd: string): string {
@@ -352,10 +328,8 @@ function formatGS1Date(yymmdd: string): string {
   const mm = yymmdd.substring(2, 4);
   const dd = yymmdd.substring(4, 6);
 
-  // Convert YY to YYYY (simple rule: 00-49 => 2000-2049, 50-99 => 1950-1999)
-  const yyyy = parseInt(yy, 10) < 50 ? `20${yy}` : `19${yy}`;
-
-  return `${dd}-${mm}-${yyyy}`;
+  const yyyy = `20${yy}`;
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 /**
