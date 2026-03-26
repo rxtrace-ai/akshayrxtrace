@@ -13,11 +13,20 @@ import { fail, ok } from "@/lib/api/response";
 const MAX_UNITS_PER_REQUEST = 10000;
 const DB_INSERT_BATCH_SIZE = 1000;
 const MAX_SERIAL_RETRY_ATTEMPTS = 5;
-const SKU_NOT_FOUND_ERROR = "SKU not found. Create SKU in SKU Master first.";
+const LEGACY_UNIT_FIELDS = [
+  "sku_code",
+  "sku_name",
+  "gtin",
+  "batch",
+  "mfd",
+  "expiry",
+  "mrp",
+  "company_name",
+] as const;
 
 type UnitLabelRow = {
   company_id: string;
-  sku_id: string;
+  sku_id: string | null;
   gtin: string | null;
   batch: string;
   mfd: string;
@@ -27,6 +36,15 @@ type UnitLabelRow = {
   gs1_payload: string;
   code_mode: "GS1" | "PIC";
   payload: string;
+};
+
+type UnitMasterSnapshot = {
+  sku_code: string;
+  gtin: string | null;
+  batch: string;
+  mfd: string | null;
+  expiry: string;
+  mrp: string | null;
 };
 
 // ---------- API ----------
@@ -44,15 +62,8 @@ export async function POST(req: Request) {
     const body = await req.json();
 
     const {
+      unit_sku_master_id,
       company_id: requestedCompanyId,
-      company_name,
-      sku_code,
-      sku_name,
-      gtin,
-      batch,
-      mfd,
-      expiry,
-      mrp,
       quantity,
       compliance_ack
     } = body;
@@ -65,11 +76,37 @@ export async function POST(req: Request) {
       return fail("FORBIDDEN", "Forbidden", 403);
     }
 
+    const legacyFieldsProvided = LEGACY_UNIT_FIELDS.filter((field) => body?.[field] !== undefined);
+    if (legacyFieldsProvided.length > 0) {
+      console.warn("[unit_create] legacy_request_shape_rejected", {
+        company_id,
+        request_id: requestId,
+        fields: legacyFieldsProvided,
+      });
+      return fail(
+        "VALIDATION_ERROR",
+        "Unit generation now requires a valid SKU Master selection. Direct fixed-field Unit generation is no longer supported.",
+        400
+      );
+    }
+
+    if (typeof unit_sku_master_id !== "string" || unit_sku_master_id.trim().length === 0) {
+      console.warn("[unit_create] missing_unit_sku_master_id", {
+        company_id,
+        request_id: requestId,
+      });
+      return fail(
+        "VALIDATION_ERROR",
+        "unit_sku_master_id is required. Select a valid SKU Master record and try again.",
+        400
+      );
+    }
+
     if (!compliance_ack) {
       return fail("VALIDATION_ERROR", "compliance_ack=true is required", 400);
     }
 
-    if (!sku_code || !batch || !mfd || !expiry || mrp === undefined || !quantity) {
+    if (!quantity) {
       return fail("VALIDATION_ERROR", "Invalid / missing fields", 400);
     }
 
@@ -81,36 +118,77 @@ export async function POST(req: Request) {
       return fail("VALIDATION_ERROR", `quantity exceeds limit (${MAX_UNITS_PER_REQUEST})`, 400);
     }
 
-    const decision = await enforceEntitlement({
-      companyId: company_id,
-      usageType: UsageType.UNIT_LABEL,
-      quantity: qty,
-      requestId,
-      metadata: { source: "unit_create" },
-    });
-    if (!decision.allow) {
-      const isQuotaError = String(decision.reason_code || "").toUpperCase().includes("QUOTA_EXCEEDED");
-      return fail(
-        String(decision.reason_code || "QUOTA_EXCEEDED"),
-        isQuotaError ? "Quota exceeded. Please purchase add-ons." : String(decision.reason_code || "QUOTA_EXCEEDED"),
-        403
-      );
+    const { data: unitMaster, error: unitMasterError } = await supabase
+      .from("unit_sku_master")
+      .select("id, sku_code, gtin, batch, mfd, expiry, mrp")
+      .eq("id", unit_sku_master_id.trim())
+      .eq("company_id", company_id)
+      .is("deleted_at", null)
+      .maybeSingle();
+
+    if (unitMasterError) {
+      console.error("[unit_create] unit_sku_master_lookup_failed", {
+        company_id,
+        request_id: requestId,
+        unit_sku_master_id,
+        error: unitMasterError.message,
+      });
+      return fail("VALIDATION_ERROR", unitMasterError.message, 400);
     }
 
-    const codeMode = resolveCodeMode({ gtin });
-    let gtinForStorage = typeof gtin === "string" ? gtin.trim() : "";
-    const normalizedSkuCode = String(sku_code).trim().toUpperCase();
+    if (!unitMaster) {
+      console.warn("[unit_create] unit_sku_master_not_found_or_deleted", {
+        company_id,
+        request_id: requestId,
+        unit_sku_master_id,
+      });
+      return fail("NOT_FOUND", "Selected SKU Master record not found or is inactive. Refresh the page and try again.", 404);
+    }
+
+    const masterSnapshot: UnitMasterSnapshot = {
+      sku_code: String(unitMaster.sku_code ?? "").trim(),
+      gtin: typeof unitMaster.gtin === "string" ? unitMaster.gtin.trim() : null,
+      batch: String(unitMaster.batch ?? "").trim(),
+      mfd: typeof unitMaster.mfd === "string" ? unitMaster.mfd : null,
+      expiry: String(unitMaster.expiry ?? "").trim(),
+      mrp: unitMaster.mrp == null ? null : String(unitMaster.mrp),
+    };
+
+    const resolvedSkuCode = masterSnapshot.sku_code;
+    const resolvedBatch = masterSnapshot.batch;
+    const resolvedExpiry = masterSnapshot.expiry;
+    const resolvedMfd = String(masterSnapshot.mfd ?? "").trim() || resolvedExpiry;
+    const resolvedMrp = masterSnapshot.mrp;
+    const resolvedGtinRaw = typeof masterSnapshot.gtin === "string" ? masterSnapshot.gtin : "";
+
+    if (!resolvedSkuCode || !resolvedBatch || !resolvedExpiry) {
+      console.error("[unit_create] invalid_unit_sku_master_snapshot", {
+        company_id,
+        request_id: requestId,
+        unit_sku_master_id,
+      });
+      return fail("VALIDATION_ERROR", "Selected SKU Master record is incomplete. Create a new valid SKU Master record and try again.", 400);
+    }
+
+    const codeMode = resolveCodeMode({ gtin: resolvedGtinRaw || null });
+    let gtinForStorage = resolvedGtinRaw;
+    const normalizedSkuCode = String(resolvedSkuCode).trim().toUpperCase();
 
     if (codeMode === "GS1") {
       const { validateGTIN } = await import("@/lib/gs1/gtin");
       const validation = validateGTIN(gtinForStorage);
       if (!validation.valid || !validation.normalized) {
+        console.warn("[unit_create] invalid_gtin_on_unit_sku_master", {
+          company_id,
+          request_id: requestId,
+          unit_sku_master_id,
+        });
         return fail("VALIDATION_ERROR", validation.error || "Invalid GTIN format", 400);
       }
       gtinForStorage = validation.normalized;
     }
 
-    // ---------- SKU LOOKUP ----------
+    // ---------- LEGACY SKU REFERENCE LOOKUP ----------
     const { data: sku, error: skuErr } = await supabase
       .from("skus")
       .select("id")
@@ -120,19 +198,24 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (skuErr) throw skuErr;
-    if (!sku?.id) {
-      return fail("NOT_FOUND", SKU_NOT_FOUND_ERROR, 404);
+    const legacySkuId = sku?.id ?? null;
+    if (!legacySkuId) {
+      console.info("[unit_create] legacy_sku_reference_missing", {
+        company_id,
+        request_id: requestId,
+        unit_sku_master_id,
+      });
     }
 
     const expiryYYMMDD = (() => {
-      const dt = new Date(String(expiry));
+      const dt = new Date(String(resolvedExpiry));
       const yy = String(dt.getFullYear()).slice(-2);
       const mm = String(dt.getMonth() + 1).padStart(2, "0");
       const dd = String(dt.getDate()).padStart(2, "0");
       return `${yy}${mm}${dd}`;
     })();
     const mfgYYMMDD = (() => {
-      const dt = new Date(String(mfd));
+      const dt = new Date(String(resolvedMfd));
       const yy = String(dt.getFullYear()).slice(-2);
       const mm = String(dt.getMonth() + 1).padStart(2, "0");
       const dd = String(dt.getDate()).padStart(2, "0");
@@ -143,18 +226,38 @@ export async function POST(req: Request) {
       codeMode === "GS1"
         ? generateCanonicalGS1({
             gtin: gtinForStorage,
-            expiry,
-            batch,
+            expiry: resolvedExpiry,
+            batch: resolvedBatch,
             serial,
           })
         : buildPicUnitPayload({
             sku: normalizedSkuCode,
-            batch: String(batch),
+            batch: String(resolvedBatch),
             expiryYYMMDD,
             mfgYYMMDD,
             serial,
-            mrp: String(mrp),
+            mrp: resolvedMrp || undefined,
           });
+
+    const decision = await enforceEntitlement({
+      companyId: company_id,
+      usageType: UsageType.UNIT_LABEL,
+      quantity: qty,
+      requestId,
+      metadata: {
+        source: "unit_create",
+        unit_sku_master_id: unit_sku_master_id.trim(),
+        code_mode: codeMode,
+      },
+    });
+    if (!decision.allow) {
+      const isQuotaError = String(decision.reason_code || "").toUpperCase().includes("QUOTA_EXCEEDED");
+      return fail(
+        String(decision.reason_code || "QUOTA_EXCEEDED"),
+        isQuotaError ? "Quota exceeded. Please purchase add-ons." : String(decision.reason_code || "QUOTA_EXCEEDED"),
+        403
+      );
+    }
 
     const allocateUniqueSerial = (usedSerials: Set<string>) => {
       let serial = "";
@@ -169,12 +272,12 @@ export async function POST(req: Request) {
       const payload = buildPayloadForSerial(serial);
       return {
         company_id,
-        sku_id: sku.id,
+        sku_id: legacySkuId,
         gtin: codeMode === "GS1" ? gtinForStorage : null,
-        batch,
-        mfd,
-        expiry,
-        mrp,
+        batch: resolvedBatch,
+        mfd: resolvedMfd,
+        expiry: resolvedExpiry,
+        mrp: resolvedMrp,
         serial,
         gs1_payload: payload,
         code_mode: codeMode,
@@ -243,7 +346,12 @@ export async function POST(req: Request) {
 
     return ok({
       generated: rows.length,
-      items: rows.map((r) => ({ serial: r.serial, gs1: r.payload ?? r.gs1_payload, payload: r.payload ?? r.gs1_payload })),
+      items: rows.map((r) => ({
+        serial: r.serial,
+        gs1: r.payload ?? r.gs1_payload,
+        payload: r.payload ?? r.gs1_payload,
+        code_mode: r.code_mode,
+      })),
     });
   } catch (err: any) {
     if (err?.code === 'PAST_DUE' || err?.code === 'SUBSCRIPTION_INACTIVE') {

@@ -44,6 +44,14 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   if ("error" in auth) return auth.error;
 
   const supabaseAdmin = getSupabaseAdmin();
+  const scope = req.nextUrl.searchParams.get("scope");
+
+  if (scope === "unit_master") {
+    return apiJson(
+      { error: "SKU Master records are create-only. Create a new record instead of editing." },
+      { status: 405 }
+    );
+  }
 
   const body = await req.json();
   const sku_code = normalizeSkuCode(body.sku_code);
@@ -117,6 +125,37 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
   if ("error" in auth) return auth.error;
 
   const supabaseAdmin = getSupabaseAdmin();
+  const scope = _req.nextUrl.searchParams.get("scope");
+
+  if (scope === "unit_master") {
+    const { data: record, error: fetchRecordError } = await supabaseAdmin
+      .from("unit_sku_master")
+      .select("id")
+      .eq("id", params.id)
+      .eq("company_id", auth.companyId)
+      .is("deleted_at", null)
+      .maybeSingle();
+
+    if (fetchRecordError) {
+      return apiJson({ error: fetchRecordError.message }, { status: 400 });
+    }
+
+    if (!record?.id) {
+      return apiJson({ error: "SKU Master record not found" }, { status: 404 });
+    }
+
+    const { error: deleteRecordError } = await supabaseAdmin
+      .from("unit_sku_master")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", params.id)
+      .eq("company_id", auth.companyId);
+
+    if (deleteRecordError) {
+      return apiJson({ error: deleteRecordError.message }, { status: 400 });
+    }
+
+    return apiJson({ success: true });
+  }
 
   const { data: sku, error: fetchErr } = await supabaseAdmin
     .from("skus")

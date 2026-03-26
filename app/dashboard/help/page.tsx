@@ -47,15 +47,15 @@ const faqData = {
   technical: [
     {
       question: 'How do I generate GS1-compliant labels?',
-      answer: 'Navigate to Code Generation, select your SKU, enter batch and expiry details, and choose your output format (PDF, PNG, ZPL, or EPL). The system automatically generates GS1-compliant codes with FNC1 separators.',
+      answer: 'Navigate to Unit Code Generation, select a SKU Master record, enter quantity, and generate. Fixed fields such as SKU code, batch, expiry, MFD, MRP, and optional GTIN come from SKU Master. The system automatically generates GS1 when GTIN is present and PIC when GTIN is absent.',
     },
     {
-      question: 'What is the difference between GTIN and internal GTIN?',
-      answer: 'GTIN (Global Trade Item Number) is issued by GS1 and is globally recognized. Internal GTINs are system-generated identifiers valid only within India and may not be export-compliant. Always use customer-provided GS1-issued GTINs when available.',
+      question: 'How does Unit mode selection work?',
+      answer: 'Unit generation mode is selected automatically from SKU Master. If the selected SKU Master record has a GTIN, RxTrace generates GS1. If GTIN is blank, RxTrace generates PIC. Users do not choose the mode manually on the Unit page.',
     },
     {
       question: 'How do I upload SKUs via CSV?',
-      answer: 'Go to SKU Master, click Import CSV, and upload a file with headers: sku_code, sku_name. The system will validate and import your SKUs. Ensure CSV format matches the download template for best results.',
+      answer: 'Go to SKU Master, click Bulk Upload SKU Master, and upload a file matching the manual SKU Master form fields: sku_code, gtin, batch, expiry, mfd, mrp. Duplicate SKU Master rows are rejected based on sku_code + batch + expiry + mfd + mrp. GTIN may repeat if present.',
     },
     {
       question: 'Can I scan products without handset activation?',

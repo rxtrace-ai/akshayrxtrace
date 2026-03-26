@@ -1,40 +1,80 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Papa from 'papaparse';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Package, Edit2, Trash2, Search, X } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Search, Trash2, Download, FileText, AlertCircle, CheckCircle, PackagePlus } from 'lucide-react';
 
-type SKU = {
+type UnitSkuMaster = {
   id: string;
-  company_id?: string;
   sku_code: string;
-  sku_name: string;
+  gtin: string | null;
+  batch: string;
+  expiry: string;
+  mfd: string | null;
+  mrp: string | null;
   created_at: string;
-  updated_at?: string;
 };
 
+type ImportResult = {
+  total: number;
+  inserted: number;
+  duplicates: number;
+  invalid: number;
+  errors: Array<{ row: number; error: string }>;
+};
+
+type FormState = {
+  sku_code: string;
+  gtin: string;
+  batch: string;
+  expiry: string;
+  mfd: string;
+  mrp: string;
+};
+
+const EMPTY_FORM: FormState = {
+  sku_code: '',
+  gtin: '',
+  batch: '',
+  expiry: '',
+  mfd: '',
+  mrp: '',
+};
+
+function downloadTextFile(filename: string, content: string, contentType = 'text/plain;charset=utf-8') {
+  const blob = new Blob([content], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 export default function ProductsPage() {
-  const [skus, setSkus] = useState<SKU[]>([]);
-  const [filteredSkus, setFilteredSkus] = useState<SKU[]>([]);
+  const [items, setItems] = useState<UnitSkuMaster[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  
-  // Modal states
-  const [showModal, setShowModal] = useState(false);
-  const [modalMode, setModalMode] = useState<'create' | 'edit'>('edit');
-  const [editingSku, setEditingSku] = useState<SKU | null>(null);
-  
-  // Form states
-  const [formSkuCode, setFormSkuCode] = useState('');
-  const [formSkuName, setFormSkuName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [error, setError] = useState<string>('');
+  const [success, setSuccess] = useState<string>('');
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [importSummary, setImportSummary] = useState<ImportResult | null>(null);
 
   const safeReadJson = useCallback(async (res: Response) => {
     const text = await res.text();
@@ -46,451 +86,368 @@ export default function ProductsPage() {
     }
   }, []);
 
-  const fetchSkus = useCallback(async () => {
+  const fetchItems = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/skus', { cache: 'no-store' });
+      const res = await fetch('/api/skus?scope=unit_master', { cache: 'no-store' });
       const out = await safeReadJson(res);
-      if (!res.ok) throw new Error(out?.error || 'Failed to load SKUs');
-      const skusData = (out?.skus ?? []) as SKU[];
-      setSkus(Array.isArray(skusData) ? skusData : []);
-      setFilteredSkus(Array.isArray(skusData) ? skusData : []);
+      if (!res.ok) {
+        throw new Error(out?.error || 'Failed to load SKU Master');
+      }
+      setItems(Array.isArray(out?.items) ? out.items : []);
     } catch (err: any) {
-      setError(err.message || 'Failed to load data');
+      setError(err?.message || 'Failed to load SKU Master');
     } finally {
       setLoading(false);
     }
   }, [safeReadJson]);
 
   useEffect(() => {
-    fetchSkus();
-  }, [fetchSkus]);
+    void fetchItems();
+  }, [fetchItems]);
 
-  function downloadTextFile(filename: string, content: string, contentType = 'text/plain;charset=utf-8') {
-    const blob = new Blob([content], { type: contentType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+  const filteredItems = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return items;
+    return items.filter((item) =>
+      [
+        item.sku_code,
+        item.gtin || '',
+        item.batch,
+        item.expiry,
+        item.mfd || '',
+        item.mrp || '',
+      ].some((value) => value.toLowerCase().includes(term))
+    );
+  }, [items, searchTerm]);
+
+  function updateField<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  function handleExportCsv() {
-    setError('');
-    setSuccess('');
-    const rows = (skus ?? []).map((s) => ({
-      sku_code: s.sku_code,
-      sku_name: s.sku_name,
-    }));
-    const csv = Papa.unparse(rows, { header: true });
-    downloadTextFile('sku_master.csv', csv, 'text/csv;charset=utf-8');
+  function downloadTemplate() {
+    const csv = Papa.unparse(
+      [
+        {
+          sku_code: 'Ciplox 400 mg 10 tab strip',
+          gtin: '01234567890128',
+          batch: 'BATCH-APR-2026',
+          expiry: '2027-04-30',
+          mfd: '2026-04-01',
+          mrp: '125.00',
+        },
+      ],
+      { header: true }
+    );
+    downloadTextFile('unit_sku_master_template.csv', csv, 'text/csv;charset=utf-8');
   }
 
-  async function handleImportCsvFile(file: File) {
+  async function handleCreate() {
+    setSubmitting(true);
     setError('');
     setSuccess('');
-    setImporting(true);
+    setImportSummary(null);
     try {
-      const text = await file.text();
-      const parsed = Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true });
-      const rows = (parsed.data ?? []).map((r) => ({
-        sku_code: (r.sku_code ?? r.SKU_CODE ?? r.sku ?? r.SKU ?? '').toString().trim(),
-        sku_name: (r.sku_name ?? r.SKU_NAME ?? r.name ?? r.NAME ?? '').toString().trim(),
-      }));
-
-      const valid = rows.filter((r) => r.sku_code && r.sku_name);
-      if (valid.length === 0) {
-        throw new Error('CSV must include sku_code and sku_name columns');
-      }
-
-      const res = await fetch('/api/skus/import', {
+      const res = await fetch('/api/skus?scope=unit_master', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: valid }),
+        body: JSON.stringify(form),
       });
       const out = await safeReadJson(res);
       if (!res.ok) {
-        throw new Error(out?.error || 'Import failed');
+        throw new Error(out?.error || 'Failed to create SKU Master record');
       }
-      setSuccess(`✅ Imported ${out?.imported ?? 0} SKUs (skipped ${out?.skipped ?? 0})`);
-      fetchSkus();
-    } catch (e: any) {
-      setError(e?.message || 'Import failed');
+      setForm(EMPTY_FORM);
+      setSuccess('SKU Master record created successfully.');
+      await fetchItems();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to create SKU Master record');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDelete(item: UnitSkuMaster) {
+    const confirmed = window.confirm(
+      `Delete this SKU Master record?\n\nSKU: ${item.sku_code}\nBatch: ${item.batch}\nExpiry: ${item.expiry}\n\nThis will hide it from future Unit generation but keep historical generated records intact.`
+    );
+    if (!confirmed) return;
+
+    setError('');
+    setSuccess('');
+    setImportSummary(null);
+
+    try {
+      const res = await fetch(`/api/skus/${item.id}?scope=unit_master`, { method: 'DELETE' });
+      const out = await safeReadJson(res);
+      if (!res.ok) {
+        throw new Error(out?.error || 'Failed to delete SKU Master record');
+      }
+      setSuccess('SKU Master record deleted successfully.');
+      await fetchItems();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete SKU Master record');
+    }
+  }
+
+  async function handleImport(file: File) {
+    setImporting(true);
+    setError('');
+    setSuccess('');
+    setImportSummary(null);
+    try {
+      const text = await file.text();
+      const parsed = Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true });
+      if (!parsed.data.length) {
+        throw new Error('CSV file is empty.');
+      }
+      const res = await fetch('/api/skus/import?scope=unit_master', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: parsed.data }),
+      });
+      const out = await safeReadJson(res);
+      if (!res.ok) {
+        throw new Error(out?.error || 'Failed to import SKU Master CSV');
+      }
+      const results = out?.results as ImportResult;
+      setImportSummary(results);
+      setSuccess(`CSV processed. Inserted ${results?.inserted || 0} of ${results?.total || 0} row(s).`);
+      await fetchItems();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to import SKU Master CSV');
     } finally {
       setImporting(false);
     }
   }
 
-  useEffect(() => {
-    // Filter SKUs based on search term
-    if (searchTerm.trim() === '') {
-      setFilteredSkus(skus);
-    } else {
-      const term = searchTerm.toLowerCase();
-      setFilteredSkus(
-        skus.filter(
-          (s) =>
-            s.sku_code.toLowerCase().includes(term) ||
-            s.sku_name.toLowerCase().includes(term)
-        )
-      );
-    }
-  }, [searchTerm, skus]);
-
-  // fetchSkus is useCallback'd above
-
-  function openCreateModal() {
-    setModalMode('create');
-    setEditingSku(null);
-    setFormSkuCode('');
-    setFormSkuName('');
-    setShowModal(true);
-  }
-
-  function openEditModal(sku: SKU) {
-    setModalMode('edit');
-    setEditingSku(sku);
-    setFormSkuCode(sku.sku_code);
-    setFormSkuName(sku.sku_name);
-    setShowModal(true);
-  }
-
-  function closeModal() {
-    setShowModal(false);
-    setEditingSku(null);
-    setFormSkuCode('');
-    setFormSkuName('');
-    setModalMode('edit'); // Reset to edit mode
-  }
-
-  async function handleSubmit() {
-    setError('');
-    setSuccess('');
-
-    if (modalMode === 'create') {
-      // CREATE mode
-      if (!formSkuCode.trim()) {
-        setError('SKU Code is required');
-        return;
-      }
-      
-      if (!formSkuName.trim()) {
-        setError('SKU Name is required');
-        return;
-      }
-
-      setSubmitting(true);
-
-      try {
-        const res = await fetch('/api/skus', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sku_code: formSkuCode.trim(),
-            sku_name: formSkuName.trim(),
-          }),
-        });
-        const out = await safeReadJson(res);
-        if (!res.ok) throw new Error(out?.error || 'Failed to create SKU');
-
-        setSuccess(`✅ SKU "${formSkuCode}" created successfully`);
-
-        closeModal();
-        fetchSkus();
-      } catch (err: any) {
-        setError(err.message || 'Operation failed');
-      } finally {
-        setSubmitting(false);
-      }
-    } else {
-      // EDIT mode
-      if (!editingSku) return;
-      
-      if (!formSkuName.trim()) {
-        setError('SKU Name is required');
-        return;
-      }
-
-      setSubmitting(true);
-
-      try {
-        const res = await fetch(`/api/skus/${editingSku.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sku_code: formSkuCode.trim(),
-            sku_name: formSkuName.trim(),
-          }),
-        });
-        const out = await safeReadJson(res);
-        if (!res.ok) throw new Error(out?.error || 'Failed to update SKU');
-
-        setSuccess(`✅ SKU "${formSkuCode}" updated successfully`);
-
-        closeModal();
-        fetchSkus();
-      } catch (err: any) {
-        setError(err.message || 'Operation failed');
-      } finally {
-        setSubmitting(false);
-      }
-    }
-  }
-
-  async function handleDelete(sku: SKU) {
-    if (!confirm(`Are you sure you want to delete SKU "${sku.sku_code}"?\n\nWarning: This may affect existing labels and packing rules.`)) {
-      return;
-    }
-
-    setError('');
-    setSuccess('');
-
-    try {
-      const res = await fetch(`/api/skus/${sku.id}`, { method: 'DELETE' });
-      const out = await safeReadJson(res);
-      if (!res.ok) throw new Error(out?.error || 'Failed to delete SKU');
-      setSuccess(`✅ SKU "${sku.sku_code}" deleted`);
-      fetchSkus();
-    } catch (err: any) {
-      setError(`Failed to delete: ${err.message}`);
-    }
-  }
-
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold text-gray-900 mb-1.5">SKU Master</h1>
-          <p className="text-sm text-gray-600">Manage your product catalog and SKU information</p>
+          <p className="text-sm text-gray-600">
+            SKU Master is the source of truth for fixed Unit code inputs. Existing records cannot be edited. If any value changes, create a new record.
+          </p>
         </div>
-        <div className="flex gap-3">
-          <Button
-            onClick={openCreateModal}
-            className="bg-blue-600 hover:bg-blue-700 text-white"
-          >
-            Create SKU
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
-              const input = document.getElementById('sku-import-input') as HTMLInputElement | null;
-              input?.click();
-            }}
-            disabled={importing}
-            className="border-gray-300"
-          >
-            {importing ? 'Importing…' : 'Import CSV'}
-          </Button>
-          <input
-            id="sku-import-input"
-            type="file"
-            accept=".csv,text/csv"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void handleImportCsvFile(f);
-              e.currentTarget.value = '';
-            }}
-          />
-          <Button variant="outline" onClick={handleExportCsv} disabled={skus.length === 0} className="border-gray-300">
-            Export CSV
-          </Button>
-        </div>
+        <Button type="button" variant="outline" onClick={downloadTemplate} className="border-gray-300">
+          <Download className="w-4 h-4 mr-2" />
+          Download Template
+        </Button>
       </div>
 
-      {/* Search */}
-      <Card className="p-4 border-gray-200">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <Input
-            type="text"
-            placeholder="Search by SKU code or product name..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-          />
-        </div>
-      </Card>
+      <Alert className="bg-slate-50 border-slate-200">
+        <AlertDescription className="text-slate-800 text-sm">
+          Duplicate SKU Master records are not allowed. Duplicate detection uses `sku_code + batch + expiry + mfd + mrp`.
+          GTIN is optional and may repeat.
+        </AlertDescription>
+      </Alert>
 
-      {/* Alerts */}
       {error && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
-          <svg className="w-5 h-5 text-red-500 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-          </svg>
-          <p className="text-sm text-red-800 font-medium">{error}</p>
-        </div>
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {success && (
-        <div className="p-4 bg-green-50 border border-green-200 rounded-lg flex items-start gap-3">
-          <svg className="w-5 h-5 text-green-500 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-          </svg>
-          <p className="text-sm text-green-800 font-medium">{success}</p>
-        </div>
+        <Alert className="bg-green-50 border-green-200">
+          <CheckCircle className="h-4 w-4 text-green-600" />
+          <AlertDescription className="text-green-800">{success}</AlertDescription>
+        </Alert>
       )}
 
-      {/* Table */}
-      <Card className="border-gray-200 overflow-hidden">
-          {loading ? (
-            <div className="p-12 text-center">
-              <div className="inline-block w-8 h-8 border-4 border-gray-200 border-t-blue-600 rounded-full animate-spin"></div>
-              <p className="mt-4 text-sm text-gray-600">Loading SKUs...</p>
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <Card className="border-gray-200 xl:col-span-1 p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <PackagePlus className="w-5 h-5 text-blue-600" />
+            <h2 className="text-lg font-semibold text-gray-900">Create SKU Master</h2>
+          </div>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="sku_code">SKU Code *</Label>
+              <Input
+                id="sku_code"
+                value={form.sku_code}
+                onChange={(e) => updateField('sku_code', e.target.value)}
+                placeholder="Ciplox 400 mg 10 tab strip"
+              />
             </div>
-          ) : filteredSkus.length === 0 ? (
-            <div className="p-12 text-center">
-              <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-1">
-                {searchTerm ? 'No SKUs found' : 'No SKUs yet'}
-              </h3>
-              <p className="text-sm text-gray-600">
-                {searchTerm
-                  ? 'Try a different search term'
-                  : 'SKUs appear here as you generate labels or import via CSV'}
-              </p>
+            <div>
+              <Label htmlFor="gtin">GTIN</Label>
+              <Input
+                id="gtin"
+                value={form.gtin}
+                onChange={(e) => updateField('gtin', e.target.value.replace(/\D/g, '').slice(0, 14))}
+                placeholder="Optional GTIN"
+              />
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">SKU Code</th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Product Name</th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Created</th>
-                    <th className="px-6 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredSkus.map((sku) => (
-                    <tr key={sku.id} className="hover:bg-gray-50 transition">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="font-mono text-sm font-medium text-gray-900">{sku.sku_code}</span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="text-sm font-medium text-gray-900">{sku.sku_name}</span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                        {new Date(sku.created_at).toLocaleDateString('en-IN', {
-                          day: '2-digit',
-                          month: 'short',
-                          year: 'numeric'
-                        })}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => openEditModal(sku)}
-                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-md transition"
-                            title="Edit"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(sku)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-md transition"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div>
+              <Label htmlFor="batch">Batch *</Label>
+              <Input id="batch" value={form.batch} onChange={(e) => updateField('batch', e.target.value)} placeholder="BATCH-APR-2026" />
             </div>
-          )}
+            <div>
+              <Label htmlFor="expiry">Expiry *</Label>
+              <Input id="expiry" type="date" value={form.expiry} onChange={(e) => updateField('expiry', e.target.value)} />
+            </div>
+            <div>
+              <Label htmlFor="mfd">Manufacturing Date</Label>
+              <Input id="mfd" type="date" value={form.mfd} onChange={(e) => updateField('mfd', e.target.value)} />
+            </div>
+            <div>
+              <Label htmlFor="mrp">MRP</Label>
+              <Input id="mrp" value={form.mrp} onChange={(e) => updateField('mrp', e.target.value)} placeholder="125.00" />
+            </div>
+            <Button type="button" onClick={handleCreate} disabled={submitting} className="w-full bg-blue-600 hover:bg-blue-700">
+              {submitting ? 'Creating...' : 'Create SKU Master'}
+            </Button>
+          </div>
         </Card>
 
-        {/* Stats */}
-        {!loading && skus.length > 0 && (
-          <div className="flex items-center justify-between text-sm text-gray-600">
-            <div>
-              Showing <span className="font-medium text-gray-900">{filteredSkus.length}</span> of{' '}
-              <span className="font-medium text-gray-900">{skus.length}</span> SKUs
-            </div>
-          </div>
-        )}
-
-      {/* Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-gray-200">
-            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-gray-900">
-                {modalMode === 'create' ? 'Create SKU' : 'Edit SKU'}
-              </h2>
-              <button
-                onClick={closeModal}
-                className="p-2 hover:bg-gray-100 rounded-md transition"
-                aria-label="Close"
-              >
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-5">
+        <div className="xl:col-span-2 space-y-6">
+          <Card className="border-gray-200 p-6">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div>
-                <Label htmlFor="sku-code" className="text-sm font-medium text-gray-700 mb-2 block">
-                  SKU Code {modalMode === 'create' && '*'}
-                </Label>
-                <Input
-                  id="sku-code"
-                  type="text"
-                  value={formSkuCode}
-                  onChange={(e) => setFormSkuCode(e.target.value.toUpperCase())}
-                  placeholder="e.g., PROD-001, SKU-12345"
-                  disabled={modalMode === 'edit'}
-                  required={modalMode === 'create'}
-                  className={modalMode === 'edit' ? 'bg-gray-50' : ''}
-                />
-                <p className="text-xs text-gray-500 mt-1.5">
-                  {modalMode === 'edit' 
-                    ? 'SKU code cannot be changed after creation' 
-                    : 'Enter a unique SKU code for this product'}
+                <h2 className="text-lg font-semibold text-gray-900">Bulk Upload SKU Master</h2>
+                <p className="text-sm text-gray-600">
+                  CSV fields must match the manual SKU form exactly. Duplicate SKU rows will be rejected. GTIN may repeat.
                 </p>
               </div>
-
-              <div>
-                <Label htmlFor="product-name" className="text-sm font-medium text-gray-700 mb-2 block">
-                  Product Name *
-                </Label>
-                <Input
-                  id="product-name"
-                  type="text"
-                  value={formSkuName}
-                  onChange={(e) => setFormSkuName(e.target.value)}
-                  placeholder="e.g., Ciplox 200 mg Tablet"
-                  required
+              <div className="flex items-center gap-3">
+                <input
+                  id="unit-sku-master-upload"
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void handleImport(file);
+                    e.currentTarget.value = '';
+                  }}
                 />
-                <p className="text-xs text-gray-500 mt-1.5">User-facing product name displayed in labels and reports</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={importing}
+                  className="border-gray-300"
+                  onClick={() => {
+                    const input = document.getElementById('unit-sku-master-upload') as HTMLInputElement | null;
+                    input?.click();
+                  }}
+                >
+                  <FileText className="w-4 h-4 mr-2" />
+                  {importing ? 'Uploading...' : 'Upload CSV'}
+                </Button>
               </div>
             </div>
 
-            <div className="p-6 border-t border-gray-200 flex gap-3 justify-end bg-gray-50">
-              <Button onClick={closeModal} variant="outline" disabled={submitting} className="border-gray-300">
-                Cancel
-              </Button>
-              <Button
-                onClick={handleSubmit}
-                disabled={submitting}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                {submitting 
-                  ? 'Saving...' 
-                  : modalMode === 'create' 
-                    ? 'Create SKU' 
-                    : 'Update SKU'}
-              </Button>
+            {importSummary && (
+              <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">Import Summary</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <div className="text-gray-600">Total Rows</div>
+                    <div className="text-lg font-semibold text-gray-900">{importSummary.total}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600">Inserted</div>
+                    <div className="text-lg font-semibold text-green-600">{importSummary.inserted}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600">Duplicates</div>
+                    <div className="text-lg font-semibold text-amber-600">{importSummary.duplicates}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600">Invalid</div>
+                    <div className="text-lg font-semibold text-red-600">{importSummary.invalid}</div>
+                  </div>
+                </div>
+                {importSummary.errors.length > 0 && (
+                  <div className="mt-4 max-h-56 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-100">
+                        <tr>
+                          <th className="px-2 py-1 text-left">Row</th>
+                          <th className="px-2 py-1 text-left">Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white">
+                        {importSummary.errors.map((err, index) => (
+                          <tr key={`${err.row}-${index}`} className="border-b">
+                            <td className="px-2 py-1">{err.row}</td>
+                            <td className="px-2 py-1">{err.error}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          <Card className="border-gray-200 overflow-hidden">
+            <div className="p-6 border-b border-gray-200 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Created SKU Master Records</h2>
+                <p className="text-sm text-gray-600">Delete removes the record from future Unit generation and preserves historical generated codes.</p>
+              </div>
+              <div className="relative w-full md:w-80">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search SKU Master..."
+                  className="pl-10"
+                />
+              </div>
             </div>
-          </div>
+
+            {loading ? (
+              <div className="p-10 text-center text-sm text-gray-600">Loading SKU Master records...</div>
+            ) : filteredItems.length === 0 ? (
+              <div className="p-10 text-center text-sm text-gray-600">No SKU Master records found.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase">SKU Code</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase">GTIN</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Batch</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Expiry</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase">MFD</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase">MRP</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Created</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase">Delete SKU</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {filteredItems.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-4 py-3 text-sm font-medium text-gray-900">{item.sku_code}</td>
+                        <td className="px-4 py-3 text-sm font-mono text-gray-700">{item.gtin || 'PIC / no GTIN'}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700">{item.batch}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700">{formatDate(item.expiry)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700">{formatDate(item.mfd)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700">{item.mrp || 'N/A'}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700">{formatDate(item.created_at)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <Button type="button" variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => handleDelete(item)}>
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            Delete
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
         </div>
-      )}
+      </div>
     </div>
   );
 }

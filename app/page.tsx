@@ -141,19 +141,21 @@ export default function HomePage() {
       {/* STEP 2 */}
       <div className="bg-white rounded-xl shadow p-6">
         <div className="text-blue-600 font-semibold text-sm">Step 2</div>
-        <h3 className="mt-2 font-semibold">Create or Upload Product</h3>
+        <h3 className="mt-2 font-semibold">Create SKU Master</h3>
         <p className="mt-2 text-sm text-slate-600">
-          Create product manually or upload CSV with SKU, batch, MFD, MRP,
-          expiry date and optional GTIN.
+          Create SKU Master records manually or upload CSV with fixed Unit
+          fields such as SKU code, batch, expiry, optional MFD, optional MRP,
+          and optional GTIN.
         </p>
       </div>
 
       {/* STEP 3 */}
       <div className="bg-white rounded-xl shadow p-6">
         <div className="text-blue-600 font-semibold text-sm">Step 3</div>
-        <h3 className="mt-2 font-semibold">Save Product & SKU</h3>
+        <h3 className="mt-2 font-semibold">Select SKU for Generation</h3>
         <p className="mt-2 text-sm text-slate-600">
-          Product and SKU data is validated and saved for traceability use.
+          Unit generation reads fixed payload values from SKU Master so users
+          only select SKU and enter quantity during generation.
         </p>
       </div>
 
@@ -178,9 +180,10 @@ export default function HomePage() {
       {/* STEP 6 */}
       <div className="bg-white rounded-xl shadow p-6">
         <div className="text-blue-600 font-semibold text-sm">Step 6</div>
-        <h3 className="mt-2 font-semibold">Generate GS1 Payload</h3>
+        <h3 className="mt-2 font-semibold">Generate Unit Payload</h3>
         <p className="mt-2 text-sm text-slate-600">
-          GS1 compliant payload is generated with serialized product data.
+          RxTrace generates GS1 automatically when GTIN exists in SKU Master,
+          otherwise it generates PIC, always with backend-created serials.
         </p>
       </div>
 
