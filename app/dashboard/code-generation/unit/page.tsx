@@ -42,6 +42,19 @@ type GeneratedUnit = {
 const MAX_CODES_PER_REQUEST = 10000;
 const MAX_CODES_PER_ROW = 1000;
 
+function getApiErrorMessage(payload: any, fallback: string) {
+  if (payload?.error && typeof payload.error === 'object' && typeof payload.error.message === 'string') {
+    return payload.error.message;
+  }
+  if (typeof payload?.error === 'string' && payload.error.trim()) {
+    return payload.error;
+  }
+  if (typeof payload?.message === 'string' && payload.message.trim()) {
+    return payload.message;
+  }
+  return fallback;
+}
+
 function toLabelData(items: GeneratedUnit[]): LabelData[] {
   return items.map((item) => ({
     id: item.id,
@@ -94,7 +107,7 @@ export default function UnitCodeGenerationPage() {
         const res = await fetch('/api/skus?scope=unit_master', { cache: 'no-store' });
         const out = await res.json().catch(() => ({}));
         if (!res.ok) {
-          throw new Error(out?.error || 'Failed to load SKU Master');
+          throw new Error(getApiErrorMessage(out, 'Failed to load SKU Master'));
         }
         const nextItems = Array.isArray(out?.items) ? (out.items as UnitSkuMaster[]) : [];
         setItems(nextItems);
@@ -160,14 +173,20 @@ export default function UnitCodeGenerationPage() {
 
       const out = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(out?.error || 'Unable to generate unit codes right now. Please retry.');
+        throw new Error(getApiErrorMessage(out, 'Unable to generate unit codes right now. Please retry.'));
       }
 
-      if (!Array.isArray(out?.items)) {
+      const responseItems = Array.isArray(out?.data?.items)
+        ? out.data.items
+        : Array.isArray(out?.items)
+          ? out.items
+          : null;
+
+      if (!responseItems) {
         throw new Error('Unit code generation failed. Invalid response format.');
       }
 
-      const nextItems: GeneratedUnit[] = out.items.map((item: any, index: number) => {
+      const nextItems: GeneratedUnit[] = responseItems.map((item: any, index: number) => {
         const codeMode = (item?.code_mode === 'PIC' ? 'PIC' : 'GS1') as 'GS1' | 'PIC';
         return {
           id: `${selected.id}-${Date.now()}-${index}`,
