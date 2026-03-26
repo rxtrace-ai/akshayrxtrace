@@ -69,7 +69,7 @@ async function getOverviewStats(params: {
   const [
     entitlement,
     subscriptionResult,
-    skusResult,
+    skuMasterResult,
     scansResult,
     seatsResult,
     handsetsResult,
@@ -89,7 +89,11 @@ async function getOverviewStats(params: {
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
-    supabase.from("skus").select("id", { count: "exact", head: true }).eq("company_id", companyId).is("deleted_at", null),
+    supabase
+      .from("unit_sku_master")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .is("deleted_at", null),
     supabase.from("scan_logs").select("id", { count: "exact", head: true }).eq("company_id", companyId),
     supabase.from("seats").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("active", true),
     supabase
@@ -106,7 +110,7 @@ async function getOverviewStats(params: {
   ]);
 
   if (subscriptionResult.error) throw new Error(subscriptionResult.error.message);
-  if (skusResult.error) throw new Error(skusResult.error.message);
+  if (skuMasterResult.error) throw new Error(skuMasterResult.error.message);
   if (scansResult.error) throw new Error(scansResult.error.message);
   if (seatsResult.error) throw new Error(seatsResult.error.message);
   if (handsetsResult.error) throw new Error(handsetsResult.error.message);
@@ -157,7 +161,7 @@ async function getOverviewStats(params: {
       state: entitlement.state,
     },
     kpis: {
-      total_skus: toNumber(skusResult.count),
+      total_skus: toNumber(skuMasterResult.count),
       total_handsets: toNumber(handsetsResult.count),
       total_scans: toNumber(scansResult.count),
       total_seats: toNumber(seatsResult.count),
