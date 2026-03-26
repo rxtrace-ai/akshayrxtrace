@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { writeAuditLog } from '@/lib/audit';
 import { consumeEntitlementBatch, refundEntitlementBatch } from '@/lib/entitlement/enforce';
 import { UsageType } from '@/lib/entitlement/usageTypes';
+import { resolveLegacySkuIdForCode, resolveSsccUnitSkuMasterId } from '@/lib/unitSkuMasterLink';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -98,14 +99,16 @@ export async function POST(req: Request) {
 
     const palletsToInsert: Array<{
       company_id: string;
-      sku_id: string;
+      sku_id: string | null;
+      unit_sku_master_id: string | null;
       sscc: string;
       sscc_with_ai: string;
     }> = [];
 
     const cartonsToInsert: Array<{
       company_id: string;
-      sku_id: string;
+      sku_id: string | null;
+      unit_sku_master_id: string | null;
       pallet_id: string | null;
       sscc: string;
       sscc_with_ai: string;
@@ -113,7 +116,8 @@ export async function POST(req: Request) {
 
     const boxesToInsert: Array<{
       company_id: string;
-      sku_id: string;
+      sku_id: string | null;
+      unit_sku_master_id: string | null;
       carton_id: string | null;
       sscc: string;
       sscc_with_ai: string;
@@ -157,36 +161,13 @@ export async function POST(req: Request) {
           continue;
         }
 
-        // Resolve SKU ID
-        let skuId: string;
-        const { data: sku } = await admin
-          .from('skus')
-          .select('id')
-          .eq('company_id', companyId)
-          .eq('sku_code', skuCode)
-          .maybeSingle();
-
-        if (sku?.id) {
-          skuId = sku.id;
-        } else {
-          // Auto-create SKU if not exists
-          const { data: newSku, error: createErr } = await admin
-            .from('skus')
-            .upsert(
-              { company_id: companyId, sku_code: skuCode, sku_name: skuCode, deleted_at: null },
-              { onConflict: 'company_id,sku_code' }
-            )
-            .select('id')
-            .single();
-
-          if (createErr || !newSku?.id) {
-            results.errors.push({ row: rowNum, error: `Failed to create/find SKU: ${skuCode}` });
-            results.invalid++;
-            continue;
-          }
-
-          skuId = newSku.id;
-        }
+        const skuId = await resolveLegacySkuIdForCode(admin, companyId, skuCode);
+        const unitSkuMasterId = await resolveSsccUnitSkuMasterId({
+          supabase: admin,
+          companyId,
+          skuCode,
+          batch,
+        });
 
         // Check for duplicate SSCC
         let existingCheck: any;
@@ -256,6 +237,7 @@ export async function POST(req: Request) {
           palletsToInsert.push({
             company_id: companyId,
             sku_id: skuId,
+            unit_sku_master_id: unitSkuMasterId,
             sscc,
             sscc_with_ai: ssccWithAI,
           });
@@ -263,6 +245,7 @@ export async function POST(req: Request) {
           cartonsToInsert.push({
             company_id: companyId,
             sku_id: skuId,
+            unit_sku_master_id: unitSkuMasterId,
             pallet_id: parentId,
             sscc,
             sscc_with_ai: ssccWithAI,
@@ -271,6 +254,7 @@ export async function POST(req: Request) {
           boxesToInsert.push({
             company_id: companyId,
             sku_id: skuId,
+            unit_sku_master_id: unitSkuMasterId,
             carton_id: parentId,
             sscc,
             sscc_with_ai: ssccWithAI,

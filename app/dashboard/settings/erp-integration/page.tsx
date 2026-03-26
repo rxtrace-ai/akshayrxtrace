@@ -99,7 +99,7 @@ export default function ErpIntegrationPage() {
     ];
 
     const exampleRow = [
-      'SKU001',
+      'Ciplox 400 mg 10 tab strip',
       'BATCH123',
       '2025-12-31',
       'SN123456789',
@@ -125,7 +125,7 @@ export default function ErpIntegrationPage() {
 
     const exampleRow = [
       '123456789012345678',
-      'SKU001',
+      'Ciplox 400 mg 10 tab strip',
       'BATCH123',
       'PALLET',
       ''
@@ -348,7 +348,7 @@ export default function ErpIntegrationPage() {
                   <div>
                     <h4 className="text-sm font-semibold text-gray-900 mb-1">Download CSV Template</h4>
                     <p className="text-xs text-gray-600">
-                      Use this template to prepare your unit-level ERP code data
+                      Use this template to prepare your unit-level ERP code data using the SKU Master `sku_code` business string
                     </p>
                   </div>
                   <Button
@@ -369,6 +369,7 @@ export default function ErpIntegrationPage() {
                 <div className="text-xs text-gray-700 space-y-1">
                   <p><strong>Required:</strong> sku_code, batch, expiry_date, serial_number</p>
                   <p><strong>Optional:</strong> gtin, mrp, mfd (manufacturing date)</p>
+                  <p><strong>sku_code format:</strong> use the full SKU Master business string, for example <code>Ciplox 400 mg 10 tab strip</code>. Do not use an internal SKU ID.</p>
                   <p className="text-amber-700 mt-2">
                     <strong>Note:</strong> One row = one unit code. Quantity is determined by the number of rows in the CSV.
                     Duplicate serial numbers for the same company/GTIN/batch combination will be skipped.
@@ -472,7 +473,7 @@ export default function ErpIntegrationPage() {
                   <div>
                     <h4 className="text-sm font-semibold text-gray-900 mb-1">Download CSV Template</h4>
                     <p className="text-xs text-gray-600">
-                      Use this template to prepare your SSCC ERP code data with hierarchy information
+                      Use this template to prepare your SSCC ERP code data using the SKU Master `sku_code` business string
                     </p>
                   </div>
                   <Button
@@ -493,6 +494,7 @@ export default function ErpIntegrationPage() {
                 <div className="text-xs text-gray-700 space-y-1">
                   <p><strong>Required:</strong> sscc (18 digits), sku_code, batch, hierarchy_level (BOX/CARTON/PALLET)</p>
                   <p><strong>Optional:</strong> parent_sscc (for BOX or CARTON to link to parent)</p>
+                  <p><strong>sku_code format:</strong> use the full SKU Master business string, for example <code>Ciplox 400 mg 10 tab strip</code>. Do not use an internal SKU ID.</p>
                   <p className="text-amber-700 mt-2">
                     <strong>Note:</strong> One row = one SSCC code. Hierarchy levels must be: BOX, CARTON, or PALLET.
                     Parent-child relationships are validated (Box → Carton → Pallet).

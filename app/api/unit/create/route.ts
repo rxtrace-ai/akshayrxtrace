@@ -27,6 +27,7 @@ const LEGACY_UNIT_FIELDS = [
 type UnitLabelRow = {
   company_id: string;
   sku_id: string | null;
+  unit_sku_master_id: string;
   gtin: string | null;
   batch: string;
   mfd: string;
@@ -273,6 +274,7 @@ export async function POST(req: Request) {
       return {
         company_id,
         sku_id: legacySkuId,
+        unit_sku_master_id: unit_sku_master_id.trim(),
         gtin: codeMode === "GS1" ? gtinForStorage : null,
         batch: resolvedBatch,
         mfd: resolvedMfd,

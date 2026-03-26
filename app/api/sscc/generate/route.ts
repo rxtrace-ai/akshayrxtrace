@@ -237,6 +237,7 @@ export async function POST(req: Request) {
         pallets.push({
           company_id: authCompanyId,
           sku_id: skuUuid,
+          unit_sku_master_id: unit_sku_master_id.trim(),
           sscc,
           sscc_with_ai: `(00)${sscc}`,
         });
@@ -253,6 +254,7 @@ export async function POST(req: Request) {
           cartons.push({
             company_id: authCompanyId,
             sku_id: skuUuid,
+            unit_sku_master_id: unit_sku_master_id.trim(),
             sscc,
             sscc_with_ai: `(00)${sscc}`,
           });
@@ -271,6 +273,7 @@ export async function POST(req: Request) {
             boxes.push({
               company_id: authCompanyId,
               sku_id: skuUuid,
+              unit_sku_master_id: unit_sku_master_id.trim(),
               sscc,
               sscc_with_ai: `(00)${sscc}`,
             });

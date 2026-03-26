@@ -8,6 +8,7 @@ import { resolveCodeMode } from '@/lib/codeMode';
 import { buildPicUnitPayload } from '@/lib/picPayload';
 import { enforceEntitlement, refundEntitlement } from '@/lib/entitlement/enforce';
 import { UsageType } from '@/lib/entitlement/usageTypes';
+import { resolveExactUnitSkuMasterId, resolveLegacySkuIdForCode } from '@/lib/unitSkuMasterLink';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -95,7 +96,8 @@ export async function POST(req: Request) {
 
     const validRows: Array<{
       company_id: string;
-      sku_id: string;
+      sku_id: string | null;
+      unit_sku_master_id: string | null;
       gtin: string | null;
       batch: string;
       mfd: string | null;
@@ -147,36 +149,7 @@ export async function POST(req: Request) {
           continue;
         }
 
-        // Resolve or create SKU
-        let skuId: string;
-        const { data: sku } = await admin
-          .from('skus')
-          .select('id')
-          .eq('company_id', companyId)
-          .eq('sku_code', skuCode)
-          .maybeSingle();
-
-        if (sku?.id) {
-          skuId = sku.id;
-        } else {
-          // Auto-create SKU if not exists
-          const { data: newSku, error: createErr } = await admin
-            .from('skus')
-            .upsert(
-              { company_id: companyId, sku_code: skuCode, sku_name: skuCode, deleted_at: null },
-              { onConflict: 'company_id,sku_code' }
-            )
-            .select('id')
-            .single();
-
-          if (createErr || !newSku?.id) {
-            results.errors.push({ row: rowNum, error: `Failed to create/find SKU: ${skuCode}` });
-            results.invalid++;
-            continue;
-          }
-
-          skuId = newSku.id;
-        }
+        const skuId = await resolveLegacySkuIdForCode(admin, companyId, skuCode);
 
         // Determine mode + normalize/validate GTIN if provided
         const codeMode = resolveCodeMode({ gtin });
@@ -257,22 +230,20 @@ export async function POST(req: Request) {
           continue;
         }
 
-        // If GS1, persist SKU GTIN in master (best-effort; non-blocking)
-        if (codeMode === 'GS1' && finalGtin) {
-          try {
-            await admin
-              .from('skus')
-              .update({ gtin: finalGtin })
-              .eq('company_id', companyId)
-              .eq('id', skuId);
-          } catch {
-            // ignore
-          }
-        }
+        const unitSkuMasterId = await resolveExactUnitSkuMasterId({
+          supabase: admin,
+          companyId,
+          skuCode,
+          batch,
+          expiry: normalizedExpiry,
+          mfd: normalizedMfd,
+          mrp,
+        });
 
         validRows.push({
           company_id: companyId,
           sku_id: skuId,
+          unit_sku_master_id: unitSkuMasterId,
           gtin: finalGtin,
           batch,
           mfd: normalizedMfd || new Date().toISOString().split('T')[0],
