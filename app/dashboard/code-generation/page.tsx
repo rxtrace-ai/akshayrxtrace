@@ -42,9 +42,9 @@ export default function CodeGenerationIndexPage() {
                 Generate individual unit codes (QR/DataMatrix) for saleable pharmaceutical products.
               </p>
               <ul className="text-xs text-gray-600 space-y-1 list-disc list-inside">
-                <li>SKU-based generation</li>
-                <li>Batch and expiry tracking</li>
-                <li>Bulk CSV upload support</li>
+                <li>SKU Master based generation</li>
+                <li>Quantity and code-type selection</li>
+                <li>Automatic GS1 or PIC derivation</li>
                 <li>Unit-level exports</li>
               </ul>
               <Button 
@@ -74,12 +74,12 @@ export default function CodeGenerationIndexPage() {
           <CardContent>
             <div className="space-y-3">
               <p className="text-sm text-gray-600">
-                Generate SSCC codes for boxes, cartons, and pallets using hierarchical relationships.
+                Generate SSCC codes for boxes, cartons, and pallets using GTIN-enabled SKU Master records and hierarchical relationships.
               </p>
               <ul className="text-xs text-gray-600 space-y-1 list-disc list-inside">
                 <li>Hierarchy: Unit → Box → Carton → Pallet</li>
-                <li>SSCC generation for logistics</li>
-                <li>Bulk CSV upload support</li>
+                <li>GTIN-enabled SKU Master selection</li>
+                <li>QR or DataMatrix representation</li>
                 <li>Hierarchy mapping exports</li>
               </ul>
               <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 mt-2">
@@ -109,8 +109,8 @@ export default function CodeGenerationIndexPage() {
       <Card className="border-gray-200 bg-gray-50">
         <CardContent className="pt-6">
           <p className="text-sm text-gray-700">
-            <strong>Important:</strong> Unit-level code generation and SSCC/logistics code generation are completely separate workflows. 
-            Each has its own CSV template, validation, and export format. Do not mix unit CSV data with SSCC CSV data.
+            <strong>Important:</strong> Unit-level code generation and SSCC/logistics code generation are separate workflows.
+            SKU Master creates reusable fixed Unit data, while ERP Integration is reserved for importing already-generated ERP codes.
           </p>
         </CardContent>
       </Card>

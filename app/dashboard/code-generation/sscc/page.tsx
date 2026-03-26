@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,77 +9,63 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import { Download, Upload, FileText, AlertCircle, CheckCircle, XCircle, Info } from 'lucide-react';
+import { AlertCircle, CheckCircle, Download, FileText, Info, Printer, Package } from 'lucide-react';
 import QRCodeComponent from '@/components/custom/QRCodeComponent';
 import DataMatrixComponent from '@/components/custom/DataMatrixComponent';
 import { supabaseClient } from '@/lib/supabase/client';
 import { exportLabels as exportLabelsUtil, LabelData } from '@/lib/labelExporter';
 import { useSubscriptionSummary } from '@/lib/hooks/useSubscriptionSummary';
+import { LABEL_CODE_TYPE_OPTIONS, normalizeLabelCodeType, type LabelCodeType } from '@/lib/labelCodeType';
 
-// ---------- Types ----------
-type CodeType = 'QR' | 'DATAMATRIX';
 type GenerationLevel = 'BOX' | 'CARTON' | 'PALLET';
 
-type SkuOption = {
+type UnitSkuMaster = {
   id: string;
   sku_code: string;
-  sku_name: string | null;
-  gtin?: string | null;
+  gtin: string | null;
+  batch: string;
+  expiry: string;
+  mfd: string | null;
+  mrp: string | null;
+  created_at: string;
 };
 
 type SSCCLabel = {
   id: string;
   sscc: string;
-  sscc_with_ai: string;
-  sku_id: string;
-  pallet_id: string;
+  ssccWithAi: string;
   level: GenerationLevel;
+  skuCode: string;
+  codeType: LabelCodeType;
 };
 
 type SSCCFormState = {
-  skuId: string;
-  batch: string;
-  expiryDate: string;
+  unitSkuMasterId: string;
   unitsPerBox: number;
   boxesPerCarton: number;
   cartonsPerPallet: number;
   numberOfPallets: number;
-  codeType: CodeType;
-  // Hierarchical level selection (checkboxes)
+  codeType: LabelCodeType;
   generateBox: boolean;
   generateCarton: boolean;
   generatePallet: boolean;
   complianceAck: boolean;
 };
 
-type CSVValidationError = {
-  row: number;
-  column: string;
-  message: string;
-};
-
 const MAX_CODES_PER_REQUEST = 10000;
 const MAX_CODES_PER_ROW = 1000;
 
-function normalizeCsvDate(raw?: string | null): string | null {
-  const value = (raw || '').trim();
-  if (!value) return null;
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  if (/^\d{6}$/.test(value)) {
-    const yy = value.slice(0, 2);
-    const mm = value.slice(2, 4);
-    const dd = value.slice(4, 6);
-    return `20${yy}-${mm}-${dd}`;
+function getApiErrorMessage(payload: any, fallback: string) {
+  if (payload?.error && typeof payload.error === 'object' && typeof payload.error.message === 'string') {
+    return payload.error.message;
   }
-  if (/^\d{8}$/.test(value)) {
-    const dd = value.slice(0, 2);
-    const mm = value.slice(2, 4);
-    const yyyy = value.slice(4, 8);
-    return `${yyyy}-${mm}-${dd}`;
+  if (typeof payload?.error === 'string' && payload.error.trim()) {
+    return payload.error;
   }
-  return null;
+  if (typeof payload?.message === 'string' && payload.message.trim()) {
+    return payload.message;
+  }
+  return fallback;
 }
 
 function estimateSsccCodes(params: {
@@ -102,241 +87,59 @@ function estimateSsccCodes(params: {
   return total;
 }
 
-function findSkuBySelection(
-  skus: SkuOption[],
-  selectedValue: string,
-) {
-  return skus.find((sku) => sku.id === selectedValue || sku.sku_code === selectedValue) || null;
+function formatDate(value: string | null | undefined) {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function toNonEmptyString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
-}
-
-// ---------- CSV Template Generation ----------
-function downloadSSCCCSVTemplate(companyName: string, companyId: string) {
-  const headers = [
-    'Company Name',
-    'Company ID',
-    'Generation Type',
-    'Hierarchy Type',
-    'SKU Code',
-    'Batch Number',
-    'Expiry Date (YYYY-MM-DD)',
-    'Units per Box',
-    'Boxes per Carton',
-    'Cartons per Pallet',
-    'Number of Pallets'
-  ];
-
-  const exampleRow = [
-    companyName,
-    companyId,
-    'SSCC',
-    'PALLET',
-    'SKU001',
-    'BATCH123',
-    '2025-12-31',
-    '10',
-    '12',
-    '20',
-    '5'
-  ];
-
-  const csv = Papa.unparse([headers, exampleRow], { header: true });
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  saveAs(blob, `SSCC_CODE_GENERATION_TEMPLATE_${new Date().toISOString().split('T')[0].replace(/-/g, '')}.csv`);
-}
-
-// ---------- CSV Validation ----------
-function validateSSCCCSV(rows: Record<string, string>[], companyId: string): { valid: boolean; errors: CSVValidationError[] } {
-  const errors: CSVValidationError[] = [];
-  let totalRequested = 0;
-  
-  rows.forEach((row, index) => {
-    const rowNum = index + 2; // +2 because row 1 is header, and index is 0-based
-    
-    // Required fields
-    if (!row['SKU Code']?.trim() && !row['sku_code']?.trim() && !row['SKU']?.trim()) {
-      errors.push({ row: rowNum, column: 'SKU Code', message: 'SKU Code is required' });
-    }
-    
-    if (!row['Batch Number']?.trim() && !row['batch_number']?.trim() && !row['BATCH']?.trim()) {
-      errors.push({ row: rowNum, column: 'Batch Number', message: 'Batch Number is required' });
-    }
-    
-    if (!row['Expiry Date']?.trim() && !row['expiry_date']?.trim() && !row['EXP']?.trim()) {
-      errors.push({ row: rowNum, column: 'Expiry Date', message: 'Expiry Date is required' });
-    } else {
-      const expRaw = row['Expiry Date'] || row['expiry_date'] || row['EXP'] || '';
-      if (expRaw && !normalizeCsvDate(expRaw)) {
-        errors.push({
-          row: rowNum,
-          column: 'Expiry Date',
-          message: 'Expiry Date must be YYYY-MM-DD (DDMMYYYY/YYMMDD are also accepted and normalized)',
-        });
-      }
-    }
-    
-    // Hierarchy quantities
-    const unitsPerBox = parseInt(row['Units per Box'] || row['units_per_box'] || '0', 10);
-    if (isNaN(unitsPerBox) || unitsPerBox < 1) {
-      errors.push({ row: rowNum, column: 'Units per Box', message: 'Units per Box must be a positive integer' });
-    }
-    
-    const boxesPerCarton = parseInt(row['Boxes per Carton'] || row['boxes_per_carton'] || '0', 10);
-    if (isNaN(boxesPerCarton) || boxesPerCarton < 1) {
-      errors.push({ row: rowNum, column: 'Boxes per Carton', message: 'Boxes per Carton must be a positive integer' });
-    }
-    
-    const cartonsPerPallet = parseInt(row['Cartons per Pallet'] || row['cartons_per_pallet'] || '0', 10);
-    if (isNaN(cartonsPerPallet) || cartonsPerPallet < 1) {
-      errors.push({ row: rowNum, column: 'Cartons per Pallet', message: 'Cartons per Pallet must be a positive integer' });
-    }
-    
-    const numberOfPallets = parseInt(row['Number of Pallets'] || row['number_of_pallets'] || '0', 10);
-    if (isNaN(numberOfPallets) || numberOfPallets < 1) {
-      errors.push({ row: rowNum, column: 'Number of Pallets', message: 'Number of Pallets must be a positive integer' });
-    } else {
-      if (numberOfPallets > MAX_CODES_PER_ROW) {
-        errors.push({
-          row: rowNum,
-          column: 'Number of Pallets',
-          message: `Per row limit exceeded: maximum ${MAX_CODES_PER_ROW.toLocaleString()} codes per row`,
-        });
-      }
-      totalRequested += numberOfPallets;
-    }
-    
-    // Validate date format
-    const expiryDate = row['Expiry Date'] || row['expiry_date'] || row['EXP'] || '';
-    if (expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(expiryDate) && !/^\d{6}$/.test(expiryDate)) {
-      errors.push({ row: rowNum, column: 'Expiry Date', message: 'Expiry Date must be YYYY-MM-DD or YYMMDD format' });
-    }
-  });
-
-  if (totalRequested > MAX_CODES_PER_REQUEST) {
-    errors.push({
-      row: 0,
-      column: 'Number of Pallets',
-      message: `Total requested codes cannot exceed ${MAX_CODES_PER_REQUEST.toLocaleString()} per upload (current total: ${totalRequested.toLocaleString()})`,
-    });
-  }
-  
-  return { valid: errors.length === 0, errors };
-}
-
-// ---------- CSV Processing ----------
-async function processSSCCCSV(
-  csvText: string,
-  companyId: string,
-  codeType: CodeType,
-): Promise<SSCCLabel[]> {
-  const parsed = Papa.parse<Record<string, string>>(csvText, { header: true, skipEmptyLines: true });
-  const allLabels: SSCCLabel[] = [];
-
-  for (const row of parsed.data) {
-    const sku = (row['SKU Code'] || row['sku_code'] || row['SKU'] || '').toString().trim();
-    const batch = (row['Batch Number'] || row['batch_number'] || row['BATCH'] || '').toString().trim();
-    const expRaw = (row['Expiry Date'] || row['expiry_date'] || row['EXP'] || '').toString().trim();
-    const unitsPerBox = parseInt(row['Units per Box'] || row['units_per_box'] || '1', 10);
-    const boxesPerCarton = parseInt(row['Boxes per Carton'] || row['boxes_per_carton'] || '1', 10);
-    const cartonsPerPallet = parseInt(row['Cartons per Pallet'] || row['cartons_per_pallet'] || '1', 10);
-    const numberOfPallets = parseInt(row['Number of Pallets'] || row['number_of_pallets'] || '1', 10);
-    const hierarchyType = (row['Hierarchy Type'] || row['hierarchy_type'] || 'PALLET').toString().toUpperCase() as GenerationLevel;
-
-    const expISO = normalizeCsvDate(expRaw);
-    if (!expISO) {
-      throw new Error(`Row ${parsed.data.indexOf(row) + 2}: Expiry Date must be YYYY-MM-DD`);
-    }
-
-    if (!sku) continue;
-
-    // Use unified SSCC generation endpoint for CSV too (driven by Hierarchy Type)
-    const generate_box = hierarchyType === 'BOX' || hierarchyType === 'CARTON' || hierarchyType === 'PALLET';
-    const generate_carton = hierarchyType === 'CARTON' || hierarchyType === 'PALLET';
-    const generate_pallet = hierarchyType === 'PALLET';
-
-    const res = await fetch('/api/sscc/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        compliance_ack: true,
-        sku_code: sku,
-        company_id: companyId,
-        batch,
-        expiry_date: expISO,
-        units_per_box: unitsPerBox,
-        boxes_per_carton: boxesPerCarton,
-        cartons_per_pallet: cartonsPerPallet,
-        number_of_pallets: numberOfPallets,
-        generate_box,
-        generate_carton,
-        generate_pallet,
-      }),
-    });
-
-    const out = await res.json();
-    if (out.error) {
-      throw new Error(`Failed to generate SSCC for SKU ${sku}: ${out.error}`);
-    }
-
-    const allItems: any[] = [
-      ...(out.boxes || []).map((item: any) => ({ ...item, level: 'BOX' as GenerationLevel })),
-      ...(out.cartons || []).map((item: any) => ({ ...item, level: 'CARTON' as GenerationLevel })),
-      ...(out.pallets || []).map((item: any) => ({ ...item, level: 'PALLET' as GenerationLevel }))
-    ];
-
-    const labels: SSCCLabel[] = allItems.map((item: any) => ({
-      id: item.id,
+function toLabelData(items: SSCCLabel[]): LabelData[] {
+  return items.map((item) => ({
+    id: item.id,
+    payload: item.ssccWithAi,
+    codeType: item.codeType,
+    displayText: `${item.skuCode} | ${item.level} | SSCC: ${item.sscc}`,
+    metadata: {
+      skuCode: item.skuCode,
+      level: item.level,
       sscc: item.sscc,
-      sscc_with_ai: item.sscc_with_ai || `(00)${item.sscc}`,
-      sku_id: item.sku_id,
-      pallet_id: item.pallet_id || item.id,
-      level: item.level
-    }));
-
-    allLabels.push(...labels);
-  }
-
-  return allLabels;
-}
-
-// ---------- Export Functions ----------
-function exportSSCCCodesCSV(labels: SSCCLabel[]): void {
-  const rows = labels.map((label, idx) => ({
-    'Row Number': idx + 1,
-    'SSCC': label.sscc,
-    'SSCC with AI': label.sscc_with_ai,
-    'SKU ID': label.sku_id,
-    'Level': label.level,
-    'Pallet ID': label.pallet_id
+    },
   }));
-
-  const csv = Papa.unparse(rows, { header: true });
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const filename = `SSCC_CODE_GENERATION_${new Date().toISOString().split('T')[0].replace(/-/g, '')}.csv`;
-  saveAs(blob, filename);
 }
 
-// ---------- Main Component ----------
+function exportGeneratedSsccCsv(labels: SSCCLabel[]) {
+  const rows = [
+    ['SKU Code', 'Level', 'SSCC', 'SSCC with AI', 'Code Type'],
+    ...labels.map((label) => [
+      label.skuCode,
+      label.level,
+      label.sscc,
+      label.ssccWithAi,
+      label.codeType,
+    ]),
+  ];
+
+  const csv = rows.map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  saveAs(blob, `sscc_generated_${new Date().toISOString().split('T')[0].replace(/-/g, '')}.csv`);
+}
+
 export default function SSCCCodeGenerationPage() {
   const { data: entitlementSummary, loading: subscriptionLoading } = useSubscriptionSummary();
   const subscriptionState = entitlementSummary?.subscriptionStatus?.status ?? null;
   const hasActiveSubscription =
-    entitlementSummary?.subscriptionStatus?.status === "active" ||
-    entitlementSummary?.subscription?.status === "active";
+    entitlementSummary?.subscriptionStatus?.status === 'active' ||
+    entitlementSummary?.subscription?.status === 'active';
   const trialActive = Boolean(entitlementSummary?.entitlement?.trial_active);
-  const subscriptionCancelled = subscriptionState === "cancelled";
+  const subscriptionCancelled = subscriptionState === 'cancelled';
   const canGenerate = !subscriptionCancelled && (hasActiveSubscription || trialActive);
   const generationBlockMessage = subscriptionCancelled
-    ? "Subscription is cancelled. Renew your plan to continue code generation."
-    : "Generation is disabled. Trial expired or no active subscription.";
-  
+    ? 'Subscription is cancelled. Renew your plan to continue code generation.'
+    : 'Generation is disabled. Trial expired or no active subscription.';
+
   const [form, setForm] = useState<SSCCFormState>({
-    skuId: '',
-    batch: '',
-    expiryDate: '',
+    unitSkuMasterId: '',
     unitsPerBox: 10,
     boxesPerCarton: 12,
     cartonsPerPallet: 20,
@@ -348,97 +151,55 @@ export default function SSCCCodeGenerationPage() {
     complianceAck: false,
   });
 
-  const [ssccLabels, setSsccLabels] = useState<SSCCLabel[]>([]);
+  const [labels, setLabels] = useState<SSCCLabel[]>([]);
+  const [skuMasters, setSkuMasters] = useState<UnitSkuMaster[]>([]);
+  const [profileCompleted, setProfileCompleted] = useState<boolean | null>(null);
+  const [loadingMaster, setLoadingMaster] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [companyId, setCompanyId] = useState<string>('');
-  const [companyName, setCompanyName] = useState<string>('');
-  const [csvFile, setCsvFile] = useState<File | null>(null);
-  const [csvValidation, setCsvValidation] = useState<{ valid: boolean; errors: CSVValidationError[] } | null>(null);
-  const [csvProcessing, setCsvProcessing] = useState(false);
-  const [skus, setSkus] = useState<SkuOption[]>([]);
-  const [profileCompleted, setProfileCompleted] = useState<boolean | null>(null);
-
-  const normalizedSkus = React.useMemo(() => {
-    return (skus || []).filter((sku): sku is SkuOption => {
-      return typeof sku?.sku_code === 'string' && sku.sku_code.trim().length > 0;
-    });
-  }, [skus]);
 
   useEffect(() => {
     (async () => {
       try {
         const { data: { user } } = await supabaseClient().auth.getUser();
-        if (user) {
-          const { data } = await supabaseClient()
-            .from('companies')
-            .select('id, company_name, profile_completed')
-            .eq('user_id', user.id)
-            .single();
-          if (data) {
-            setCompanyId(data.id);
-            setCompanyName(data.company_name || '');
-          }
-          if (data?.profile_completed !== undefined) {
-            setProfileCompleted(data.profile_completed);
-          }
+        if (!user) return;
 
-          // Fetch SKUs
-          const skuRes = await fetch('/api/skus', { cache: 'no-store' });
-          if (!skuRes.ok) {
-            throw new Error(`SKU_FETCH_FAILED:${skuRes.status}`);
-          }
-          const skuData = await skuRes.json();
-          if (Array.isArray(skuData?.skus)) {
-            const validSkus = (skuData.skus as SkuOption[]).filter(
-              (sku) => typeof sku?.sku_code === 'string' && sku.sku_code.trim().length > 0
-            );
-            setSkus(validSkus);
-            if (validSkus.length > 0) {
-              setForm(prev => ({ ...prev, skuId: validSkus[0].sku_code }));
-            }
-          }
+        const { data: company } = await supabaseClient()
+          .from('companies')
+          .select('profile_completed')
+          .eq('user_id', user.id)
+          .single();
+
+        if (company?.profile_completed !== undefined) {
+          setProfileCompleted(company.profile_completed);
         }
-      } catch (err) {
+
+        const res = await fetch('/api/skus?scope=unit_master&gtin_only=true', { cache: 'no-store' });
+        const out = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(getApiErrorMessage(out, 'Failed to load SKU Master'));
+        }
+
+        const nextItems = Array.isArray(out?.items) ? (out.items as UnitSkuMaster[]) : [];
+        const gtinEligible = nextItems.filter((item) => typeof item.gtin === 'string' && item.gtin.trim().length > 0);
+        setSkuMasters(gtinEligible);
+        if (gtinEligible.length > 0) {
+          setForm((prev) => ({ ...prev, unitSkuMasterId: prev.unitSkuMasterId || gtinEligible[0].id }));
+        }
+      } catch (err: any) {
         console.error('[sscc/page] bootstrap_failed', err);
-        setError('Unable to load company/SKU data right now. Please refresh and try again.');
+        setError(err?.message || 'Unable to load SKU Master right now. Please refresh and try again.');
+      } finally {
+        setLoadingMaster(false);
       }
     })();
   }, []);
 
-  const isGs1Eligible = normalizedSkus.some((s) => typeof s.gtin === 'string' && s.gtin.trim().length > 0);
-
-  function update<K extends keyof SSCCFormState>(k: K, v: SSCCFormState[K]) {
-    setForm(s => {
-      const newState = { ...s, [k]: v };
-      
-      // Enforce hierarchy: Box → Carton → Pallet
-      if (k === 'generateBox') {
-        // Unselecting Box unselects Carton and Pallet
-        if (!v) {
-          newState.generateCarton = false;
-          newState.generatePallet = false;
-        }
-      } else if (k === 'generateCarton') {
-        // Selecting Carton auto-selects Box
-        if (v) {
-          newState.generateBox = true;
-        } else {
-          // Unselecting Carton unselects Pallet
-          newState.generatePallet = false;
-        }
-      } else if (k === 'generatePallet') {
-        // Selecting Pallet auto-selects Box and Carton
-        if (v) {
-          newState.generateBox = true;
-          newState.generateCarton = true;
-        }
-      }
-      
-      return newState;
-    });
-  }
+  const selectedSkuMaster = useMemo(
+    () => skuMasters.find((item) => item.id === form.unitSkuMasterId) || null,
+    [skuMasters, form.unitSkuMasterId]
+  );
 
   const singleRequestedCodes = estimateSsccCodes({
     numberOfPallets: form.numberOfPallets,
@@ -448,255 +209,152 @@ export default function SSCCCodeGenerationPage() {
     boxesPerCarton: form.boxesPerCarton,
     cartonsPerPallet: form.cartonsPerPallet,
   });
+
   const singleLimitError = singleRequestedCodes > MAX_CODES_PER_ROW
     ? `Per entry limit is ${MAX_CODES_PER_ROW.toLocaleString()} codes (current estimate: ${singleRequestedCodes.toLocaleString()}).`
     : singleRequestedCodes > MAX_CODES_PER_REQUEST
       ? `Per request limit is ${MAX_CODES_PER_REQUEST.toLocaleString()} codes (current estimate: ${singleRequestedCodes.toLocaleString()}).`
       : null;
 
-  async function handleGenerateSingle() {
+  function update<K extends keyof SSCCFormState>(key: K, value: SSCCFormState[K]) {
+    setForm((current) => {
+      const next = { ...current, [key]: value };
+
+      if (key === 'generateBox' && !value) {
+        next.generateCarton = false;
+        next.generatePallet = false;
+      } else if (key === 'generateCarton') {
+        if (value) {
+          next.generateBox = true;
+        } else {
+          next.generatePallet = false;
+        }
+      } else if (key === 'generatePallet' && value) {
+        next.generateBox = true;
+        next.generateCarton = true;
+      }
+
+      return next;
+    });
+  }
+
+  async function handleGenerate() {
     setError(null);
     setSuccess(null);
-    setLoading(true);
 
     if (!canGenerate) {
       setError(generationBlockMessage);
-      setLoading(false);
       return;
     }
-
-    if (!isGs1Eligible) {
-      setError('SSCC generation is enabled only for GS1-mode companies. Add a GTIN to at least one SKU first.');
-      setLoading(false);
+    if (!selectedSkuMaster) {
+      setError('Select a GTIN-enabled SKU Master record first.');
       return;
     }
-
     if (!form.complianceAck) {
       setError('You must confirm compliance to generate SSCC codes.');
-      setLoading(false);
       return;
     }
-
-    if (!form.skuId || !form.batch || !form.expiryDate) {
-      setError('SKU, Batch Number, and Expiry Date are required');
-      setLoading(false);
-      return;
-    }
-
-    const selectedSku = findSkuBySelection(normalizedSkus, form.skuId);
-    if (!selectedSku) {
-      setError('SKU not found. Create SKU in SKU Master first.');
-      setLoading(false);
-      return;
-    }
-    if (typeof selectedSku.gtin !== 'string' || selectedSku.gtin.trim().length === 0) {
-      setError('Selected SKU has no GTIN. SSCC generation requires a SKU with a GTIN.');
-      setLoading(false);
-      return;
-    }
-
-    // Validate hierarchy: at least one level must be selected
     if (!form.generateBox && !form.generateCarton && !form.generatePallet) {
-      setError('Please select at least one SSCC level (Box, Carton, or Pallet)');
-      setLoading(false);
+      setError('Please select at least one SSCC level (Box, Carton, or Pallet).');
       return;
     }
-    if (singleRequestedCodes > MAX_CODES_PER_ROW) {
-      setError(`Per entry limit exceeded. Maximum ${MAX_CODES_PER_ROW.toLocaleString()} codes per entry.`);
-      setLoading(false);
-      return;
-    }
-    if (singleRequestedCodes > MAX_CODES_PER_REQUEST) {
-      setError(`Per request limit exceeded. Maximum ${MAX_CODES_PER_REQUEST.toLocaleString()} codes per request.`);
-      setLoading(false);
-      return;
-    }
-
-    // Validate hierarchy rules
     if (form.generateCarton && !form.generateBox) {
-      setError('SSCC generation must follow hierarchy: Box → Carton → Pallet. Carton requires Box.');
-      setLoading(false);
+      setError('Carton generation requires Box generation in the same request.');
       return;
     }
     if (form.generatePallet && (!form.generateBox || !form.generateCarton)) {
-      setError('SSCC generation must follow hierarchy: Box → Carton → Pallet. Pallet requires Box and Carton.');
-      setLoading(false);
+      setError('Pallet generation requires Box and Carton generation in the same request.');
+      return;
+    }
+    if (singleLimitError) {
+      setError(singleLimitError);
       return;
     }
 
     try {
-      // Use unified SSCC generation endpoint
+      setLoading(true);
       const res = await fetch('/api/sscc/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          compliance_ack: true,
-          sku_code: selectedSku.sku_code,
-          company_id: companyId,
-          batch: form.batch,
-          expiry_date: form.expiryDate,
+          unit_sku_master_id: selectedSkuMaster.id,
           units_per_box: form.unitsPerBox,
           boxes_per_carton: form.boxesPerCarton,
           cartons_per_pallet: form.cartonsPerPallet,
           number_of_pallets: form.numberOfPallets,
           generate_box: form.generateBox,
           generate_carton: form.generateCarton,
-          generate_pallet: form.generatePallet
-        })
+          generate_pallet: form.generatePallet,
+          compliance_ack: true,
+        }),
       });
 
-      const out = await res.json();
-      if (out.error) {
-        throw new Error(out.error);
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(getApiErrorMessage(out, 'Unable to generate SSCC codes right now. Please retry.'));
       }
 
-      // Handle unified response with all levels
-      const allItems: any[] = [
-        ...(out.boxes || []).map((item: any) => ({ ...item, level: 'BOX' as GenerationLevel })),
-        ...(out.cartons || []).map((item: any) => ({ ...item, level: 'CARTON' as GenerationLevel })),
-        ...(out.pallets || []).map((item: any) => ({ ...item, level: 'PALLET' as GenerationLevel }))
+      const data = out?.data ?? out;
+      const allItems: Array<any> = [
+        ...((Array.isArray(data?.boxes) ? data.boxes : []).map((item: any) => ({ ...item, level: 'BOX' as GenerationLevel }))),
+        ...((Array.isArray(data?.cartons) ? data.cartons : []).map((item: any) => ({ ...item, level: 'CARTON' as GenerationLevel }))),
+        ...((Array.isArray(data?.pallets) ? data.pallets : []).map((item: any) => ({ ...item, level: 'PALLET' as GenerationLevel }))),
       ];
 
-      const labels: SSCCLabel[] = allItems.map((item: any) => ({
-        id: item.id,
-        sscc: item.sscc,
-        sscc_with_ai: item.sscc_with_ai || `(00)${item.sscc}`,
-        sku_id: item.sku_id,
-        pallet_id: item.pallet_id || item.id,
-        level: item.level
+      const nextLabels: SSCCLabel[] = allItems.map((item, index) => ({
+        id: String(item?.id ?? `${selectedSkuMaster.id}-${Date.now()}-${index}`),
+        sscc: String(item?.sscc ?? ''),
+        ssccWithAi: String(item?.sscc_with_ai ?? `(00)${String(item?.sscc ?? '')}`),
+        level: item.level,
+        skuCode: selectedSkuMaster.sku_code,
+        codeType: normalizeLabelCodeType(form.codeType),
       }));
 
-      setSsccLabels(prev => [...prev, ...labels]);
-      const totalCount = labels.length;
+      setLabels((prev) => [...prev, ...nextLabels]);
       const levelBreakdown = [
-        form.generateBox && `${out.boxes?.length || 0} Box`,
-        form.generateCarton && `${out.cartons?.length || 0} Carton`,
-        form.generatePallet && `${out.pallets?.length || 0} Pallet`
+        form.generateBox ? `${Array.isArray(data?.boxes) ? data.boxes.length : 0} Box` : null,
+        form.generateCarton ? `${Array.isArray(data?.cartons) ? data.cartons.length : 0} Carton` : null,
+        form.generatePallet ? `${Array.isArray(data?.pallets) ? data.pallets.length : 0} Pallet` : null,
       ].filter(Boolean).join(', ');
-      setSuccess(`Generated ${totalCount} SSCC label(s) successfully (${levelBreakdown})`);
-    } catch (e: any) {
-      setError(e?.message || 'Unable to generate SSCC codes right now. Please try again.');
+      setSuccess(`Generated ${nextLabels.length} SSCC code(s) successfully${levelBreakdown ? ` (${levelBreakdown})` : ''}.`);
+    } catch (err: any) {
+      setError(err?.message || 'Unable to generate SSCC codes right now. Please retry.');
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleCSVUpload(file: File) {
-    setError(null);
-    setSuccess(null);
-    setCsvValidation(null);
-    setCsvFile(file);
-
-    if (!canGenerate) {
-      setError(generationBlockMessage);
-      return;
-    }
-    if (!isGs1Eligible) {
-      setError('SSCC generation is enabled only for GS1-mode companies. Add a GTIN to at least one SKU first.');
-      return;
-    }
-    if (!form.complianceAck) {
-      setError('You must confirm compliance to generate SSCC codes.');
-      return;
-    }
-
-    try {
-      const text = await file.text();
-      const parsed = Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true });
-      
-      // Validate CSV
-      const validation = validateSSCCCSV(parsed.data, companyId);
-      setCsvValidation(validation);
-
-      if (!validation.valid) {
-        setError(`CSV validation failed. Please fix ${validation.errors.length} error(s) before generating codes.`);
-        return;
-      }
-
-      // Process CSV
-      setCsvProcessing(true);
-      const labels = await processSSCCCSV(text, companyId, form.codeType);
-      setSsccLabels(prev => [...prev, ...labels]);
-      setSuccess(`Processed CSV: Generated ${labels.length} SSCC code(s)`);
-    } catch (e: any) {
-      setError(e?.message || 'Unable to process CSV right now. Please try again.');
-    } finally {
-      setCsvProcessing(false);
-    }
-  }
-
-  function ssccToLabelData(): LabelData[] {
-    return ssccLabels.map(label => ({
-      id: label.id,
-      payload: label.sscc_with_ai,
-      codeType: form.codeType,
-      displayText: `SSCC: ${label.sscc} | Level: ${label.level} | SKU: ${label.sku_id}`,
-      metadata: { sscc: label.sscc, sku_id: label.sku_id, pallet_id: label.pallet_id, level: label.level }
-    }));
   }
 
   async function handleExport(format: 'PDF' | 'PNG' | 'ZPL' | 'EPL' | 'ZIP' | 'PRINT') {
-    if (ssccLabels.length === 0) {
-      setError('No labels to export');
+    if (labels.length === 0) {
+      setError('No SSCC labels to export.');
       return;
     }
 
-    setLoading(true);
-    setError(null);
-
     try {
-      const labels = ssccToLabelData();
-      const filename = `sscc_labels_${Date.now()}`;
-      await exportLabelsUtil(labels, format as any, filename);
-      setSuccess(`Exported ${ssccLabels.length} labels as ${format}`);
-    } catch (err) {
-      setError(`Failed to export ${format}: ${String(err)}`);
-    } finally {
-      setLoading(false);
+      await exportLabelsUtil(
+        toLabelData(labels),
+        format,
+        `sscc_labels_${new Date().toISOString().split('T')[0].replace(/-/g, '')}.${format.toLowerCase()}`
+      );
+    } catch (err: any) {
+      setError(err?.message || `Failed to export ${format}.`);
     }
   }
 
-  async function handlePrint() {
-    if (ssccLabels.length === 0) return;
-    setLoading(true);
-    setError(null);
-    setSuccess(null);
-
-    try {
-      let printFormat: 'PDF' | 'EPL' | 'ZPL' = 'PDF';
-      const formatChoice = prompt('Select print format:\n1. PDF (Opens OS print dialog)\n2. EPL (Download file)\n3. ZPL (Download file)\n\nEnter 1, 2, or 3:');
-      if (formatChoice === '2') printFormat = 'EPL';
-      else if (formatChoice === '3') printFormat = 'ZPL';
-      else printFormat = 'PDF';
-
-      const labels = ssccToLabelData();
-      const filename = `sscc_labels_${Date.now()}`;
-      if (printFormat === 'PDF') {
-        await exportLabelsUtil(labels, 'PRINT' as any, filename);
-      } else {
-        await exportLabelsUtil(labels, printFormat as any, filename);
-      }
-      setSuccess(`Printed ${ssccLabels.length} labels as ${printFormat}`);
-    } catch (err) {
-      setError(`Failed to print: ${String(err)}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Block code generation if profile is not completed
   if (profileCompleted === false) {
     return (
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-semibold text-gray-900 mb-1.5">SSCC / Logistics Code Generation</h1>
-          <p className="text-sm text-gray-600">Generate logistics codes using hierarchy: Unit → Box → Carton → Pallet (SSCC)</p>
+          <p className="text-sm text-gray-600">Generate logistics codes using hierarchy: Unit → Box → Carton → Pallet (SSCC).</p>
         </div>
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            <strong>Company Setup Required:</strong> Please complete your company setup before generating codes. 
-            <a href="/dashboard/company-setup" className="ml-2 underline font-medium">Go to Company Setup →</a>
+            <strong>Company Setup Required:</strong> Please complete your company setup before generating codes.
+            <Button asChild variant="link" className="p-0 ml-2 h-auto">
+              <Link href="/dashboard/company-setup">Go to Company Setup</Link>
+            </Button>
           </AlertDescription>
         </Alert>
       </div>
@@ -705,13 +363,11 @@ export default function SSCCCodeGenerationPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <h1 className="text-3xl font-semibold text-gray-900 mb-1.5">SSCC / Logistics Code Generation</h1>
-        <p className="text-sm text-gray-600">Generate logistics codes using hierarchy: Unit → Box → Carton → Pallet (SSCC)</p>
+        <p className="text-sm text-gray-600">Select a GTIN-enabled SKU Master record, choose hierarchy and code type, then generate SSCC codes.</p>
       </div>
 
-      {/* Subscription Status Alert */}
       {!subscriptionLoading && !canGenerate && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -724,40 +380,13 @@ export default function SSCCCodeGenerationPage() {
         </Alert>
       )}
 
-      {/* Important Disclaimer */}
-      <Alert className="bg-amber-50 border-amber-200">
-        <Info className="h-4 w-4 text-amber-600" />
-        <AlertDescription className="text-amber-800">
-          <strong>SSCC is for logistics units only.</strong> This workflow generates codes for boxes, cartons, and pallets using hierarchical relationships. Unit-level codes must be generated separately.
+      <Alert className="bg-blue-50 border-blue-200">
+        <Info className="h-4 w-4 text-blue-600" />
+        <AlertDescription className="text-blue-800">
+          SSCC now uses SKU Master for SKU selection only. Batch, expiry, and CSV generation are no longer part of the SSCC page. Only SKU Master records with a GTIN can be used here.
         </AlertDescription>
       </Alert>
 
-      {!isGs1Eligible && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            <strong>SSCC disabled:</strong> Your company is not GS1-eligible yet. Add a GTIN to at least one SKU to enable SSCC generation.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <Alert className="bg-slate-50 border-slate-200">
-        <AlertDescription className="text-slate-800">
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={form.complianceAck}
-              onChange={(e) => update('complianceAck', e.target.checked)}
-              className="mt-1"
-            />
-            <span>
-              I confirm I understand and accept the compliance responsibility for generated SSCC codes (format validated only).
-            </span>
-          </label>
-        </AlertDescription>
-      </Alert>
-
-      {/* Alerts */}
       {error && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -773,26 +402,28 @@ export default function SSCCCodeGenerationPage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Form Section */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Single Generation Form */}
           <Card className="border-gray-200">
             <CardHeader>
-              <CardTitle className="text-lg font-semibold">Single SSCC Generation</CardTitle>
-              <CardDescription>Generate SSCC codes one at a time</CardDescription>
+              <CardTitle className="text-lg font-semibold">Generate SSCC Codes</CardTitle>
+              <CardDescription>SKU Master provides the GTIN-qualified SKU reference. Hierarchy and code type remain request-time choices.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="sku">SKU Code *</Label>
-                  <Select value={form.skuId} onValueChange={(v) => update('skuId', v)}>
-                    <SelectTrigger id="sku">
-                      <SelectValue placeholder="Select SKU" />
+                  <Label htmlFor="sscc-sku-master">SKU Master *</Label>
+                  <Select
+                    value={form.unitSkuMasterId}
+                    onValueChange={(value) => update('unitSkuMasterId', value)}
+                    disabled={loadingMaster || skuMasters.length === 0}
+                  >
+                    <SelectTrigger id="sscc-sku-master">
+                      <SelectValue placeholder={loadingMaster ? 'Loading SKU Master...' : 'Select GTIN-enabled SKU Master'} />
                     </SelectTrigger>
                     <SelectContent>
-                      {normalizedSkus.map((s) => (
-                        <SelectItem key={s.id} value={s.sku_code}>
-                          {s.sku_code} {s.sku_name ? `- ${s.sku_name}` : ''}
+                      {skuMasters.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.sku_code} | {item.gtin}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -800,47 +431,51 @@ export default function SSCCCodeGenerationPage() {
                 </div>
 
                 <div>
-                  <Label htmlFor="batch">Batch Number *</Label>
-                  <Input
-                    id="batch"
-                    value={form.batch}
-                    onChange={(e) => update('batch', e.target.value)}
-                    placeholder="BATCH123"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="expiry">Expiry Date *</Label>
-                  <Input
-                    id="expiry"
-                    type="date"
-                    value={form.expiryDate}
-                    onChange={(e) => update('expiryDate', e.target.value)}
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="codeType">Code Format</Label>
-                  <Select value={form.codeType} onValueChange={(v) => update('codeType', v as CodeType)}>
-                    <SelectTrigger id="codeType">
+                  <Label htmlFor="sscc-code-type">Code Type *</Label>
+                  <Select value={form.codeType} onValueChange={(value) => update('codeType', normalizeLabelCodeType(value))}>
+                    <SelectTrigger id="sscc-code-type">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="QR">GS1 QR Code</SelectItem>
-                      <SelectItem value="DATAMATRIX">GS1 DataMatrix</SelectItem>
+                      {LABEL_CODE_TYPE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
-              {/* SSCC Level Selection (Hierarchical) */}
+              {selectedSkuMaster ? (
+                <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">Selected SKU Master Values</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                    <div><span className="text-gray-500">SKU Code:</span> <span className="font-medium text-gray-900">{selectedSkuMaster.sku_code}</span></div>
+                    <div><span className="text-gray-500">GTIN:</span> <span className="font-mono text-gray-900">{selectedSkuMaster.gtin}</span></div>
+                    <div><span className="text-gray-500">Batch Snapshot:</span> <span className="font-medium text-gray-900">{selectedSkuMaster.batch}</span></div>
+                    <div><span className="text-gray-500">Expiry Snapshot:</span> <span className="font-medium text-gray-900">{formatDate(selectedSkuMaster.expiry)}</span></div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-3">
+                    Batch and expiry remain in SKU Master for traceability context, but SSCC generation no longer collects them as request-time inputs.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                  No GTIN-enabled SKU Master records are available yet.
+                  <Button asChild variant="link" className="p-0 ml-2 h-auto">
+                    <Link href="/dashboard/sku">Create GTIN-enabled SKU Master</Link>
+                  </Button>
+                </div>
+              )}
+
               <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
                 <h4 className="text-sm font-semibold text-gray-900 mb-3">SSCC Level Selection *</h4>
                 <p className="text-xs text-gray-600 mb-3">
-                  Higher logistic levels automatically include lower levels. SSCC generation must follow hierarchy: Box → Carton → Pallet.
+                  Higher logistic levels automatically include lower levels. SSCC generation follows Box → Carton → Pallet hierarchy.
                 </p>
                 <div className="space-y-2">
-                  <label className="flex items-center space-x-2 cursor-pointer">
+                  <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={form.generateBox}
@@ -849,37 +484,33 @@ export default function SSCCCodeGenerationPage() {
                     />
                     <span className="text-sm text-gray-700 font-medium">Box</span>
                   </label>
-                  <label className="flex items-center space-x-2 cursor-pointer">
+                  <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={form.generateCarton}
                       onChange={(e) => update('generateCarton', e.target.checked)}
                       disabled={!form.generateBox}
-                      className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50"
                     />
                     <span className="text-sm text-gray-700 font-medium">
                       Carton {!form.generateBox && <span className="text-gray-400">(requires Box)</span>}
                     </span>
                   </label>
-                  <label className="flex items-center space-x-2 cursor-pointer">
+                  <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={form.generatePallet}
                       onChange={(e) => update('generatePallet', e.target.checked)}
                       disabled={!form.generateBox || !form.generateCarton}
-                      className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50"
                     />
                     <span className="text-sm text-gray-700 font-medium">
                       Pallet {(!form.generateBox || !form.generateCarton) && <span className="text-gray-400">(requires Box + Carton)</span>}
                     </span>
                   </label>
                 </div>
-                {!form.generateBox && !form.generateCarton && !form.generatePallet && (
-                  <p className="text-xs text-red-600 mt-2">Please select at least one SSCC level</p>
-                )}
               </div>
 
-              {/* Hierarchy Configuration */}
               <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
                 <h4 className="text-sm font-semibold text-gray-900 mb-3">Hierarchy Configuration</h4>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -890,10 +521,9 @@ export default function SSCCCodeGenerationPage() {
                       type="number"
                       min="1"
                       value={form.unitsPerBox}
-                      onChange={(e) => update('unitsPerBox', parseInt(e.target.value) || 1)}
+                      onChange={(e) => update('unitsPerBox', parseInt(e.target.value, 10) || 1)}
                     />
                   </div>
-
                   <div>
                     <Label htmlFor="boxesPerCarton">Boxes per Carton *</Label>
                     <Input
@@ -901,10 +531,9 @@ export default function SSCCCodeGenerationPage() {
                       type="number"
                       min="1"
                       value={form.boxesPerCarton}
-                      onChange={(e) => update('boxesPerCarton', parseInt(e.target.value) || 1)}
+                      onChange={(e) => update('boxesPerCarton', parseInt(e.target.value, 10) || 1)}
                     />
                   </div>
-
                   <div>
                     <Label htmlFor="cartonsPerPallet">Cartons per Pallet *</Label>
                     <Input
@@ -912,10 +541,9 @@ export default function SSCCCodeGenerationPage() {
                       type="number"
                       min="1"
                       value={form.cartonsPerPallet}
-                      onChange={(e) => update('cartonsPerPallet', parseInt(e.target.value) || 1)}
+                      onChange={(e) => update('cartonsPerPallet', parseInt(e.target.value, 10) || 1)}
                     />
                   </div>
-
                   <div>
                     <Label htmlFor="numberOfPallets">Number of Pallets *</Label>
                     <Input
@@ -924,153 +552,42 @@ export default function SSCCCodeGenerationPage() {
                       min="1"
                       max={MAX_CODES_PER_ROW}
                       value={form.numberOfPallets}
-                      onChange={(e) => update('numberOfPallets', parseInt(e.target.value) || 1)}
+                      onChange={(e) => update('numberOfPallets', parseInt(e.target.value, 10) || 1)}
                     />
                     <p className={`text-xs mt-1 ${singleLimitError ? 'text-red-600' : 'text-gray-600'}`}>
-                      Estimated codes: {singleRequestedCodes.toLocaleString()}.
-                      Limits: {MAX_CODES_PER_ROW.toLocaleString()} per entry, {MAX_CODES_PER_REQUEST.toLocaleString()} per request.
+                      Estimated codes: {singleRequestedCodes.toLocaleString()}. Limits: {MAX_CODES_PER_ROW.toLocaleString()} per entry, {MAX_CODES_PER_REQUEST.toLocaleString()} per request.
                     </p>
                   </div>
                 </div>
               </div>
 
-              <Button 
-                onClick={handleGenerateSingle} 
-                disabled={loading || !canGenerate || !!singleLimitError || !isGs1Eligible || !form.complianceAck}
+              <Alert className="bg-slate-50 border-slate-200">
+                <AlertDescription className="text-slate-800">
+                  <label className="flex items-start gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={form.complianceAck}
+                      onChange={(e) => update('complianceAck', e.target.checked)}
+                      className="mt-1"
+                    />
+                    <span>I confirm I understand and accept the compliance responsibility for generated SSCC codes.</span>
+                  </label>
+                </AlertDescription>
+              </Alert>
+
+              <Button
+                type="button"
+                onClick={handleGenerate}
+                disabled={loading || !canGenerate || !selectedSkuMaster || !form.complianceAck || !!singleLimitError}
                 className="w-full bg-blue-600 hover:bg-blue-700"
               >
                 {loading ? 'Generating...' : 'Generate SSCC Codes'}
               </Button>
             </CardContent>
           </Card>
-
-          {/* CSV Bulk Generation */}
-          <Card className="border-gray-200">
-            <CardHeader>
-              <CardTitle className="text-lg font-semibold">Bulk SSCC Generation (CSV)</CardTitle>
-              <CardDescription>Upload CSV file for bulk SSCC code generation</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* CSV Template Download */}
-              <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="text-sm font-semibold text-gray-900 mb-1">Download SSCC CSV Template</h4>
-                    <p className="text-xs text-gray-600">
-                      Use this template to prepare your SSCC generation data with hierarchy information
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => downloadSSCCCSVTemplate(companyName, companyId)}
-                    className="border-gray-300"
-                  >
-                    <Download className="w-4 h-4 mr-2" />
-                    Download Template
-                  </Button>
-                </div>
-              </div>
-
-              {/* CSV Example Preview */}
-              <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
-                <h4 className="text-sm font-semibold text-gray-900 mb-2">CSV Column Requirements</h4>
-                <div className="text-xs text-gray-700 space-y-1">
-                  <p><strong>Required:</strong> SKU Code, Batch Number, Expiry Date, Units per Box, Boxes per Carton, Cartons per Pallet, Number of Pallets</p>
-                  <p><strong>Auto-filled:</strong> Company Name, Company ID, Generation Type, Hierarchy Type</p>
-                  <p className="text-blue-700 mt-2 font-semibold"><strong>Quantity Rule:</strong> One SSCC is generated per pallet. The &quot;Number of Pallets&quot; column determines how many SSCC codes will be created.</p>
-                  <p><strong>Date format:</strong> YYYY-MM-DD (DDMMYYYY/YYMMDD will be normalized).</p>
-                  <p className="text-blue-700"><strong>Limits:</strong> Max {MAX_CODES_PER_ROW.toLocaleString()} codes per CSV row and {MAX_CODES_PER_REQUEST.toLocaleString()} total per upload.</p>
-                  <p className="text-amber-700 mt-1"><strong>Note:</strong> This CSV is for SSCC generation only. Unit-level codes require a separate CSV template.</p>
-                </div>
-              </div>
-
-              {/* CSV Upload */}
-              <div>
-                <Label htmlFor="csv-upload">Upload SSCC CSV File</Label>
-                <div className="flex gap-2 mt-2">
-                  <Input
-                    id="csv-upload"
-                    type="file"
-                    accept=".csv,text/csv"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleCSVUpload(file);
-                      e.currentTarget.value = '';
-                    }}
-                    disabled={csvProcessing || !canGenerate || !isGs1Eligible || !form.complianceAck}
-                  />
-                  {csvFile && (
-                    <Badge variant="outline" className="flex items-center gap-1">
-                      <FileText className="w-3 h-3" />
-                      {csvFile.name}
-                    </Badge>
-                  )}
-                </div>
-              </div>
-
-              {/* CSV Validation Results */}
-              {csvValidation && (
-                <div className={`p-4 rounded-lg border ${
-                  csvValidation.valid 
-                    ? 'bg-green-50 border-green-200' 
-                    : 'bg-red-50 border-red-200'
-                }`}>
-                  <div className="flex items-center gap-2 mb-2">
-                    {csvValidation.valid ? (
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                    ) : (
-                      <XCircle className="w-4 h-4 text-red-600" />
-                    )}
-                    <span className={`text-sm font-semibold ${
-                      csvValidation.valid ? 'text-green-800' : 'text-red-800'
-                    }`}>
-                      {csvValidation.valid 
-                        ? 'CSV validation passed' 
-                        : `CSV validation failed: ${csvValidation.errors.length} error(s)`}
-                    </span>
-                  </div>
-                  
-                  {csvValidation.errors.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      <p className="text-xs font-semibold text-red-800">Validation Errors:</p>
-                      <div className="max-h-48 overflow-y-auto">
-                        <table className="w-full text-xs">
-                          <thead className="bg-red-100">
-                            <tr>
-                              <th className="px-2 py-1 text-left">Row</th>
-                              <th className="px-2 py-1 text-left">Column</th>
-                              <th className="px-2 py-1 text-left">Error</th>
-                            </tr>
-                          </thead>
-                          <tbody className="bg-white">
-                            {csvValidation.errors.map((err, idx) => (
-                              <tr key={idx} className="border-b">
-                                <td className="px-2 py-1">{err.row}</td>
-                                <td className="px-2 py-1">{err.column}</td>
-                                <td className="px-2 py-1 text-red-700">{err.message}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {csvProcessing && (
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-                  Processing SSCC CSV file...
-                </div>
-              )}
-            </CardContent>
-          </Card>
         </div>
 
-        {/* Preview & Batch Section */}
-        <div className="lg:col-span-1 space-y-6">
-          {/* Hierarchy Visualization (Read-only) */}
+        <div className="space-y-6">
           <Card className="border-gray-200">
             <CardHeader>
               <CardTitle className="text-lg font-semibold">Hierarchy Structure</CardTitle>
@@ -1093,101 +610,82 @@ export default function SSCCCodeGenerationPage() {
                   <div className="text-green-700">{form.boxesPerCarton} boxes per carton</div>
                 </div>
                 <div className="text-center text-gray-400">↓</div>
-                <div className="p-3 bg-purple-50 rounded-lg border border-purple-200">
-                  <div className="font-semibold text-purple-900 mb-1">Pallet (SSCC)</div>
-                  <div className="text-purple-700">{form.cartonsPerPallet} cartons per pallet</div>
+                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                  <div className="font-semibold text-amber-900 mb-1">Pallet (SSCC)</div>
+                  <div className="text-amber-700">{form.cartonsPerPallet} cartons per pallet</div>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Generated SSCC Codes */}
           <Card className="border-gray-200">
             <CardHeader>
               <CardTitle className="text-lg font-semibold">Generated SSCC Codes</CardTitle>
-              <CardDescription>{ssccLabels.length} SSCC code(s) generated</CardDescription>
+              <CardDescription>{labels.length} SSCC code(s) generated in this session</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-3 max-h-96 overflow-y-auto mb-4">
-                {ssccLabels.length === 0 ? (
-                  <div className="text-center py-8 text-gray-400">
-                    <FileText className="w-10 h-10 mx-auto mb-2" />
-                    <p className="text-sm">No SSCC codes generated yet</p>
+            <CardContent className="space-y-4">
+              {labels.length === 0 ? (
+                <div className="text-sm text-gray-600">Generated SSCC codes will appear here after creation.</div>
+              ) : (
+                <>
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {labels.slice(0, 6).map((label) => (
+                      <div key={label.id} className="p-3 border border-gray-200 rounded-lg bg-white">
+                        <div className="text-xs font-mono text-gray-600 mb-2 break-all">{label.ssccWithAi}</div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-24 h-24 bg-white border border-gray-100 flex items-center justify-center">
+                            {label.codeType === 'QR' ? (
+                              <QRCodeComponent value={label.ssccWithAi} size={84} />
+                            ) : (
+                              <DataMatrixComponent value={label.ssccWithAi} size={84} />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-gray-900 truncate">{label.skuCode}</div>
+                            <div className="text-xs text-gray-600">Level: {label.level}</div>
+                            <div className="text-xs text-gray-600">Type: {label.codeType === 'QR' ? 'QR Code' : 'DataMatrix'}</div>
+                            <div className="text-xs text-gray-600 font-mono">SSCC: {label.sscc}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ) : (
-                  ssccLabels.map((label) => {
-                    const codeValue = toNonEmptyString(label.sscc_with_ai);
-                    return (
-                    <div key={label.id} className="p-3 border border-gray-200 rounded-lg bg-gray-50">
-                      <div className="text-xs font-mono text-gray-600 mb-2 break-all line-clamp-2">{codeValue || 'INVALID_CODE_PAYLOAD'}</div>
-                      <div className="flex justify-center py-2 bg-white rounded overflow-hidden">
-                        {codeValue ? (
-                          form.codeType === 'QR' ? (
-                            <QRCodeComponent value={codeValue} size={70} />
-                          ) : (
-                            <DataMatrixComponent value={codeValue} size={70} />
-                          )
-                        ) : (
-                          <span className="text-xs text-red-600">Invalid code payload</span>
-                        )}
-                      </div>
-                      <div className="text-xs text-gray-600 mt-2">
-                        SSCC: {label.sscc} | Level: {label.level}
-                      </div>
-                    </div>
-                  )})
-                )}
-              </div>
 
-              {ssccLabels.length > 0 && (
-                <div className="space-y-2 pt-4 border-t">
-                  <Button
-                    onClick={() => exportSSCCCodesCSV(ssccLabels)}
-                    variant="outline"
-                    className="w-full border-gray-300"
-                  >
-                    <Download className="w-4 h-4 mr-2" />
-                    Export SSCC Codes CSV
-                  </Button>
-                  <Button
-                    onClick={() => handleExport('PDF')}
-                    className="w-full bg-blue-600 hover:bg-blue-700"
-                  >
-                    Export PDF
-                  </Button>
-                  <Button
-                    onClick={() => handleExport('ZIP')}
-                    variant="outline"
-                    className="w-full border-gray-300"
-                  >
-                    Export ZIP (PNGs)
-                  </Button>
-                  <Button
-                    onClick={() => handlePrint()}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white"
-                  >
-                    Print
-                  </Button>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      onClick={() => handleExport('ZPL')}
-                      variant="outline"
-                      size="sm"
-                      className="border-gray-300"
-                    >
-                      ZPL
-                    </Button>
-                    <Button
-                      onClick={() => handleExport('EPL')}
-                      variant="outline"
-                      size="sm"
-                      className="border-gray-300"
-                    >
-                      EPL
-                    </Button>
-                  </div>
-                </div>
+                  {labels.length > 6 && (
+                    <div className="text-xs text-gray-500">+ {labels.length - 6} more SSCC code(s)</div>
+                  )}
+                </>
               )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-gray-200">
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold">Export</CardTitle>
+              <CardDescription>Export or print the generated SSCC labels from this session.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-3">
+              <Button type="button" variant="outline" className="border-gray-300" disabled={labels.length === 0} onClick={() => exportGeneratedSsccCsv(labels)}>
+                <Download className="w-4 h-4 mr-2" />
+                CSV
+              </Button>
+              <Button type="button" variant="outline" className="border-gray-300" disabled={labels.length === 0} onClick={() => void handleExport('PNG')}>
+                <Package className="w-4 h-4 mr-2" />
+                PNG
+              </Button>
+              <Button type="button" variant="outline" className="border-gray-300" disabled={labels.length === 0} onClick={() => void handleExport('PDF')}>
+                PDF
+              </Button>
+              <Button type="button" variant="outline" className="border-gray-300" disabled={labels.length === 0} onClick={() => void handleExport('ZPL')}>
+                ZPL
+              </Button>
+              <Button type="button" variant="outline" className="border-gray-300" disabled={labels.length === 0} onClick={() => void handleExport('EPL')}>
+                EPL
+              </Button>
+              <Button type="button" variant="outline" className="border-gray-300 col-span-2" disabled={labels.length === 0} onClick={() => void handleExport('PRINT')}>
+                <Printer className="w-4 h-4 mr-2" />
+                Print
+              </Button>
             </CardContent>
           </Card>
         </div>

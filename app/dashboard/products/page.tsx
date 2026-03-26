@@ -227,7 +227,7 @@ export default function ProductsPage() {
         <div>
           <h1 className="text-3xl font-semibold text-gray-900 mb-1.5">SKU Master</h1>
           <p className="text-sm text-gray-600">
-            SKU Master is the source of truth for fixed Unit code inputs. Existing records cannot be edited. If any value changes, create a new record.
+            SKU Master is the source of truth for fixed Unit code inputs and the SKU selector source for SSCC. Existing records cannot be edited. If any value changes, create a new record.
           </p>
         </div>
         <Button type="button" variant="outline" onClick={downloadTemplate} className="border-gray-300">

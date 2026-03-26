@@ -52,15 +52,22 @@ export async function GET(req: Request) {
   if ("error" in auth) return auth.error;
 
   const supabaseAdmin = getSupabaseAdmin();
-  const scope = new URL(req.url).searchParams.get("scope");
+  const url = new URL(req.url);
+  const scope = url.searchParams.get("scope");
 
   if (scope === "unit_master") {
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from("unit_sku_master")
       .select("id, company_id, sku_code, gtin, batch, expiry, mfd, mrp, created_at, deleted_at")
       .eq("company_id", auth.companyId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
+
+    if (url.searchParams.get("gtin_only") === "true") {
+      query = query.not("gtin", "is", null).neq("gtin", "");
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       return apiJson({ error: error.message }, { status: 400 });

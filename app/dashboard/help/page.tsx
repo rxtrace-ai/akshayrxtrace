@@ -47,7 +47,7 @@ const faqData = {
   technical: [
     {
       question: 'How do I generate GS1-compliant labels?',
-      answer: 'Navigate to Unit Code Generation, select a SKU Master record, enter quantity, and generate. Fixed fields such as SKU code, batch, expiry, MFD, MRP, and optional GTIN come from SKU Master. The system automatically generates GS1 when GTIN is present and PIC when GTIN is absent.',
+      answer: 'Navigate to Unit Code Generation, select a SKU Master record, choose QR or DataMatrix, enter quantity, and generate. Fixed fields such as SKU code, batch, expiry, MFD, MRP, and optional GTIN come from SKU Master. The system automatically generates GS1 when GTIN is present and PIC when GTIN is absent.',
     },
     {
       question: 'How does Unit mode selection work?',
@@ -89,7 +89,7 @@ const faqData = {
     },
     {
       question: 'Are printers and ERP code ingestion billed separately?',
-      answer: 'No. Printer integrations are unlimited and free. ERP code ingestion (CSV import) is included in your plan. Export codes from your ERP and import via the ERP Code Ingestion page.',
+      answer: 'No. Printer integrations are unlimited and free. ERP code ingestion (CSV import) is included in your plan. ERP Integration is for already-generated codes from your ERP and remains separate from SKU Master creation.',
     },
     {
       question: 'How do I view my invoices?',

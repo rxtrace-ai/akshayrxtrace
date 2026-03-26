@@ -13,6 +13,7 @@ import QRCodeComponent from '@/components/custom/QRCodeComponent';
 import DataMatrixComponent from '@/components/custom/DataMatrixComponent';
 import { useSubscriptionSummary } from '@/lib/hooks/useSubscriptionSummary';
 import { exportLabels as exportLabelsUtil, LabelData } from '@/lib/labelExporter';
+import { LABEL_CODE_TYPE_OPTIONS, normalizeLabelCodeType, type LabelCodeType } from '@/lib/labelCodeType';
 
 type UnitSkuMaster = {
   id: string;
@@ -25,14 +26,12 @@ type UnitSkuMaster = {
   created_at: string;
 };
 
-type CodeType = 'QR' | 'DATAMATRIX';
-
 type GeneratedUnit = {
   id: string;
   serial: string;
   payload: string;
   codeMode: 'GS1' | 'PIC';
-  codeType: CodeType;
+  codeType: LabelCodeType;
   skuCode: string;
   gtin: string | null;
   batch: string;
@@ -93,6 +92,7 @@ export default function UnitCodeGenerationPage() {
   const [items, setItems] = useState<UnitSkuMaster[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [quantity, setQuantity] = useState(1);
+  const [codeType, setCodeType] = useState<LabelCodeType>('DATAMATRIX');
   const [complianceAck, setComplianceAck] = useState(false);
   const [generated, setGenerated] = useState<GeneratedUnit[]>([]);
   const [loadingMaster, setLoadingMaster] = useState(true);
@@ -193,7 +193,7 @@ export default function UnitCodeGenerationPage() {
           serial: String(item?.serial ?? ''),
           payload: String(item?.payload ?? item?.gs1 ?? ''),
           codeMode,
-          codeType: codeMode === 'PIC' ? 'QR' : 'DATAMATRIX',
+          codeType,
           skuCode: selected.sku_code,
           gtin: selected.gtin,
           batch: selected.batch,
@@ -229,7 +229,7 @@ export default function UnitCodeGenerationPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-semibold text-gray-900 mb-1.5">Unit Code Generation</h1>
-        <p className="text-sm text-gray-600">Select a SKU Master record, enter quantity, and generate unique serialized Unit codes.</p>
+        <p className="text-sm text-gray-600">Select a SKU Master record, enter quantity, choose QR or DataMatrix, and generate unique serialized Unit codes.</p>
       </div>
 
       <Alert className="bg-blue-50 border-blue-200">
@@ -257,7 +257,7 @@ export default function UnitCodeGenerationPage() {
           <Card className="border-gray-200">
             <CardHeader>
               <CardTitle className="text-lg font-semibold">Generate Unit Codes</CardTitle>
-              <CardDescription>SKU Master provides the fixed product fields. Quantity and compliance stay request-time only.</CardDescription>
+              <CardDescription>SKU Master provides the fixed product fields. Quantity, code type, and compliance stay request-time only.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -290,6 +290,22 @@ export default function UnitCodeGenerationPage() {
                   <p className={`text-xs mt-1 ${singleLimitError ? 'text-red-600' : 'text-gray-500'}`}>
                     Limit: up to {MAX_CODES_PER_ROW.toLocaleString()} per request.
                   </p>
+                </div>
+
+                <div>
+                  <Label htmlFor="unit-code-type">Code Type *</Label>
+                  <Select value={codeType} onValueChange={(value) => setCodeType(normalizeLabelCodeType(value))}>
+                    <SelectTrigger id="unit-code-type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LABEL_CODE_TYPE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
