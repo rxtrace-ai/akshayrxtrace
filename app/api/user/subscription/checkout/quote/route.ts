@@ -80,6 +80,18 @@ export async function POST(req: NextRequest) {
         company_id: owner.companyId,
         user_id: owner.userId,
         plan_id: quote.selected_plan_template_id || null,
+        coupon_id: quote.coupon?.id || null,
+        coupon_code: quote.coupon?.code || null,
+        coupon_snapshot_json: quote.coupon
+          ? {
+              id: quote.coupon.id,
+              code: quote.coupon.code,
+              discount_type: quote.coupon.discount_type,
+              discount_value: quote.coupon.discount_value,
+              max_discount_paise: quote.coupon.max_discount_paise,
+              discount_paise: quote.totals.discount_paise,
+            }
+          : {},
         plan_snapshot_json: quote.selected_plan_template_id ? quote.plan : {},
         addons_json: {
           capacity_addons: quote.capacity_addons,

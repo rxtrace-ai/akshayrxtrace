@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -134,6 +134,7 @@ type QuoteLine = {
 type CheckoutQuote = {
   quote_id?: string;
   expires_at: string;
+  checkout_mode: "recurring_plan" | "one_time_addon";
   plan_snapshot?: {
     name: string;
     description: string | null;
@@ -192,9 +193,12 @@ type PaymentInitiateResponse = {
   quote_id?: string;
   payment_intent_id?: string;
   order_id?: string | null;
+  subscription_id?: string | null;
+  checkout_mode?: "recurring_plan" | "one_time_addon";
   razorpay: {
     key_id: string | null;
     order_id?: string;
+    subscription_id?: string;
     amount_paise?: number;
     currency: string;
   };
@@ -216,6 +220,13 @@ type QuoteApiResponse = {
 function formatINRFromPaise(paise: number) {
   const inr = (Number(paise || 0) / 100).toFixed(2);
   return `\u20B9${inr}`;
+}
+
+function quoteHasAnyAddons(quote: CheckoutQuote | null | undefined) {
+  if (!quote) return false;
+  const codeCount = (quote.addons_snapshot?.code_addons?.length || quote.code_addons.length || 0);
+  const capacityCount = (quote.addons_snapshot?.capacity_addons?.length || quote.capacity_addons.length || 0);
+  return codeCount + capacityCount > 0;
 }
 
 async function loadRazorpayScript(): Promise<void> {
@@ -301,6 +312,10 @@ export default function SubscriptionCheckoutPage() {
     }
   }, []);
 
+  const refreshCheckoutState = useCallback(async () => {
+    await Promise.all([refreshSummary(), loadContext()]);
+  }, [loadContext, refreshSummary]);
+
   useEffect(() => {
     loadContext();
     refreshSummary();
@@ -340,6 +355,7 @@ export default function SubscriptionCheckoutPage() {
       coupon: appliedCouponCode,
     });
   }, [appliedCouponCode, capacitySelection, codeSelection, selectedPlanTemplateId]);
+  const deferredSelectionKey = useDeferredValue(selectionKey);
 
   const computeQuote = useCallback(async () => {
     if (!selectedPlanTemplateId) return;
@@ -394,8 +410,11 @@ export default function SubscriptionCheckoutPage() {
 
   useEffect(() => {
     if (!context) return;
-    computeQuote();
-  }, [context, computeQuote, selectionKey]);
+    const timer = window.setTimeout(() => {
+      computeQuote().catch(() => undefined);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [context, computeQuote, deferredSelectionKey]);
 
   useEffect(() => {
     return () => {
@@ -438,8 +457,7 @@ export default function SubscriptionCheckoutPage() {
         throw new Error(payload.error || "Failed to cancel subscription");
       }
       setMessage("Subscription cancelled.");
-      await refreshSummary();
-      await loadContext();
+      await refreshCheckoutState();
     } catch (err: any) {
       setError(err?.message || "Failed to cancel subscription");
     } finally {
@@ -575,6 +593,11 @@ export default function SubscriptionCheckoutPage() {
       if (!effectiveQuoteId || !effectiveQuote) {
         throw new Error("QUOTE_NOT_AVAILABLE");
       }
+      if (!addonsOnly && effectiveQuote.checkout_mode === "recurring_plan" && quoteHasAnyAddons(effectiveQuote)) {
+        throw new Error(
+          "Recurring plan checkout must be completed without add-ons. Purchase the plan first, then buy add-ons separately after activation."
+        );
+      }
       const expiresAtMs = new Date(effectiveQuoteExpiresAt).getTime();
       const expired = Number.isNaN(expiresAtMs) || Date.now() > expiresAtMs;
       if (expired) {
@@ -604,7 +627,26 @@ export default function SubscriptionCheckoutPage() {
       await loadRazorpayScript();
       const RazorpayCtor = (window as any).Razorpay;
 
-      if (paymentPayload.razorpay.order_id) {
+      if (paymentPayload.razorpay.subscription_id) {
+        const checkoutStep = await openRazorpayStep(RazorpayCtor, {
+          key: paymentPayload.razorpay.key_id,
+          subscription_id: paymentPayload.razorpay.subscription_id,
+          amount: paymentPayload.razorpay.amount_paise || 0,
+          currency: paymentPayload.razorpay.currency || "INR",
+          name: "RxTrace",
+          description: "Recurring subscription authentication",
+        });
+        if (checkoutStep.status !== "paid") {
+          setMessage("Recurring subscription checkout was closed before authentication completed.");
+          await refreshCheckoutState();
+          return;
+        }
+
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          await sleep(2500);
+          await refreshCheckoutState();
+        }
+      } else if (paymentPayload.razorpay.order_id) {
         const checkoutStep = await openRazorpayStep(RazorpayCtor, {
           key: paymentPayload.razorpay.key_id,
           order_id: paymentPayload.razorpay.order_id,
@@ -615,25 +657,22 @@ export default function SubscriptionCheckoutPage() {
         });
         if (checkoutStep.status !== "paid") {
           setMessage("Checkout was closed before payment completion.");
-          await refreshSummary();
-          await loadContext();
+          await refreshCheckoutState();
           return;
         }
 
-        for (let attempt = 0; attempt < 6; attempt += 1) {
-          await sleep(2000);
-          await refreshSummary();
-          await loadContext();
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          await sleep(2500);
+          await refreshCheckoutState();
         }
       }
 
       setMessage(
         addonsOnly
           ? "Payment captured. Add-on activation is being completed by webhook."
-          : "Payment captured. Subscription activation is being completed by webhook."
+          : "Subscription authentication completed. Provider activation and local sync will continue through the subscription lifecycle."
       );
-      await refreshSummary();
-      await loadContext();
+      await refreshCheckoutState();
     } catch (err: any) {
       setError(err?.message || "Failed to initialize checkout");
     } finally {
@@ -1009,7 +1048,11 @@ export default function SubscriptionCheckoutPage() {
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs text-gray-500">
-                  Razorpay checkout will open once and charge the full final total shown above.
+                  {quote.checkout_mode === "one_time_addon"
+                    ? "Razorpay one-time checkout will open for the final total shown above."
+                    : quoteHasAnyAddons(quote)
+                      ? "Recurring plans with add-ons must be split. Buy the plan first, then purchase add-ons separately after activation."
+                      : "Razorpay subscription checkout will open to authenticate the recurring plan."}
                 </p>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Button
@@ -1020,11 +1063,16 @@ export default function SubscriptionCheckoutPage() {
                       !quote ||
                       !quoteId ||
                       quoteStatus !== "active" ||
+                      (quote.checkout_mode === "recurring_plan" && quoteHasAnyAddons(quote)) ||
                       !quoteExpiresAt ||
                       Date.now() > new Date(quoteExpiresAt).getTime()
                     }
                   >
-                    Proceed to Payment
+                    {quote.checkout_mode === "one_time_addon"
+                      ? "Proceed to Payment"
+                      : quoteHasAnyAddons(quote)
+                        ? "Split Plan And Add-ons"
+                        : "Start Recurring Checkout"}
                   </Button>
                   {context.current_subscription && quote && quote.totals.addons_paise > 0 ? (
                     <Button
@@ -1040,7 +1088,7 @@ export default function SubscriptionCheckoutPage() {
               </div>
               {quoteId ? (
                 <p className="text-xs text-gray-500">
-                  Quote ID: {quoteId} | Status: {quoteStatus || "active"} | Expires:{" "}
+                  Quote ID: {quoteId} | Mode: {quote.checkout_mode} | Status: {quoteStatus || "active"} | Expires:{" "}
                   {quoteExpiresAt ? new Date(quoteExpiresAt).toLocaleTimeString() : "-"}
                 </p>
               ) : null}

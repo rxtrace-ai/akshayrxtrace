@@ -25,6 +25,10 @@
       }
     ],
     "baseUrl": ".",
+    "types": [
+      "vitest/globals",
+      "node"
+    ],
     "paths": {
       "@/*": [
         "./*"

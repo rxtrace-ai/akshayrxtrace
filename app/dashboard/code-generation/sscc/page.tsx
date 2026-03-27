@@ -273,9 +273,16 @@ export default function SSCCCodeGenerationPage() {
 
     try {
       setLoading(true);
+      const idempotencyKey =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${selectedSkuMaster.id}-${singleRequestedCodes}`;
       const res = await fetch('/api/sscc/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        },
         body: JSON.stringify({
           unit_sku_master_id: selectedSkuMaster.id,
           units_per_box: form.unitsPerBox,

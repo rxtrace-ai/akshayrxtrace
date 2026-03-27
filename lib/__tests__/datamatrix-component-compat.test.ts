@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { describe, expect, it } from "vitest";
 
 describe('DataMatrix component compatibility guard', () => {
   it('does not depend on react-datamatrix-svg runtime shim', () => {
@@ -15,4 +16,3 @@ describe('DataMatrix component compatibility guard', () => {
     expect(src).toContain("import('bwip-js')");
   });
 });
-

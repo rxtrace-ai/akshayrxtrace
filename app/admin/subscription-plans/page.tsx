@@ -33,6 +33,7 @@ type PlanTemplate = {
   description: string | null;
   billing_cycle: 'monthly' | 'yearly';
   plan_price: number;
+  razorpay_plan_id: string | null;
   pricing_unit_size: number;
   is_active: boolean;
   updated_at: string | null;
@@ -50,6 +51,7 @@ type PlanPayload = {
   description: string;
   billing_cycle: 'monthly' | 'yearly';
   plan_price: string;
+  razorpay_plan_id: string;
   pricing_unit_size: string;
   change_note: string;
   unit_quota_units: string;
@@ -66,6 +68,7 @@ const DEFAULT_PAYLOAD: PlanPayload = {
   description: '',
   billing_cycle: 'monthly',
   plan_price: '0',
+  razorpay_plan_id: '',
   pricing_unit_size: '10000',
   change_note: '',
   unit_quota_units: '0',
@@ -114,6 +117,7 @@ function mapVersionToPayload(version: PlanVersion, template: PlanTemplate): Plan
     description: template.description || '',
     billing_cycle: template.billing_cycle,
     plan_price: String(template.plan_price ?? 0),
+    razorpay_plan_id: template.razorpay_plan_id || '',
     pricing_unit_size: String(template.pricing_unit_size ?? 10000),
     change_note: version.change_note || '',
     unit_quota_units: String(version.unit_quota_units ?? 0),
@@ -198,6 +202,7 @@ export default function SubscriptionPlansPage() {
             description: form.description.trim() || null,
             billing_cycle: form.billing_cycle,
             plan_price: parseNonNegativeInt(form.plan_price),
+            razorpay_plan_id: form.razorpay_plan_id.trim(),
             pricing_unit_size: Math.max(1, parseNonNegativeInt(form.pricing_unit_size)),
             version,
             publish: true,
@@ -319,6 +324,15 @@ export default function SubscriptionPlansPage() {
                   <Input type="number" min={0} value={form.plan_price} onChange={(e) => setForm((prev) => ({ ...prev, plan_price: e.target.value }))} />
                 </div>
                 <div className="space-y-2">
+                  <Label>Razorpay Plan ID *</Label>
+                  <Input
+                    value={form.razorpay_plan_id}
+                    onChange={(e) => setForm((prev) => ({ ...prev, razorpay_plan_id: e.target.value }))}
+                    placeholder="plan_XXXXXXXXXXXXXX"
+                  />
+                  <p className="text-xs text-gray-500">Use the real provider plan id. Placeholder plan linkage is blocked in A1.</p>
+                </div>
+                <div className="space-y-2">
                   <Label>Pricing Unit Size</Label>
                   <Input
                     type="number"
@@ -391,6 +405,7 @@ export default function SubscriptionPlansPage() {
               <div className="grid grid-cols-2 gap-3">
                 <p><span className="text-gray-500">Billing:</span> {plan.template.billing_cycle}</p>
                 <p><span className="text-gray-500">Price:</span> {formatINRFromPaise(plan.template.plan_price)}</p>
+                <p><span className="text-gray-500">Provider Plan:</span> {plan.template.razorpay_plan_id || "-"}</p>
                 <p><span className="text-gray-500">Unit Size:</span> {plan.template.pricing_unit_size.toLocaleString()}</p>
                 <p><span className="text-gray-500">Versions:</span> {plan.versions_count}</p>
               </div>

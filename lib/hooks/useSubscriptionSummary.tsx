@@ -10,6 +10,10 @@ export type CanonicalDecisionCode =
 
 export type SubscriptionSummaryResponse = {
   success: boolean;
+  company?: {
+    id: string;
+    name: string | null;
+  };
   company_profile?: {
     id: string;
     company_name?: string | null;
@@ -61,6 +65,23 @@ export type SubscriptionSummaryResponse = {
     entitlement_key: string | null;
     quantity: number;
     status: string;
+  }>;
+  add_on_balances?: Record<string, number>;
+  invoices?: Array<{
+    id: string;
+    invoice_type: string;
+    status: string;
+    reference: string | null;
+    plan: string | null;
+    amount: number;
+    currency: string | null;
+    period_start: string | null;
+    period_end: string | null;
+    due_at?: string | null;
+    issued_at: string | null;
+    paid_at: string | null;
+    invoice_pdf_url: string | null;
+    created_at: string | null;
   }>;
   entitlement: {
     state: string;

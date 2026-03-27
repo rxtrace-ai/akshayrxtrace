@@ -47,7 +47,7 @@ type OverviewResponse = {
     cartons: number;
     pallets: number;
   };
-  recent_activity: Array<{
+  recent_activity?: Array<{
     id: string;
     action: string;
     status: string;
@@ -118,14 +118,31 @@ function fmtDate(iso: string | null | undefined) {
 
 export default function DashboardPage() {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
+  const [activity, setActivity] = useState<OverviewResponse['recent_activity']>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const refresh = useCallback(async (signal?: AbortSignal) => {
-    const res = await fetch('/api/dashboard/stats', { cache: 'no-store', signal });
+  const refresh = useCallback(async (params?: { signal?: AbortSignal; includeActivity?: boolean; background?: boolean }) => {
+    const { signal, includeActivity = false, background = false } = params || {};
+    if (background) {
+      setRefreshing(true);
+    }
+    const suffix = includeActivity ? '' : '?scope=core';
+    const res = await fetch(`/api/dashboard/stats${suffix}`, { cache: 'no-store', signal });
     const body = await res.json().catch(() => null);
     if (!res.ok || !body) throw new Error(String((body as any)?.error || 'Failed to load overview'));
-    setOverview(body as OverviewResponse);
+    const payload = body as OverviewResponse;
+    setOverview((prev) => ({
+      ...payload,
+      recent_activity: payload.recent_activity || prev?.recent_activity || [],
+    }));
+    if (includeActivity) {
+      setActivity(payload.recent_activity || []);
+    }
+    if (background) {
+      setRefreshing(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -134,7 +151,7 @@ export default function DashboardPage() {
 
     (async () => {
       try {
-        await refresh(controller.signal);
+        await refresh({ signal: controller.signal, includeActivity: true });
       } catch (err: any) {
         if (mounted) setError(String(err?.message || 'Failed to load overview'));
       } finally {
@@ -142,15 +159,30 @@ export default function DashboardPage() {
       }
     })();
 
+    const refreshCore = () => {
+      refresh({ signal: controller.signal, background: true }).catch(() => undefined);
+    };
+
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
-        refresh(controller.signal).catch(() => undefined);
+        refreshCore();
       }
-    }, 20_000);
+    }, 60_000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshCore();
+      }
+    };
+
+    window.addEventListener('focus', refreshCore);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       mounted = false;
       window.clearInterval(interval);
+      window.removeEventListener('focus', refreshCore);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (!controller.signal.aborted) controller.abort();
     };
   }, [refresh]);
@@ -172,7 +204,17 @@ export default function DashboardPage() {
           <h1 className="text-3xl font-bold text-blue-700">Dashboard Overview</h1>
           <p className="mt-1 text-gray-600">Single source summary for subscription, entitlements, and operations.</p>
         </div>
-        <div className="text-sm text-gray-500">{overview?.company_name || 'RxTrace Company'}</div>
+        <div className="flex items-center gap-3 text-sm text-gray-500">
+          {refreshing ? <span>Refreshing...</span> : null}
+          <button
+            type="button"
+            onClick={() => refresh({ includeActivity: true, background: true }).catch((err) => setError(String(err?.message || 'Failed to refresh overview')))}
+            className="rounded border border-gray-200 px-3 py-1 text-gray-700 transition hover:bg-gray-50"
+          >
+            Refresh
+          </button>
+          <span>{overview?.company_name || 'RxTrace Company'}</span>
+        </div>
       </div>
 
       {error ? (
@@ -258,18 +300,18 @@ export default function DashboardPage() {
         <h2 className="mb-4 text-lg font-semibold">Recent Activity</h2>
         {loading ? (
           <SectionSkeleton rows={4} />
-        ) : overview?.recent_activity?.length ? (
+        ) : activity?.length ? (
           <ul className="space-y-3 text-sm text-gray-600">
-            {overview.recent_activity.map((activity) => (
-              <li key={activity.id} className="flex items-start gap-2">
-                <span className={activity.status === 'success' ? 'text-green-500' : activity.status === 'error' ? 'text-red-500' : 'text-yellow-500'}>
-                  {activity.status === 'success' ? '[ok]' : activity.status === 'error' ? '[x]' : '[!]'}
+            {activity.map((item) => (
+              <li key={item.id} className="flex items-start gap-2">
+                <span className={item.status === 'success' ? 'text-green-500' : item.status === 'error' ? 'text-red-500' : 'text-yellow-500'}>
+                  {item.status === 'success' ? '[ok]' : item.status === 'error' ? '[x]' : '[!]'}
                 </span>
                 <div className="flex-1">
-                  <span className="font-medium">{String(activity.action || '').replace(/_/g, ' ')}</span>
-                  {activity.metadata?.description ? <span className="text-gray-500"> - {activity.metadata.description}</span> : null}
+                  <span className="font-medium">{String(item.action || '').replace(/_/g, ' ')}</span>
+                  {item.metadata?.description ? <span className="text-gray-500"> - {item.metadata.description}</span> : null}
                   <span className="ml-2 text-xs text-gray-400">
-                    {new Date(activity.created_at).toLocaleString('en-IN', {
+                    {new Date(item.created_at).toLocaleString('en-IN', {
                       day: '2-digit',
                       month: 'short',
                       hour: '2-digit',
@@ -287,4 +329,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-

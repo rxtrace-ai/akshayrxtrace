@@ -4,6 +4,11 @@ import { headers } from "next/headers";
 import Razorpay from "razorpay";
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { getOrGenerateCorrelationId } from "@/lib/observability/correlation";
+import {
+  createRazorpaySubscription,
+  getRazorpayPublishableKey,
+  getRazorpaySubscriptionTotalCount,
+} from "@/lib/billing/razorpaySubscriptions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,7 +61,9 @@ export async function POST(req: NextRequest) {
 
     const totalsSnapshot = ((quote as any).totals_snapshot_json || {}) as Record<string, unknown>;
     const planSnapshot = ((quote as any).plan_snapshot_json || {}) as Record<string, unknown>;
+    const addonsSnapshot = ((quote as any).addons_json || {}) as Record<string, unknown>;
     const hasPlan = Object.keys(planSnapshot).length > 0;
+    const checkoutMode = hasPlan ? "recurring_plan" : "one_time_addon";
     const finalAmountPaise = toPaise(totalsSnapshot.final_total_paise);
     if (!finalAmountPaise) {
       return apiJson({ error: "QUOTE_FINAL_TOTAL_MISSING" }, { status: 409 });
@@ -78,38 +85,42 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
     if (intentReadError) return apiJson({ error: intentReadError.message }, { status: 500 });
 
-    if (existingIntent && String((existingIntent as any).razorpay_order_id || "").trim()) {
-      if (hasPlan) {
-        const { data: existingSub } = await owner.supabase
-          .from("company_subscriptions")
-          .select("id, status")
-          .eq("company_id", owner.companyId)
-          .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+    if (checkoutMode === "recurring_plan" && existingIntent && String((existingIntent as any).provider_subscription_id || "").trim()) {
+      return apiJson({
+        success: true,
+        replay: true,
+        quote_id: quoteId,
+        payment_intent_id: (existingIntent as any).id,
+        subscription_id: (existingIntent as any).provider_subscription_id,
+        correlation_id: correlationId,
+        checkout_mode: checkoutMode,
+        razorpay: {
+          key_id: getRazorpayPublishableKey(),
+          subscription_id: (existingIntent as any).provider_subscription_id,
+          amount_paise: finalAmountPaise,
+          currency: String((quote as any).currency || "INR"),
+        },
+      });
+    }
 
-        if ((existingSub as any)?.id) {
-          const currentStatus = String((existingSub as any).status || "").trim().toLowerCase();
-          if (!["active", "pending_payment"].includes(currentStatus)) {
-            await owner.supabase
-              .from("company_subscriptions")
-              .update({
-                status: "pending_payment",
-                plan_template_id: (quote as any).plan_id || null,
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", (existingSub as any).id);
-          }
-        } else {
-          await owner.supabase.from("company_subscriptions").insert({
-            company_id: owner.companyId,
-            status: "pending_payment",
-            plan_template_id: (quote as any).plan_id || null,
-            metadata: { quote_id: quoteId, initiated_from: "payment_initiate_replay" },
-          });
-        }
-      }
+    if (
+      checkoutMode === "recurring_plan" &&
+      existingIntent &&
+      String((existingIntent as any).razorpay_order_id || "").trim() &&
+      !String((existingIntent as any).provider_subscription_id || "").trim()
+    ) {
+      return apiJson(
+        {
+          error: "LEGACY_RECURRING_PAYMENT_INTENT_CONFLICT",
+          message:
+            "This quote already has a legacy order-based payment intent. Generate a fresh quote before starting recurring subscription checkout.",
+          checkout_mode: checkoutMode,
+        },
+        { status: 409 }
+      );
+    }
 
+    if (checkoutMode === "one_time_addon" && existingIntent && String((existingIntent as any).razorpay_order_id || "").trim()) {
       await owner.supabase
         .from("quotes")
         .update({ status: "pending_payment" })
@@ -123,8 +134,100 @@ export async function POST(req: NextRequest) {
         order_id: (existingIntent as any).razorpay_order_id,
         correlation_id: correlationId,
         razorpay: {
-          key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || keyId || null,
+          key_id: getRazorpayPublishableKey(),
           order_id: (existingIntent as any).razorpay_order_id,
+          amount_paise: finalAmountPaise,
+          currency: String((quote as any).currency || "INR"),
+        },
+        checkout_mode: checkoutMode,
+      });
+    }
+
+    if (checkoutMode === "recurring_plan") {
+      const recurringCapacityAddons = Array.isArray((addonsSnapshot as any)?.capacity_addons)
+        ? (addonsSnapshot as any).capacity_addons
+        : [];
+      const oneTimeCodeAddons = Array.isArray((addonsSnapshot as any)?.code_addons)
+        ? (addonsSnapshot as any).code_addons
+        : [];
+      if (recurringCapacityAddons.length > 0 || oneTimeCodeAddons.length > 0) {
+        return apiJson(
+          {
+            error: "RECURRING_PLAN_ADDON_SPLIT_REQUIRED",
+            message:
+              "Recurring plan checkout must be completed without add-ons. Purchase the plan first, then buy add-ons separately after activation.",
+            checkout_mode: checkoutMode,
+          },
+          { status: 409 }
+        );
+      }
+
+      const planTemplateId = String((quote as any).plan_id || "").trim();
+      if (!planTemplateId) {
+        return apiJson({ error: "PLAN_TEMPLATE_ID_MISSING", checkout_mode: checkoutMode }, { status: 409 });
+      }
+
+      const { data: planTemplate, error: planTemplateError } = await owner.supabase
+        .from("subscription_plan_templates")
+        .select("id, name, billing_cycle, razorpay_plan_id")
+        .eq("id", planTemplateId)
+        .maybeSingle();
+      if (planTemplateError) return apiJson({ error: planTemplateError.message }, { status: 500 });
+
+      const razorpayPlanId = String((planTemplate as any)?.razorpay_plan_id || "").trim();
+      if (!razorpayPlanId || razorpayPlanId.startsWith("legacy:")) {
+        return apiJson({ error: "PLAN_PROVIDER_MAPPING_MISSING", checkout_mode: checkoutMode }, { status: 409 });
+      }
+
+      const createdSubscription = await createRazorpaySubscription({
+        planId: razorpayPlanId,
+        quoteId,
+        companyId: owner.companyId,
+        userId: owner.userId,
+        correlationId,
+        expireAtIso: String((quote as any).expires_at || "").trim() || null,
+        totalCount: getRazorpaySubscriptionTotalCount((planTemplate as any)?.billing_cycle),
+      });
+
+      const subscriptionId = String(createdSubscription?.id || "").trim();
+      if (!subscriptionId) {
+        return apiJson({ error: "RAZORPAY_SUBSCRIPTION_CREATE_FAILED" }, { status: 502 });
+      }
+
+      const payload = {
+        quote_id: quoteId,
+        amount_paise: finalAmountPaise,
+        correlation_id: correlationId,
+        provider: "razorpay",
+        provider_subscription_id: subscriptionId,
+        provider_customer_id: String(createdSubscription?.customer_id || "").trim() || null,
+        status: "created",
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data: savedIntent, error: upsertError } = await owner.supabase
+        .from("payment_intents")
+        .upsert(payload, { onConflict: "quote_id" })
+        .select("id, provider_subscription_id")
+        .single();
+      if (upsertError) return apiJson({ error: upsertError.message }, { status: 500 });
+
+      await owner.supabase
+        .from("quotes")
+        .update({ status: "pending_payment" })
+        .eq("id", quoteId)
+        .eq("status", "active");
+
+      return apiJson({
+        success: true,
+        quote_id: quoteId,
+        payment_intent_id: (savedIntent as any).id,
+        subscription_id: (savedIntent as any).provider_subscription_id,
+        correlation_id: correlationId,
+        checkout_mode: checkoutMode,
+        razorpay: {
+          key_id: getRazorpayPublishableKey(),
+          subscription_id: (savedIntent as any).provider_subscription_id,
           amount_paise: finalAmountPaise,
           currency: String((quote as any).currency || "INR"),
         },
@@ -154,6 +257,7 @@ export async function POST(req: NextRequest) {
       razorpay_order_id: orderId,
       amount_paise: finalAmountPaise,
       correlation_id: correlationId,
+      provider: "razorpay",
       status: "created",
       updated_at: new Date().toISOString(),
     };
@@ -171,45 +275,15 @@ export async function POST(req: NextRequest) {
       .eq("id", quoteId)
       .eq("status", "active");
 
-    if (hasPlan) {
-      const { data: existingSub } = await owner.supabase
-        .from("company_subscriptions")
-        .select("id, status")
-        .eq("company_id", owner.companyId)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if ((existingSub as any)?.id) {
-        const currentStatus = String((existingSub as any).status || "").trim().toLowerCase();
-        if (!["active", "pending_payment"].includes(currentStatus)) {
-          await owner.supabase
-            .from("company_subscriptions")
-            .update({
-              status: "pending_payment",
-              plan_template_id: (quote as any).plan_id || null,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", (existingSub as any).id);
-        }
-      } else {
-        await owner.supabase.from("company_subscriptions").insert({
-          company_id: owner.companyId,
-          status: "pending_payment",
-          plan_template_id: (quote as any).plan_id || null,
-          metadata: { quote_id: quoteId, initiated_from: "payment_initiate" },
-        });
-      }
-    }
-
     return apiJson({
       success: true,
       quote_id: quoteId,
       payment_intent_id: (savedIntent as any).id,
       order_id: (savedIntent as any).razorpay_order_id,
       correlation_id: correlationId,
+      checkout_mode: checkoutMode,
       razorpay: {
-        key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || keyId || null,
+        key_id: getRazorpayPublishableKey(),
         order_id: (savedIntent as any).razorpay_order_id,
         amount_paise: finalAmountPaise,
         currency: String((quote as any).currency || "INR"),

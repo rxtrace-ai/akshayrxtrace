@@ -10,7 +10,6 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertCircle, CheckCircle, Upload, FileText, Info } from 'lucide-react';
 import { saveAs } from 'file-saver';
-import { supabaseClient } from '@/lib/supabase/client';
 
 type IngestionResult = {
   total: number;
@@ -20,6 +19,11 @@ type IngestionResult = {
   invalid: number;
   errors: Array<{ row: number; error: string }>;
 };
+
+function buildImportIdempotencyKey(kind: 'unit' | 'sscc', file: File) {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return `erp:${kind}:${safeName}:${file.size}:${file.lastModified}`;
+}
 
 export default function ErpIntegrationPage() {
   const [activeTab, setActiveTab] = useState<'unit' | 'sscc'>('unit');
@@ -35,18 +39,19 @@ export default function ErpIntegrationPage() {
   useEffect(() => {
     async function loadIngestionMode() {
       try {
-        const supabase = supabaseClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
+        const res = await fetch('/api/company/erp-ingestion-mode', {
+          method: 'GET',
+          cache: 'no-store',
+        });
+        const payload = await res.json().catch(() => ({}));
 
-        const { data: company } = await supabase
-          .from('companies')
-          .select('erp_ingestion_mode')
-          .eq('user_id', user.id)
-          .maybeSingle();
+        if (!res.ok) {
+          throw new Error(payload?.error?.message || payload?.error || 'Failed to load ingestion mode');
+        }
 
-        if (company?.erp_ingestion_mode) {
-          setIngestionMode(company.erp_ingestion_mode as 'unit' | 'sscc' | 'both');
+        const mode = payload?.ingestion_mode ?? payload?.data?.ingestion_mode ?? null;
+        if (mode === 'unit' || mode === 'sscc' || mode === 'both') {
+          setIngestionMode(mode);
         }
       } catch (err) {
         console.error('Failed to load ingestion mode:', err);
@@ -64,18 +69,19 @@ export default function ErpIntegrationPage() {
     async function saveIngestionMode() {
       setSavingMode(true);
       try {
-        const supabase = supabaseClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
+        const res = await fetch('/api/company/erp-ingestion-mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ingestion_mode: ingestionMode }),
+        });
+        const payload = await res.json().catch(() => ({}));
 
-        const { error } = await supabase
-          .from('companies')
-          .update({ erp_ingestion_mode: ingestionMode })
-          .eq('user_id', user.id);
-
-        if (error) throw error;
+        if (!res.ok) {
+          throw new Error(payload?.error?.message || payload?.error || 'Failed to save ingestion mode');
+        }
       } catch (err) {
         console.error('Failed to save ingestion mode:', err);
+        setError((err as Error)?.message || 'Failed to save ERP ingestion mode');
       } finally {
         setSavingMode(false);
       }
@@ -163,7 +169,10 @@ export default function ErpIntegrationPage() {
 
       const res = await fetch('/api/erp/ingest/unit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': buildImportIdempotencyKey('unit', file),
+        },
         body: JSON.stringify({ rows }),
       });
 
@@ -207,7 +216,10 @@ export default function ErpIntegrationPage() {
 
       const res = await fetch('/api/erp/ingest/sscc', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': buildImportIdempotencyKey('sscc', file),
+        },
         body: JSON.stringify({ rows }),
       });
 

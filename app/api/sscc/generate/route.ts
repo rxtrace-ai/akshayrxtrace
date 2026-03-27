@@ -1,21 +1,77 @@
+import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
+import { supabaseServer } from '@/lib/supabase/server';
 import { resolveCompanyIdFromRequest } from '@/lib/company/resolve';
-import { consumeEntitlementBatch, refundEntitlementBatch, type EntitlementBatchItem } from '@/lib/entitlement/enforce';
+import { enforceEntitlement, refundEntitlement } from '@/lib/entitlement/enforce';
 import { UsageType } from '@/lib/entitlement/usageTypes';
-import { getRequestIdFromRequest } from '@/lib/http/requestId';
 import { computeGs1CheckDigit } from '@/app/lib/sscc';
-import { fail, ok } from '@/lib/api/response';
+import { checkUserIdempotency, hashRequestBody, storeUserIdempotencyResponse } from '@/lib/user/idempotency';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const MAX_CODES_PER_REQUEST = 10000;
+const IDEMPOTENCY_ENDPOINT = 'sscc_generate';
 const LEGACY_SSCC_FIELDS = ['sku_code', 'batch', 'expiry_date', 'company_id'] as const;
 const SKU_NOT_FOUND_ERROR = 'SKU Master record not found. Create or refresh SKU Master and try again.';
 const SKU_GTIN_REQUIRED_ERROR = 'Selected SKU has no GTIN. SSCC generation requires a SKU with a GTIN.';
 
+type PalletRow = {
+  id?: string;
+  company_id: string;
+  sku_id: string | null;
+  unit_sku_master_id: string;
+  sscc: string;
+  sscc_with_ai: string;
+};
+
+type CartonRow = {
+  id?: string;
+  company_id: string;
+  sku_id: string | null;
+  unit_sku_master_id: string;
+  pallet_id: string | null;
+  sscc: string;
+  sscc_with_ai: string;
+};
+
+type BoxRow = {
+  id?: string;
+  company_id: string;
+  sku_id: string | null;
+  unit_sku_master_id: string;
+  carton_id: string | null;
+  pallet_id: string | null;
+  sscc: string;
+  sscc_with_ai: string;
+};
+
 function normalizeDigits(input: unknown): string {
   return String(input ?? '').replace(/[^0-9]/g, '');
+}
+
+function errorResponse(code: string, message: string, status: number) {
+  return {
+    payload: {
+      success: false,
+      error: {
+        code,
+        message,
+      },
+    },
+    status,
+  };
+}
+
+function successResponse(payload: Record<string, unknown>) {
+  return {
+    payload: {
+      success: true,
+      data: payload,
+      ...payload,
+    },
+    status: 200,
+  };
 }
 
 async function resolveSkuForSscc(opts: {
@@ -80,21 +136,96 @@ async function fetchSsccSerialRefs(
 ): Promise<string[]> {
   const { data, error } = await supabase.rpc('next_sscc_serial_refs', { p_count: count });
   if (error) throw new Error(error.message);
-  return data.map((r: any) => String(r.serial_ref_digits));
+  return data.map((row: any) => String(row.serial_ref_digits));
+}
+
+async function storeReplay(params: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  userId: string;
+  idempotencyKey: string | null;
+  requestHash: string;
+  payload: any;
+  status: number;
+}) {
+  if (!params.idempotencyKey) return;
+  await storeUserIdempotencyResponse({
+    supabase: params.supabase,
+    userId: params.userId,
+    endpoint: IDEMPOTENCY_ENDPOINT,
+    idempotencyKey: params.idempotencyKey,
+    requestHash: params.requestHash,
+    statusCode: params.status,
+    payload: params.payload,
+    correlationId: params.idempotencyKey,
+  });
+}
+
+async function consumeLevelQuota(params: {
+  companyId: string;
+  usageType: UsageType;
+  quantity: number;
+  requestId: string;
+  metadata: Record<string, any>;
+}) {
+  if (params.quantity <= 0) return { ok: true, code: null as string | null };
+  const decision = await enforceEntitlement({
+    companyId: params.companyId,
+    usageType: params.usageType,
+    quantity: params.quantity,
+    requestId: params.requestId,
+    metadata: params.metadata,
+  });
+  if (!decision.allow) {
+    return {
+      ok: false,
+      code: String(decision.reason_code || 'QUOTA_EXCEEDED'),
+    };
+  }
+  return { ok: true, code: null as string | null };
 }
 
 export async function POST(req: Request) {
-  let consumedEntitlements: EntitlementBatchItem[] = [];
-  let entitlementCompanyId = '';
-
   try {
     const supabase = getSupabaseAdmin();
-    const body = await req.json();
-    const requestId = getRequestIdFromRequest(req, 'sscc_generate');
+    const server = await supabaseServer();
+    const {
+      data: { user },
+      error: authError,
+    } = await server.auth.getUser();
+
+    if (authError || !user) {
+      const response = errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
+      return NextResponse.json(response.payload, { status: response.status });
+    }
 
     const authCompanyId = await resolveCompanyIdFromRequest(req);
     if (!authCompanyId) {
-      return fail('UNAUTHORIZED', 'Unauthorized', 401);
+      const response = errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
+      return NextResponse.json(response.payload, { status: response.status });
+    }
+
+    const body = await req.json();
+    const idempotencyKey =
+      req.headers.get('Idempotency-Key') ||
+      req.headers.get('idempotency-key') ||
+      req.headers.get('x-idempotency-key') ||
+      null;
+    const requestHash = hashRequestBody(body);
+    const idempotency = await checkUserIdempotency({
+      supabase,
+      userId: user.id,
+      endpoint: IDEMPOTENCY_ENDPOINT,
+      idempotencyKey,
+      requestHash,
+    });
+
+    if (idempotency.kind === 'conflict') {
+      const response = errorResponse('IDEMPOTENCY_CONFLICT', 'Idempotency key was already used with a different request payload', 409);
+      return NextResponse.json(response.payload, { status: response.status });
+    }
+
+    if (idempotency.kind === 'replay') {
+      return NextResponse.json(idempotency.payload, { status: idempotency.statusCode });
     }
 
     const {
@@ -113,28 +244,27 @@ export async function POST(req: Request) {
 
     const legacyFieldsProvided = LEGACY_SSCC_FIELDS.filter((field) => body?.[field] !== undefined);
     if (legacyFieldsProvided.length > 0) {
-      console.warn('[sscc_generate] legacy_request_shape_rejected', {
-        company_id: authCompanyId,
-        request_id: requestId,
-        fields: legacyFieldsProvided,
-      });
-      return fail(
+      const response = errorResponse(
         'VALIDATION_ERROR',
         'SSCC generation now requires a valid SKU Master selection. Direct fixed-field SSCC generation is no longer supported.',
         400
       );
+      return NextResponse.json(response.payload, { status: response.status });
     }
 
     if (typeof unit_sku_master_id !== 'string' || unit_sku_master_id.trim().length === 0) {
-      return fail('VALIDATION_ERROR', 'unit_sku_master_id is required', 400);
+      const response = errorResponse('VALIDATION_ERROR', 'unit_sku_master_id is required', 400);
+      return NextResponse.json(response.payload, { status: response.status });
     }
 
     if (!generate_box && !generate_carton && !generate_pallet) {
-      return fail('VALIDATION_ERROR', 'Select at least one container type (Box, Carton, Pallet)', 400);
+      const response = errorResponse('VALIDATION_ERROR', 'Select at least one container type (Box, Carton, Pallet)', 400);
+      return NextResponse.json(response.payload, { status: response.status });
     }
 
     if (compliance_ack !== true) {
-      return fail('VALIDATION_ERROR', 'compliance_ack=true is required', 400);
+      const response = errorResponse('VALIDATION_ERROR', 'compliance_ack=true is required', 400);
+      return NextResponse.json(response.payload, { status: response.status });
     }
 
     const palletsCount = Number(number_of_pallets);
@@ -143,16 +273,20 @@ export async function POST(req: Request) {
     const cartonsPerPallet = Number(cartons_per_pallet || 1);
 
     if (!Number.isInteger(palletsCount) || palletsCount <= 0) {
-      return fail('VALIDATION_ERROR', 'number_of_pallets must be a positive integer', 400);
+      const response = errorResponse('VALIDATION_ERROR', 'number_of_pallets must be a positive integer', 400);
+      return NextResponse.json(response.payload, { status: response.status });
     }
     if (generate_box && (!Number.isInteger(unitsPerBox) || unitsPerBox <= 0)) {
-      return fail('VALIDATION_ERROR', 'units_per_box must be a positive integer', 400);
+      const response = errorResponse('VALIDATION_ERROR', 'units_per_box must be a positive integer', 400);
+      return NextResponse.json(response.payload, { status: response.status });
     }
     if ((generate_box || generate_carton) && (!Number.isInteger(boxesPerCarton) || boxesPerCarton <= 0)) {
-      return fail('VALIDATION_ERROR', 'boxes_per_carton must be a positive integer', 400);
+      const response = errorResponse('VALIDATION_ERROR', 'boxes_per_carton must be a positive integer', 400);
+      return NextResponse.json(response.payload, { status: response.status });
     }
     if ((generate_box || generate_carton || generate_pallet) && (!Number.isInteger(cartonsPerPallet) || cartonsPerPallet <= 0)) {
-      return fail('VALIDATION_ERROR', 'cartons_per_pallet must be a positive integer', 400);
+      const response = errorResponse('VALIDATION_ERROR', 'cartons_per_pallet must be a positive integer', 400);
+      return NextResponse.json(response.payload, { status: response.status });
     }
 
     const sku = await resolveSkuForSscc({
@@ -161,160 +295,270 @@ export async function POST(req: Request) {
       unitSkuMasterId: unit_sku_master_id.trim(),
     });
 
-    const skuUuid = sku.legacySkuId;
-    if (!skuUuid) {
-      console.info('[sscc_generate] legacy_sku_reference_missing', {
-        company_id: authCompanyId,
-        request_id: requestId,
-        unit_sku_master_id,
-      });
-    }
-
     const boxCount = generate_box ? palletsCount * cartonsPerPallet * boxesPerCarton : 0;
     const cartonCount = generate_carton ? palletsCount * cartonsPerPallet : 0;
     const palletCount = generate_pallet ? palletsCount : 0;
     const totalSSCCCount = boxCount + cartonCount + palletCount;
 
     if (totalSSCCCount > MAX_CODES_PER_REQUEST) {
-      return fail('VALIDATION_ERROR', `Requested SSCC volume exceeds limit (${MAX_CODES_PER_REQUEST})`, 400);
+      const response = errorResponse('VALIDATION_ERROR', `Requested SSCC volume exceeds limit (${MAX_CODES_PER_REQUEST})`, 400);
+      return NextResponse.json(response.payload, { status: response.status });
     }
-
-    const consumption = await consumeEntitlementBatch({
-      companyId: authCompanyId,
-      items: [
-        {
-          usageType: UsageType.BOX_LABEL,
-          quantity: boxCount,
-          requestId: `${requestId}:box`,
-          metadata: { source: 'sscc_generate', level: 'box', unit_sku_master_id: unit_sku_master_id.trim() },
-        },
-        {
-          usageType: UsageType.CARTON_LABEL,
-          quantity: cartonCount,
-          requestId: `${requestId}:carton`,
-          metadata: { source: 'sscc_generate', level: 'carton', unit_sku_master_id: unit_sku_master_id.trim() },
-        },
-        {
-          usageType: UsageType.PALLET_LABEL,
-          quantity: palletCount,
-          requestId: `${requestId}:pallet`,
-          metadata: { source: 'sscc_generate', level: 'pallet', unit_sku_master_id: unit_sku_master_id.trim() },
-        },
-      ],
-    });
-
-    if (!consumption.ok) {
-      const isQuotaError = String(consumption.error || '').toUpperCase().includes('QUOTA_EXCEEDED');
-      return fail(
-        String(consumption.error || 'QUOTA_EXCEEDED'),
-        isQuotaError ? 'Quota exceeded. Please purchase add-ons.' : String(consumption.error || 'QUOTA_EXCEEDED'),
-        403
-      );
-    }
-
-    entitlementCompanyId = authCompanyId;
-    consumedEntitlements = consumption.consumed;
 
     const prefixDigits = normalizeDigits(sscc_company_prefix || '1234567');
     const baseExt = Number(sscc_extension_digit || 0);
     const serialRefs = await fetchSsccSerialRefs(supabase, totalSSCCCount);
-
     let refIndex = 0;
     const nextRef = () => serialRefs[refIndex++];
 
-    const pallets: any[] = [];
-    const cartons: any[] = [];
-    const boxes: any[] = [];
+    const palletDrafts: PalletRow[] = [];
+    const cartonDraftGroups: CartonRow[][] = [];
+    const boxDraftGroups: BoxRow[][] = [];
 
-    for (let p = 0; p < palletsCount; p++) {
+    for (let palletIdx = 0; palletIdx < palletsCount; palletIdx++) {
+      let palletDraft: PalletRow | null = null;
       if (generate_pallet) {
         const sscc = buildSscc({
           extDigit: baseExt,
           companyPrefixDigits: prefixDigits,
           serialRefDigits: nextRef(),
         });
-
-        pallets.push({
+        palletDraft = {
           company_id: authCompanyId,
-          sku_id: skuUuid,
+          sku_id: sku.legacySkuId,
           unit_sku_master_id: unit_sku_master_id.trim(),
           sscc,
           sscc_with_ai: `(00)${sscc}`,
-        });
+        };
+        palletDrafts.push(palletDraft);
       }
 
-      if (generate_carton) {
-        for (let c = 0; c < cartonsPerPallet; c++) {
+      const cartonsForPallet: CartonRow[] = [];
+      const boxesForPallet: BoxRow[] = [];
+
+      for (let cartonIdx = 0; cartonIdx < cartonsPerPallet; cartonIdx++) {
+        let cartonDraft: CartonRow | null = null;
+        if (generate_carton) {
           const sscc = buildSscc({
             extDigit: baseExt,
             companyPrefixDigits: prefixDigits,
             serialRefDigits: nextRef(),
           });
-
-          cartons.push({
+          cartonDraft = {
             company_id: authCompanyId,
-            sku_id: skuUuid,
+            sku_id: sku.legacySkuId,
             unit_sku_master_id: unit_sku_master_id.trim(),
+            pallet_id: null,
             sscc,
             sscc_with_ai: `(00)${sscc}`,
-          });
+          };
+          cartonsForPallet.push(cartonDraft);
         }
-      }
 
-      if (generate_box) {
-        for (let c = 0; c < cartonsPerPallet; c++) {
-          for (let b = 0; b < boxesPerCarton; b++) {
+        if (generate_box) {
+          for (let boxIdx = 0; boxIdx < boxesPerCarton; boxIdx++) {
             const sscc = buildSscc({
               extDigit: baseExt,
               companyPrefixDigits: prefixDigits,
               serialRefDigits: nextRef(),
             });
-
-            boxes.push({
+            boxesForPallet.push({
               company_id: authCompanyId,
-              sku_id: skuUuid,
+              sku_id: sku.legacySkuId,
               unit_sku_master_id: unit_sku_master_id.trim(),
+              carton_id: null,
+              pallet_id: null,
               sscc,
               sscc_with_ai: `(00)${sscc}`,
             });
           }
         }
       }
+
+      cartonDraftGroups.push(cartonsForPallet);
+      boxDraftGroups.push(boxesForPallet);
     }
 
-    const insertedPallets = pallets.length
-      ? (await supabase.from('pallets').insert(pallets).select()).data
+    const requestKey = `${IDEMPOTENCY_ENDPOINT}:${idempotency.kind === 'ok' ? idempotency.key : 'gen'}`;
+    let palletQuotaConsumed = false;
+    let cartonQuotaConsumed = false;
+    let boxQuotaConsumed = false;
+    const insertedPalletIds: string[] = [];
+    const insertedCartonIds: string[] = [];
+    const insertedBoxIds: string[] = [];
+
+    const rollbackGeneration = async () => {
+      if (insertedBoxIds.length > 0) {
+        await supabase.from('boxes').delete().in('id', insertedBoxIds);
+      }
+      if (insertedCartonIds.length > 0) {
+        await supabase.from('cartons').delete().in('id', insertedCartonIds);
+      }
+      if (insertedPalletIds.length > 0) {
+        await supabase.from('pallets').delete().in('id', insertedPalletIds);
+      }
+      if (boxQuotaConsumed) {
+        await refundEntitlement({ companyId: authCompanyId, usageType: UsageType.BOX_LABEL, quantity: boxCount });
+      }
+      if (cartonQuotaConsumed) {
+        await refundEntitlement({ companyId: authCompanyId, usageType: UsageType.CARTON_LABEL, quantity: cartonCount });
+      }
+      if (palletQuotaConsumed) {
+        await refundEntitlement({ companyId: authCompanyId, usageType: UsageType.PALLET_LABEL, quantity: palletCount });
+      }
+    };
+
+    if (palletCount > 0) {
+      const consumePallets = await consumeLevelQuota({
+        companyId: authCompanyId,
+        usageType: UsageType.PALLET_LABEL,
+        quantity: palletCount,
+        requestId: `${requestKey}:pallet`,
+        metadata: { source: 'sscc_generate', level: 'pallet', unit_sku_master_id: unit_sku_master_id.trim() },
+      });
+
+      if (!consumePallets.ok) {
+        const response = errorResponse(consumePallets.code || 'QUOTA_EXCEEDED', 'Quota exceeded. Please purchase add-ons.', 403);
+        return NextResponse.json(response.payload, { status: response.status });
+      }
+      palletQuotaConsumed = true;
+    }
+
+    if (cartonCount > 0) {
+      const consumeCartons = await consumeLevelQuota({
+        companyId: authCompanyId,
+        usageType: UsageType.CARTON_LABEL,
+        quantity: cartonCount,
+        requestId: `${requestKey}:carton`,
+        metadata: { source: 'sscc_generate', level: 'carton', unit_sku_master_id: unit_sku_master_id.trim() },
+      });
+
+      if (!consumeCartons.ok) {
+        if (palletQuotaConsumed) {
+          await refundEntitlement({ companyId: authCompanyId, usageType: UsageType.PALLET_LABEL, quantity: palletCount });
+        }
+        const response = errorResponse(consumeCartons.code || 'QUOTA_EXCEEDED', 'Quota exceeded. Please purchase add-ons.', 403);
+        return NextResponse.json(response.payload, { status: response.status });
+      }
+      cartonQuotaConsumed = true;
+    }
+
+    if (boxCount > 0) {
+      const consumeBoxes = await consumeLevelQuota({
+        companyId: authCompanyId,
+        usageType: UsageType.BOX_LABEL,
+        quantity: boxCount,
+        requestId: `${requestKey}:box`,
+        metadata: { source: 'sscc_generate', level: 'box', unit_sku_master_id: unit_sku_master_id.trim() },
+      });
+
+      if (!consumeBoxes.ok) {
+        if (cartonQuotaConsumed) {
+          await refundEntitlement({ companyId: authCompanyId, usageType: UsageType.CARTON_LABEL, quantity: cartonCount });
+        }
+        if (palletQuotaConsumed) {
+          await refundEntitlement({ companyId: authCompanyId, usageType: UsageType.PALLET_LABEL, quantity: palletCount });
+        }
+        const response = errorResponse(consumeBoxes.code || 'QUOTA_EXCEEDED', 'Quota exceeded. Please purchase add-ons.', 403);
+        return NextResponse.json(response.payload, { status: response.status });
+      }
+      boxQuotaConsumed = true;
+    }
+
+    const insertedPallets = palletDrafts.length
+      ? ((await supabase.from('pallets').insert(palletDrafts).select()).data as PalletRow[] | null) ?? []
       : [];
 
-    const insertedCartons = cartons.length
-      ? (await supabase.from('cartons').insert(cartons).select()).data
+    insertedPalletIds.push(...insertedPallets.map((row) => row.id || '').filter(Boolean));
+
+    if (palletDrafts.length && insertedPallets.length !== palletDrafts.length) {
+      await rollbackGeneration();
+      throw new Error('Failed to insert all pallet SSCC labels');
+    }
+
+    const palletIdByIndex = insertedPallets.map((row) => row.id || null);
+    const cartonsToInsert: CartonRow[] = [];
+    for (let palletIdx = 0; palletIdx < cartonDraftGroups.length; palletIdx++) {
+      for (const carton of cartonDraftGroups[palletIdx]) {
+        cartonsToInsert.push({
+          ...carton,
+          pallet_id: generate_pallet ? palletIdByIndex[palletIdx] ?? null : null,
+        });
+      }
+    }
+
+    const insertedCartons = cartonsToInsert.length
+      ? ((await supabase.from('cartons').insert(cartonsToInsert).select()).data as CartonRow[] | null) ?? []
       : [];
 
-    const insertedBoxes = boxes.length
-      ? (await supabase.from('boxes').insert(boxes).select()).data
+    insertedCartonIds.push(...insertedCartons.map((row) => row.id || '').filter(Boolean));
+
+    if (cartonsToInsert.length && insertedCartons.length !== cartonsToInsert.length) {
+      await rollbackGeneration();
+      throw new Error('Failed to insert all carton SSCC labels');
+    }
+
+    let insertedCartonIndex = 0;
+    const boxesToInsert: BoxRow[] = [];
+    for (let palletIdx = 0; palletIdx < boxDraftGroups.length; palletIdx++) {
+      for (let cartonIdx = 0; cartonIdx < boxDraftGroups[palletIdx].length; cartonIdx += boxesPerCarton) {
+        const linkedCartonId =
+          generate_carton
+            ? insertedCartons[insertedCartonIndex++]?.id ?? null
+            : null;
+        for (let boxOffset = 0; boxOffset < boxesPerCarton; boxOffset++) {
+          const box = boxDraftGroups[palletIdx][cartonIdx + boxOffset];
+          if (!box) continue;
+          boxesToInsert.push({
+            ...box,
+            carton_id: linkedCartonId,
+            pallet_id: generate_pallet ? palletIdByIndex[palletIdx] ?? null : null,
+          });
+        }
+      }
+    }
+
+    const insertedBoxes = boxesToInsert.length
+      ? ((await supabase.from('boxes').insert(boxesToInsert).select()).data as BoxRow[] | null) ?? []
       : [];
 
-    return ok({
+    insertedBoxIds.push(...insertedBoxes.map((row) => row.id || '').filter(Boolean));
+
+    if (boxesToInsert.length && insertedBoxes.length !== boxesToInsert.length) {
+      await rollbackGeneration();
+      throw new Error('Failed to insert all box SSCC labels');
+    }
+
+    const response = successResponse({
       pallets: insertedPallets,
       cartons: insertedCartons,
       boxes: insertedBoxes,
     });
-  } catch (err: any) {
-    if (consumedEntitlements.length > 0) {
-      await refundEntitlementBatch({
-        companyId: entitlementCompanyId,
-        items: consumedEntitlements,
+
+    if (idempotency.kind === 'ok') {
+      await storeReplay({
+        supabase,
+        userId: user.id,
+        idempotencyKey: idempotency.key,
+        requestHash: idempotency.requestHash,
+        payload: response.payload,
+        status: response.status,
       });
     }
 
+    return NextResponse.json(response.payload, { status: response.status });
+  } catch (err: any) {
     if (err?.message === SKU_NOT_FOUND_ERROR) {
-      return fail('NOT_FOUND', err.message, 404);
+      const response = errorResponse('NOT_FOUND', err.message, 404);
+      return NextResponse.json(response.payload, { status: response.status });
     }
 
     if (err?.message === SKU_GTIN_REQUIRED_ERROR) {
-      return fail('VALIDATION_ERROR', err.message, 400);
+      const response = errorResponse('VALIDATION_ERROR', err.message, 400);
+      return NextResponse.json(response.payload, { status: response.status });
     }
 
-    return fail('INTERNAL_ERROR', err?.message || 'SSCC generation failed', 500);
+    const response = errorResponse('INTERNAL_ERROR', err?.message || 'SSCC generation failed', 500);
+    return NextResponse.json(response.payload, { status: response.status });
   }
 }

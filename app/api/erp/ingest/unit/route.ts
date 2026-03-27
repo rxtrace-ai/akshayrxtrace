@@ -1,4 +1,3 @@
-import { NextResponse  } from 'next/server';
 import { apiJson } from '@/lib/api/response';
 import { supabaseServer } from '@/lib/supabase/server';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
@@ -7,14 +6,46 @@ import { generateCanonicalGS1 } from '@/lib/gs1Canonical';
 import { enforceEntitlement, refundEntitlement } from '@/lib/entitlement/enforce';
 import { UsageType } from '@/lib/entitlement/usageTypes';
 import { resolveExactUnitSkuMasterId, resolveLegacySkuIdForCode } from '@/lib/unitSkuMasterLink';
+import {
+  beginErpImportSession,
+  completeErpImportSession,
+  computeErpImportRequestHash,
+  ErpImportIdempotencyError,
+} from '@/lib/erp/importSessions';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Resolve company_id from authenticated user
+type ImportResults = {
+  total: number;
+  imported: number;
+  skipped: number;
+  duplicates: number;
+  invalid: number;
+  errors: Array<{ row: number; error: string }>;
+};
+
+type UnitInsertRow = {
+  company_id: string;
+  sku_id: string | null;
+  unit_sku_master_id: string | null;
+  gtin: string | null;
+  batch: string;
+  mfd: string | null;
+  expiry: string;
+  mrp: string | null;
+  serial: string;
+  gs1_payload: string;
+  code_mode: 'GS1';
+  payload: string;
+};
+
 async function resolveAuthCompany() {
   const supabase = await supabaseServer();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
 
   if (userError || !user) {
     return { error: apiJson({ error: 'Unauthorized' }, { status: 401 }) };
@@ -34,15 +65,74 @@ async function resolveAuthCompany() {
   return { companyId: company.id, companyName: company.company_name || '', userId: user.id };
 }
 
+function isUniqueViolation(error: any) {
+  return error?.code === '23505' || String(error?.message || '').toLowerCase().includes('unique');
+}
+
+async function insertUnitBatchWithFallback(params: {
+  admin: ReturnType<typeof getSupabaseAdmin>;
+  batch: UnitInsertRow[];
+  results: ImportResults;
+}) {
+  const { admin, batch, results } = params;
+  let inserted = 0;
+
+  const { error: batchError } = await admin.from('labels_units').insert(batch);
+  if (!batchError) {
+    return { inserted, fatalError: null as string | null, duplicates: 0 };
+  }
+
+  if (!isUniqueViolation(batchError)) {
+    return { inserted, fatalError: batchError.message || 'Failed to import units', duplicates: 0 };
+  }
+
+  let duplicates = 0;
+  for (const row of batch) {
+    const { error: rowError } = await admin.from('labels_units').insert(row);
+    if (!rowError) {
+      inserted += 1;
+      continue;
+    }
+
+    if (isUniqueViolation(rowError)) {
+      duplicates += 1;
+      results.duplicates += 1;
+      results.skipped += 1;
+      continue;
+    }
+
+    return {
+      inserted,
+      fatalError: rowError.message || 'Failed to import unit row',
+      duplicates,
+    };
+  }
+
+  return { inserted, fatalError: null as string | null, duplicates };
+}
+
 export async function POST(req: Request) {
+  let sessionId: string | null = null;
+  let companyIdForSession: string | null = null;
+  let userIdForSession: string | null = null;
+  let results: ImportResults = {
+    total: 0,
+    imported: 0,
+    skipped: 0,
+    duplicates: 0,
+    invalid: 0,
+    errors: [],
+  };
+
   try {
     const auth = await resolveAuthCompany();
     if ('error' in auth) return auth.error;
 
-    const { companyId, companyName, userId } = auth;
+    const { companyId, userId } = auth;
+    companyIdForSession = companyId;
+    userIdForSession = userId;
     const admin = getSupabaseAdmin();
 
-    // Check ERP ingestion mode - unit ingestion allowed only if mode = unit | both
     const { data: company } = await admin
       .from('companies')
       .select('erp_ingestion_mode')
@@ -62,6 +152,7 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => ({}));
     const rows = Array.isArray(body.rows) ? body.rows : [];
+    results.total = rows.length;
 
     if (rows.length === 0) {
       return apiJson(
@@ -77,45 +168,47 @@ export async function POST(req: Request) {
       );
     }
 
-    const results = {
-      total: rows.length,
-      imported: 0,
-      skipped: 0,
-      duplicates: 0,
-      invalid: 0,
-      errors: [] as Array<{ row: number; error: string }>,
-    };
-    const auditIssues: Array<Record<string, any>> = [];
-    const seenSerialKeys = new Set<string>();
-
     const requestId =
       req.headers.get('Idempotency-Key') ||
       req.headers.get('Idempotency-key') ||
       req.headers.get('idempotency-key') ||
       crypto.randomUUID();
 
-    const validRows: Array<{
-      company_id: string;
-      sku_id: string | null;
-      unit_sku_master_id: string | null;
-      gtin: string | null;
-      batch: string;
-      mfd: string | null;
-      expiry: string;
-      mrp: string | null;
-      serial: string;
-      gs1_payload: string;
-      code_mode: 'GS1';
-      payload: string;
-    }> = [];
+    const session = await beginErpImportSession({
+      supabase: admin,
+      companyId,
+      actor: userId,
+      importType: 'unit',
+      idempotencyKey: requestId,
+      requestHash: computeErpImportRequestHash(rows),
+      totalRows: rows.length,
+    });
 
-    // Process each row
+    if (session.mode === 'replay') {
+      return apiJson(session.result, { status: session.responseStatus });
+    }
+
+    if (session.mode === 'in_progress') {
+      return apiJson(
+        {
+          error: 'An ERP unit import with this idempotency key is already processing.',
+          code: 'import_in_progress',
+        },
+        { status: 409 }
+      );
+    }
+
+    sessionId = session.sessionId;
+
+    const auditIssues: Array<Record<string, any>> = [];
+    const seenSerialKeys = new Set<string>();
+    const validRows: UnitInsertRow[] = [];
+
     for (let idx = 0; idx < rows.length; idx++) {
       const row = rows[idx];
       const rowNum = idx + 1;
 
       try {
-        // Required fields
         const skuCode = String(row.sku_code || row.SKU_CODE || '').trim().toUpperCase();
         const batch = String(row.batch || row.BATCH || row.batch_number || '').trim();
         const expiryDate = String(row.expiry_date || row.EXPIRY_DATE || row.exp || '').trim();
@@ -124,7 +217,6 @@ export async function POST(req: Request) {
         const mrp = row.mrp || row.MRP ? String(row.mrp || row.MRP).trim() : null;
         const mfd = row.mfd || row.MFD || row.mfg_date ? String(row.mfd || row.MFD || row.mfg_date).trim() : null;
 
-        // Validate required fields
         if (!skuCode) {
           results.errors.push({ row: rowNum, error: 'SKU Code is required' });
           auditIssues.push({ row: rowNum, category: 'invalid', reason: 'SKU Code is required' });
@@ -207,7 +299,6 @@ export async function POST(req: Request) {
         }
         seenSerialKeys.add(serialKey);
 
-        // Check for duplicate serial (same company, GTIN, serial)
         const { data: existing } = await admin
           .from('labels_units')
           .select('id')
@@ -231,13 +322,8 @@ export async function POST(req: Request) {
           continue;
         }
 
-        // Generate payload (GS1 or PIC)
-        let payload: string;
-
-        // Normalize expiry date format (expect YYYY-MM-DD or YYMMDD)
         let normalizedExpiry = expiryDate;
         if (/^\d{6}$/.test(expiryDate)) {
-          // YYMMDD -> YYYY-MM-DD
           const yy = expiryDate.slice(0, 2);
           const mm = expiryDate.slice(2, 4);
           const dd = expiryDate.slice(4, 6);
@@ -256,6 +342,7 @@ export async function POST(req: Request) {
           }
         }
 
+        let payload: string;
         try {
           payload = generateCanonicalGS1({
             gtin: finalGtin,
@@ -309,70 +396,112 @@ export async function POST(req: Request) {
       }
     }
 
-    // Enforce unit quota for ERP ingestion (one row = one UNIT consumption)
-    if (validRows.length > 0) {
-      const decision = await enforceEntitlement({
-        companyId,
-        usageType: UsageType.UNIT_LABEL,
-        quantity: validRows.length,
-        requestId: `erp:unit_ingest:${requestId}`,
-        metadata: { source: 'erp_unit_ingest' },
-      });
-
-      if (!decision.allow) {
-        const isQuotaError = String(decision.reason_code || "").toUpperCase().includes("QUOTA_EXCEEDED");
-        return apiJson(
-          {
-            error: isQuotaError ? "Quota exceeded. Please purchase add-ons." : decision.reason_code || "QUOTA_EXCEEDED",
-            code: decision.reason_code || 'QUOTA_EXCEEDED',
-            results,
-          },
-          { status: 403 }
-        );
-      }
-    }
-
-    // Insert valid rows (batched)
     if (validRows.length > 0) {
       const BATCH_SIZE = 1000;
-      let insertedCount = 0;
 
       for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
         const batch = validRows.slice(i, i + BATCH_SIZE);
-        const { error: insertError } = await admin.from('labels_units').insert(batch);
+        const decision = await enforceEntitlement({
+          companyId,
+          usageType: UsageType.UNIT_LABEL,
+          quantity: batch.length,
+          requestId: `erp:unit_ingest:${sessionId}:batch:${i / BATCH_SIZE}`,
+          metadata: { source: 'erp_unit_ingest', session_id: sessionId },
+        });
 
-        if (insertError) {
-          // Refund quota if we already consumed it and insert failed.
-          try {
-            await refundEntitlement({
-              companyId,
-              usageType: UsageType.UNIT_LABEL,
-              quantity: validRows.length,
-            });
-          } catch {
-            // best-effort; do not mask primary error
-          }
+        if (!decision.allow) {
+          const payload = {
+            error: String(decision.reason_code || '').toUpperCase().includes('QUOTA_EXCEEDED')
+              ? 'Quota exceeded. Please purchase add-ons.'
+              : decision.reason_code || 'QUOTA_EXCEEDED',
+            code: decision.reason_code || 'QUOTA_EXCEEDED',
+            results,
+          };
 
-          // Check if it's a duplicate key error
-          if (insertError.code === '23505' || insertError.message?.includes('unique')) {
-            results.duplicates += batch.length;
-            results.skipped += batch.length;
-            continue;
-          }
+          await completeErpImportSession({
+            supabase: admin,
+            sessionId,
+            status: 'failed',
+            responseStatus: 403,
+            result: payload,
+            errorMessage: payload.error,
+            summary: {
+              validated: validRows.length,
+              imported: results.imported,
+              duplicates: results.duplicates,
+              skipped: results.skipped,
+              invalid: results.invalid,
+            },
+          });
 
-          return apiJson(
-            { error: `Failed to import units: ${insertError.message}`, results },
-            { status: 500 }
-          );
+          return apiJson(payload, { status: 403 });
         }
 
-        insertedCount += batch.length;
-      }
+        const { inserted, fatalError } = await insertUnitBatchWithFallback({
+          admin,
+          batch,
+          results,
+        });
 
-      results.imported = insertedCount;
+        const refundQty = batch.length - inserted;
+        if (refundQty > 0) {
+          await refundEntitlement({
+            companyId,
+            usageType: UsageType.UNIT_LABEL,
+            quantity: refundQty,
+          });
+        }
+
+        results.imported += inserted;
+
+        if (fatalError) {
+          const payload = {
+            error: `Failed to import units: ${fatalError}`,
+            results,
+          };
+
+          await completeErpImportSession({
+            supabase: admin,
+            sessionId,
+            status: 'failed',
+            responseStatus: 500,
+            result: payload,
+            errorMessage: payload.error,
+            summary: {
+              validated: validRows.length,
+              imported: results.imported,
+              duplicates: results.duplicates,
+              skipped: results.skipped,
+              invalid: results.invalid,
+            },
+          });
+
+          return apiJson(payload, { status: 500 });
+        }
+      }
     }
 
-    // Audit log
+    const responsePayload = {
+      success: true,
+      message: `Imported ${results.imported} unit codes. ${results.duplicates} duplicates skipped. ${results.invalid} invalid rows.`,
+      results,
+    };
+
+    await completeErpImportSession({
+      supabase: admin,
+      sessionId,
+      status: 'completed',
+      responseStatus: 200,
+      result: responsePayload,
+      summary: {
+        validated: validRows.length,
+        imported: results.imported,
+        duplicates: results.duplicates,
+        skipped: results.skipped,
+        invalid: results.invalid,
+      },
+    });
+
     try {
       await writeAuditLog({
         companyId,
@@ -384,6 +513,7 @@ export async function POST(req: Request) {
           source: 'ERP',
           imported_by_user_id: userId,
           imported_at: new Date().toISOString(),
+          erp_import_session_id: sessionId,
           validation_result: {
             total: results.total,
             imported: results.imported,
@@ -397,15 +527,45 @@ export async function POST(req: Request) {
       });
     } catch (auditError) {
       console.error('Failed to log ERP ingestion audit:', auditError);
-      // Continue - ingestion succeeded, audit failure is logged
     }
 
-    return apiJson({
-      success: true,
-      message: `Imported ${results.imported} unit codes. ${results.duplicates} duplicates skipped. ${results.invalid} invalid rows.`,
-      results,
-    });
+    return apiJson(responsePayload);
   } catch (err: any) {
+    const admin = getSupabaseAdmin();
+    if (err instanceof ErpImportIdempotencyError) {
+      return apiJson(
+        { error: err.message, code: 'idempotency_conflict' },
+        { status: 409 }
+      );
+    }
+
+    if (sessionId && companyIdForSession && userIdForSession) {
+      const payload = {
+        error: err?.message || 'ERP unit code ingestion failed. Please try again or contact support.',
+        results,
+      };
+
+      try {
+        await completeErpImportSession({
+          supabase: admin,
+          sessionId,
+          status: 'failed',
+          responseStatus: 500,
+          result: payload,
+          errorMessage: payload.error,
+          summary: {
+            validated: Math.max(0, results.total - results.invalid - results.duplicates),
+            imported: results.imported,
+            duplicates: results.duplicates,
+            skipped: results.skipped,
+            invalid: results.invalid,
+          },
+        });
+      } catch (sessionError) {
+        console.error('Failed to finalize ERP unit import session:', sessionError);
+      }
+    }
+
     console.error('ERP Unit Ingestion error:', err);
     return apiJson(
       { error: err?.message || 'ERP unit code ingestion failed. Please try again or contact support.' },
@@ -413,4 +573,3 @@ export async function POST(req: Request) {
     );
   }
 }
-

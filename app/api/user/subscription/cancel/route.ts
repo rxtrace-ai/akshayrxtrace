@@ -4,6 +4,11 @@ import { headers } from "next/headers";
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { getOrGenerateCorrelationId } from "@/lib/observability/correlation";
 import { checkUserIdempotency, hashRequestBody, storeUserIdempotencyResponse } from "@/lib/user/idempotency";
+import {
+  cancelRazorpaySubscription,
+  mapRazorpaySubscriptionStatusToLocal,
+  toIsoFromUnix,
+} from "@/lib/billing/razorpaySubscriptions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,18 +40,65 @@ export async function POST(req: NextRequest) {
   if (idem.kind === "conflict") return apiJson({ error: "IDEMPOTENCY_CONFLICT" }, { status: 409 });
   if (idem.kind === "replay") return apiJson(idem.payload, { status: idem.statusCode });
 
+  const cancelAtPeriodEnd = (body as any)?.cancel_at_period_end !== false;
   const now = new Date().toISOString();
+  const { data: currentSubscription, error: readError } = await owner.supabase
+    .from("company_subscriptions")
+    .select(
+      "id, status, cancel_at_period_end, current_period_start, current_period_end, next_billing_at, renewal_date, provider_subscription_id, razorpay_subscription_id, metadata"
+    )
+    .eq("company_id", owner.companyId)
+    .in("status", ["active", "pending", "pending_payment"])
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (readError) {
+    return apiJson({ error: readError.message }, { status: 500 });
+  }
+  if (!currentSubscription) {
+    return apiJson({ error: "NO_ACTIVE_SUBSCRIPTION" }, { status: 409 });
+  }
+
+  const providerSubscriptionId =
+    String((currentSubscription as any).provider_subscription_id || "").trim() ||
+    String((currentSubscription as any).razorpay_subscription_id || "").trim();
+  if (!providerSubscriptionId) {
+    return apiJson({ error: "PROVIDER_SUBSCRIPTION_ID_MISSING" }, { status: 409 });
+  }
+
+  const providerSubscription = await cancelRazorpaySubscription({
+    subscriptionId: providerSubscriptionId,
+    cancelAtCycleEnd: cancelAtPeriodEnd,
+  });
+
+  const nextStatus = mapRazorpaySubscriptionStatusToLocal(providerSubscription?.status);
+  const currentPeriodStart = toIsoFromUnix(providerSubscription?.current_start) ?? (currentSubscription as any).current_period_start ?? null;
+  const currentPeriodEnd = toIsoFromUnix(providerSubscription?.current_end) ?? (currentSubscription as any).current_period_end ?? null;
+  const nextBillingAt = toIsoFromUnix(providerSubscription?.charge_at) ?? currentPeriodEnd;
+
   const { data: updated, error } = await owner.supabase
     .from("company_subscriptions")
     .update({
-      status: "cancelled",
-      cancel_at_period_end: true,
-      next_billing_at: null,
-      renewal_date: null,
+      status: nextStatus,
+      cancel_at_period_end: cancelAtPeriodEnd,
+      provider: "razorpay",
+      provider_subscription_id: providerSubscriptionId,
+      razorpay_subscription_id: providerSubscriptionId,
+      provider_customer_id: String(providerSubscription?.customer_id || "").trim() || null,
+      current_period_start: currentPeriodStart,
+      current_period_end: currentPeriodEnd,
+      next_billing_at: cancelAtPeriodEnd ? nextBillingAt : null,
+      renewal_date: cancelAtPeriodEnd ? currentPeriodEnd : null,
+      metadata: {
+        ...(((currentSubscription as any).metadata || {}) as Record<string, unknown>),
+        provider_cancelled_at: now,
+        provider_cancel_at_period_end: cancelAtPeriodEnd,
+        provider_cancel_correlation_id: correlationId,
+      },
       updated_at: now,
     })
-    .eq("company_id", owner.companyId)
-    .in("status", ["active", "authenticated", "pending", "pending_payment", "paused", "past_due", "expired"])
+    .eq("id", (currentSubscription as any).id)
     .select("status, cancel_at_period_end, current_period_end, next_billing_at")
     .maybeSingle();
 

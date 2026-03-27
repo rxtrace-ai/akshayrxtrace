@@ -63,6 +63,7 @@ export type CheckoutQuotePayload = {
   owner_user_id: string;
   generated_at: string;
   expires_at: string;
+  checkout_mode: "recurring_plan" | "one_time_addon";
   selected_plan_template_id: string | null;
   selected_plan_version_id: string | null;
   plan: {
@@ -357,6 +358,7 @@ export function buildCheckoutQuote(
     owner_user_id: input.ownerUserId,
     generated_at: now.toISOString(),
     expires_at: expiresAt.toISOString(),
+    checkout_mode: plan ? "recurring_plan" : "one_time_addon",
     selected_plan_template_id: plan?.template_id || null,
     selected_plan_version_id: plan?.version_id || null,
     plan: {

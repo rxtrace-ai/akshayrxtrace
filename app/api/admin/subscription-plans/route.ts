@@ -14,7 +14,6 @@ import { appendAdminMutationAuditEvent } from "@/lib/admin/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-const DEFAULT_RAZORPAY_PLAN_ID = "plan_SS7ZgGfy9sKS2q";
 
 type PlanVersionInput = {
   unit_quota_units: number;
@@ -30,6 +29,11 @@ type PlanVersionInput = {
 
 function normalizeText(value: unknown): string {
   return String(value ?? "").trim();
+}
+
+function normalizeProviderPlanId(value: unknown): string | null {
+  const normalized = normalizeText(value);
+  return normalized ? normalized : null;
 }
 
 function nonNegativeInt(value: unknown, fallback = 0): number {
@@ -120,6 +124,7 @@ async function fetchTemplateWithVersions(supabase: ReturnType<typeof getSupabase
       description: (template as any).description ?? null,
       billing_cycle: (template as any).billing_cycle === "yearly" ? "yearly" : "monthly",
       plan_price: toPaise((template as any).plan_price ?? (template as any).amount_from_razorpay),
+      razorpay_plan_id: String((template as any).razorpay_plan_id || "").trim() || null,
       pricing_unit_size: Math.max(1, nonNegativeInt((template as any).pricing_unit_size, 1)),
       is_active: (template as any).is_active === true,
       updated_at: (template as any).updated_at ?? null,
@@ -179,6 +184,7 @@ export async function GET() {
         description: template.description ?? null,
         billing_cycle: template.billing_cycle === "yearly" ? "yearly" : "monthly",
         plan_price: toPaise(template.plan_price ?? template.amount_from_razorpay),
+        razorpay_plan_id: String(template.razorpay_plan_id || "").trim() || null,
         pricing_unit_size: pricingUnitSize,
         is_active: template.is_active === true,
         updated_at: template.updated_at ?? null,
@@ -214,6 +220,7 @@ export async function POST(req: NextRequest) {
   const description = normalizeText((body as any).description) || null;
   const billingCycle = normalizeText((body as any).billing_cycle).toLowerCase();
   const planPrice = toPaise((body as any).plan_price);
+  const razorpayPlanId = normalizeProviderPlanId((body as any).razorpay_plan_id);
   const pricingUnitSize = Math.max(1, nonNegativeInt((body as any).pricing_unit_size, 1));
   const publish = (body as any).publish !== false;
   const versionInput = normalizeVersionInput(((body as any).version || body) as Record<string, unknown>);
@@ -223,6 +230,14 @@ export async function POST(req: NextRequest) {
       400,
       "BAD_REQUEST",
       "name and billing_cycle(monthly|yearly) are required when template_id is not provided",
+      correlationId
+    );
+  }
+  if (!templateId && !razorpayPlanId) {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "razorpay_plan_id is required when creating a template",
       correlationId
     );
   }
@@ -244,18 +259,6 @@ export async function POST(req: NextRequest) {
   let beforeState: Record<string, unknown> | null = null;
 
   if (!resolvedTemplateId) {
-    const { data: existingLinkedPlan, error: existingLinkedPlanError } = await supabase
-      .from("subscription_plan_templates")
-      .select("id")
-      .eq("razorpay_plan_id", DEFAULT_RAZORPAY_PLAN_ID)
-      .maybeSingle();
-    if (existingLinkedPlanError) {
-      return errorResponse(500, "INTERNAL_ERROR", existingLinkedPlanError.message, correlationId);
-    }
-    if (existingLinkedPlan) {
-      return errorResponse(409, "CONFLICT", "Plan already linked", correlationId);
-    }
-
     const { data: createdTemplate, error: createTemplateError } = await supabase
       .from("subscription_plan_templates")
       .insert({
@@ -263,7 +266,7 @@ export async function POST(req: NextRequest) {
         description,
         billing_cycle: billingCycle,
         plan_price: planPrice,
-        razorpay_plan_id: DEFAULT_RAZORPAY_PLAN_ID,
+        razorpay_plan_id: razorpayPlanId,
         pricing_unit_size: pricingUnitSize,
         is_active: true,
       })
@@ -418,6 +421,13 @@ export async function PUT(req: NextRequest) {
     templateUpdates.billing_cycle = billingCycle;
   }
   if ("plan_price" in (body as any)) templateUpdates.plan_price = toPaise((body as any).plan_price);
+  if ("razorpay_plan_id" in (body as any)) {
+    const nextProviderPlanId = normalizeProviderPlanId((body as any).razorpay_plan_id);
+    if (!nextProviderPlanId) {
+      return errorResponse(400, "BAD_REQUEST", "razorpay_plan_id cannot be empty", correlationId);
+    }
+    templateUpdates.razorpay_plan_id = nextProviderPlanId;
+  }
   if ("pricing_unit_size" in (body as any)) {
     templateUpdates.pricing_unit_size = Math.max(1, nonNegativeInt((body as any).pricing_unit_size, 1));
   }

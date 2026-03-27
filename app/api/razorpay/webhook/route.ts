@@ -3,6 +3,12 @@ import { headers } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { consumeRateLimit } from "@/lib/security/rateLimit";
 import { finalizeQuoteInternal } from "@/lib/billing/finalizeQuoteInternal";
+import { logError, logInfo, logWarn } from "@/lib/observability";
+import {
+  fetchRazorpaySubscription,
+  mapRazorpaySubscriptionStatusToLocal,
+  toIsoFromUnix,
+} from "@/lib/billing/razorpaySubscriptions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +25,20 @@ const TRIAL_QUOTAS = {
   plants: 2,
   handsets: 0,
 } as const;
+
+const SUPPORTED_WEBHOOK_EVENTS = new Set([
+  "payment.captured",
+  "order.paid",
+  "subscription.authenticated",
+  "subscription.activated",
+  "subscription.charged",
+  "subscription.paused",
+  "subscription.resumed",
+  "subscription.cancelled",
+  "subscription.completed",
+  "invoice.paid",
+  "invoice.payment_failed",
+]);
 
 function extractTrialCompanyIdFromPurpose(purpose: string): string | null {
   const value = String(purpose || "").trim();
@@ -45,7 +65,12 @@ async function activateTrialFromPaidOrder(params: {
     .maybeSingle();
 
   if (orderError) {
-    console.error("Webhook trial lookup error:", orderError);
+    logError("WEBHOOK_TRIAL_LOOKUP_ERROR", {
+      operation: "razorpay_webhook_trial",
+      correlationId,
+      order_id: orderId,
+      error: orderError.message,
+    });
     return;
   }
   if (!orderRow) return;
@@ -99,7 +124,14 @@ async function activateTrialFromPaidOrder(params: {
     .select("company_id");
 
   if (insertTrialError) {
-    console.error("Webhook trial activation error:", insertTrialError);
+    logError("WEBHOOK_TRIAL_ACTIVATION_ERROR", {
+      operation: "razorpay_webhook_trial",
+      correlationId,
+      companyId,
+      order_id: orderId,
+      payment_id: paymentId,
+      error: insertTrialError.message,
+    });
     return;
   }
 
@@ -137,7 +169,14 @@ async function activateTrialFromPaidOrder(params: {
 
   const { error: quotaError } = await supabase.from("quota_allocations").insert(quotaRows as any[]);
   if (quotaError) {
-    console.error("Webhook trial quota allocation error:", quotaError);
+    logError("WEBHOOK_TRIAL_QUOTA_ALLOCATION_ERROR", {
+      operation: "razorpay_webhook_trial",
+      correlationId,
+      companyId,
+      order_id: orderId,
+      payment_id: paymentId,
+      error: quotaError.message,
+    });
   }
 }
 
@@ -156,6 +195,253 @@ function validateWebhookSignature(
   if (!webhookSecret) return false;
   const expectedSignature = crypto.createHmac("sha256", webhookSecret).update(body).digest("hex");
   return timingSafeEqual(expectedSignature, signature);
+}
+
+function jsonResponse(payload: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(payload), { status });
+}
+
+function extractWebhookEventId(headersList: Headers, event: any, eventType: string): string {
+  const headerEventId = headersList.get("x-razorpay-event-id")?.trim();
+  if (headerEventId) return headerEventId;
+
+  const payloadEventId = String((event as any)?.id || "").trim();
+  if (payloadEventId) return payloadEventId;
+
+  const entityId =
+    String(event?.payload?.payment?.entity?.id || "").trim() ||
+    String(event?.payload?.invoice?.entity?.id || "").trim() ||
+    String(event?.payload?.subscription?.entity?.id || "").trim() ||
+    String(event?.payload?.order?.entity?.id || "").trim();
+  const createdAt = String((event as any)?.created_at || Date.now()).trim();
+  return `${eventType}:${entityId || "unknown"}:${createdAt}`;
+}
+
+function extractWebhookCorrelationId(event: any, eventId: string): string {
+  return (
+    String(event?.payload?.payment?.entity?.notes?.correlation_id || "").trim() ||
+    String(event?.payload?.invoice?.entity?.notes?.correlation_id || "").trim() ||
+    String(event?.payload?.subscription?.entity?.notes?.correlation_id || "").trim() ||
+    `webhook_${eventId}`
+  );
+}
+
+function extractSubscriptionId(event: any): string | null {
+  return (
+    String(event?.payload?.subscription?.entity?.id || "").trim() ||
+    String(event?.payload?.invoice?.entity?.subscription_id || "").trim() ||
+    String(event?.payload?.invoice?.entity?.subscription || "").trim() ||
+    null
+  );
+}
+
+function extractPaymentId(event: any): string | null {
+  return (
+    String(event?.payload?.payment?.entity?.id || "").trim() ||
+    String(event?.payload?.invoice?.entity?.payment_id || "").trim() ||
+    String(event?.payload?.subscription?.entity?.charge_at || "").trim() ||
+    null
+  );
+}
+
+function extractOrderId(event: any): string | null {
+  return (
+    String(event?.payload?.payment?.entity?.order_id || "").trim() ||
+    String(event?.payload?.order?.entity?.id || "").trim() ||
+    null
+  );
+}
+
+function extractAmountPaise(event: any): number | null {
+  const amount = Number(
+    event?.payload?.payment?.entity?.amount ??
+      event?.payload?.invoice?.entity?.amount ??
+      0
+  );
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return Math.trunc(amount);
+}
+
+function extractPeriodWindow(eventType: string, event: any) {
+  const invoiceEntity = event?.payload?.invoice?.entity;
+  const subscriptionEntity = event?.payload?.subscription?.entity;
+
+  let currentPeriodStart =
+    toIsoFromUnix(subscriptionEntity?.current_start) ??
+    toIsoFromUnix(subscriptionEntity?.current_period_start) ??
+    null;
+  let currentPeriodEnd =
+    toIsoFromUnix(subscriptionEntity?.current_end) ??
+    toIsoFromUnix(subscriptionEntity?.current_period_end) ??
+    null;
+  let nextBillingAt = toIsoFromUnix(subscriptionEntity?.charge_at) ?? currentPeriodEnd;
+
+  if (eventType === "invoice.paid" || eventType === "invoice.payment_failed") {
+    currentPeriodStart = toIsoFromUnix(invoiceEntity?.period_start) ?? currentPeriodStart;
+    currentPeriodEnd = toIsoFromUnix(invoiceEntity?.period_end) ?? currentPeriodEnd;
+    nextBillingAt = currentPeriodEnd ?? nextBillingAt;
+  }
+
+  return {
+    currentPeriodStart,
+    currentPeriodEnd,
+    nextBillingAt,
+  };
+}
+
+async function syncQuoteBackedSubscriptionFromWebhook(params: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  eventType: string;
+  event: any;
+  correlationId: string;
+}) {
+  const { supabase, eventType, event, correlationId } = params;
+  const subscriptionId = extractSubscriptionId(event);
+  if (!subscriptionId) return null;
+
+  const { data: intent, error: intentError } = await supabase
+    .from("payment_intents")
+    .select("id, quote_id, provider_subscription_id, provider_customer_id, status, razorpay_payment_id")
+    .eq("provider_subscription_id", subscriptionId)
+    .maybeSingle();
+  if (intentError) throw new Error(intentError.message);
+  if (!intent) return null;
+
+  const { data: quote, error: quoteError } = await supabase
+    .from("quotes")
+    .select("id, company_id, user_id, plan_id, plan_snapshot_json, status, fulfilled_at")
+    .eq("id", (intent as any).quote_id)
+    .maybeSingle();
+  if (quoteError) throw new Error(quoteError.message);
+  if (!quote) return null;
+
+  const providerStatus = mapRazorpaySubscriptionStatusToLocal(
+    event?.payload?.subscription?.entity?.status || eventType.split(".")[1]
+  );
+
+  let providerCustomerId = String((intent as any).provider_customer_id || "").trim() || null;
+  let { currentPeriodStart, currentPeriodEnd, nextBillingAt } = extractPeriodWindow(eventType, event);
+
+  if (!currentPeriodStart || !currentPeriodEnd || !providerCustomerId) {
+    try {
+      const providerSubscription = await fetchRazorpaySubscription(subscriptionId);
+      providerCustomerId =
+        providerCustomerId || String(providerSubscription?.customer_id || "").trim() || null;
+      currentPeriodStart =
+        currentPeriodStart || toIsoFromUnix(providerSubscription?.current_start) || null;
+      currentPeriodEnd =
+        currentPeriodEnd || toIsoFromUnix(providerSubscription?.current_end) || null;
+      nextBillingAt =
+        nextBillingAt || toIsoFromUnix(providerSubscription?.charge_at) || currentPeriodEnd || null;
+    } catch (providerFetchError) {
+      console.error("Webhook provider fetch fallback failed", {
+        subscription_id: subscriptionId,
+        event_type: eventType,
+        error: String((providerFetchError as any)?.message || "UNKNOWN"),
+      });
+    }
+  }
+
+  const nowIso = new Date().toISOString();
+  const billingCycle =
+    String(((quote as any).plan_snapshot_json || {})?.billing_cycle || "").trim().toLowerCase() === "yearly"
+      ? "yearly"
+      : "monthly";
+
+  const { data: existingSubscription, error: existingSubscriptionError } = await supabase
+    .from("company_subscriptions")
+    .select("id, metadata")
+    .eq("company_id", (quote as any).company_id)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existingSubscriptionError) throw new Error(existingSubscriptionError.message);
+
+  const subscriptionPayload = {
+    company_id: (quote as any).company_id,
+    status: providerStatus,
+    plan_template_id: (quote as any).plan_id || null,
+    billing_cycle: billingCycle,
+    current_period_start: currentPeriodStart,
+    current_period_end: currentPeriodEnd,
+    next_billing_at: nextBillingAt,
+    renewal_date: currentPeriodEnd,
+    start_date: currentPeriodStart,
+    provider: "razorpay",
+    provider_subscription_id: subscriptionId,
+    razorpay_subscription_id: subscriptionId,
+    provider_customer_id: providerCustomerId,
+    metadata: {
+      ...(((existingSubscription as any)?.metadata || {}) as Record<string, unknown>),
+      last_webhook_event_type: eventType,
+      last_webhook_correlation_id: correlationId,
+      quote_id: (quote as any).id,
+    },
+    updated_at: nowIso,
+  };
+
+  if ((existingSubscription as any)?.id) {
+    const { error: subscriptionUpdateError } = await supabase
+      .from("company_subscriptions")
+      .update(subscriptionPayload)
+      .eq("id", (existingSubscription as any).id);
+    if (subscriptionUpdateError) throw new Error(subscriptionUpdateError.message);
+  } else {
+    const { error: subscriptionInsertError } = await supabase
+      .from("company_subscriptions")
+      .insert({
+        ...subscriptionPayload,
+        activated_at: providerStatus === "active" ? nowIso : null,
+      });
+    if (subscriptionInsertError) throw new Error(subscriptionInsertError.message);
+  }
+
+  const providerPaymentId = extractPaymentId(event);
+  const shouldFinalize = ["subscription.authenticated", "subscription.activated", "subscription.charged", "invoice.paid"].includes(eventType);
+
+  if (eventType === "invoice.payment_failed") {
+    const { error: intentFailureError } = await supabase
+      .from("payment_intents")
+      .update({
+        status: "payment_failed",
+        provider: "razorpay",
+        provider_subscription_id: subscriptionId,
+        provider_customer_id: providerCustomerId,
+        updated_at: nowIso,
+      })
+      .eq("id", (intent as any).id);
+    if (intentFailureError) throw new Error(intentFailureError.message);
+  }
+
+  if (shouldFinalize) {
+    const { error: intentPaidError } = await supabase
+      .from("payment_intents")
+      .update({
+        status: "paid",
+        provider: "razorpay",
+        provider_subscription_id: subscriptionId,
+        provider_customer_id: providerCustomerId,
+        razorpay_payment_id: providerPaymentId || (intent as any).razorpay_payment_id || null,
+        processed_at: nowIso,
+        processed_correlation_id: correlationId,
+        updated_at: nowIso,
+      })
+      .eq("id", (intent as any).id);
+    if (intentPaidError) throw new Error(intentPaidError.message);
+
+    await finalizeQuoteInternal({
+      supabase: supabase as any,
+      quoteId: String((quote as any).id),
+      correlationId,
+    });
+  }
+
+  return {
+    quote_id: (quote as any).id,
+    subscription_id: subscriptionId,
+    status: providerStatus,
+    finalized: shouldFinalize,
+  };
 }
 
 export async function POST(req: Request) {
@@ -195,105 +481,120 @@ export async function POST(req: Request) {
   try {
     event = JSON.parse(rawBody);
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON payload" }), { status: 400 });
+    return jsonResponse({ error: "Invalid JSON payload" }, 400);
   }
 
   try {
     const eventType = String(event?.event || "").trim().toLowerCase();
-    if (eventType !== "payment.captured") {
-      return new Response(JSON.stringify({ ok: true, ignored: true }), { status: 200 });
+    if (!SUPPORTED_WEBHOOK_EVENTS.has(eventType)) {
+      return jsonResponse({ ok: true, ignored: true, event_type: eventType }, 200);
     }
 
-    const payment = event?.payload?.payment?.entity;
-    const orderId = String(payment?.order_id || event?.payload?.order?.entity?.id || "").trim();
-    const paymentId = String(payment?.id || "").trim();
-    const amountPaise = Number(payment?.amount);
-    const correlationId =
-      String(payment?.notes?.correlation_id || "").trim() || `webhook_${paymentId || Date.now()}`;
-
-    if (!orderId || !paymentId || !Number.isFinite(amountPaise) || amountPaise <= 0) {
-      console.error("Missing required payment capture data", {
-        order_id: orderId,
-        payment_id: paymentId,
-        amount: payment?.amount,
-      });
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
-    }
-
+    const eventId = extractWebhookEventId(headersList, event, eventType);
+    const correlationId = extractWebhookCorrelationId(event, eventId);
     const supabase = getSupabaseAdmin();
 
-    try {
-      await activateTrialFromPaidOrder({
-        supabase,
-        orderId,
-        paymentId,
-        amountPaise,
-        correlationId,
-        paymentNotes: payment?.notes || {},
-      });
-    } catch (trialActivationError) {
-      console.error("Webhook paid-trial activation error:", trialActivationError);
-    }
+    if (eventType === "payment.captured" || eventType === "order.paid") {
+      const payment = event?.payload?.payment?.entity;
+      const orderId = extractOrderId(event);
+      const paymentId = extractPaymentId(event);
+      const amountPaise = extractAmountPaise(event);
 
-    let quoteId: string | null = null;
-
-    const { data: captureResult, error: captureError } = await supabase.rpc("process_payment_intent_capture", {
-      p_razorpay_order_id: orderId,
-      p_razorpay_payment_id: paymentId,
-      p_amount_paise: Math.trunc(amountPaise),
-      p_correlation_id: correlationId,
-    });
-
-    if (captureError) {
-      const message = String(captureError.message || "");
-      if (message.includes("PAYMENT_INTENT_ALREADY_CAPTURED")) {
-        const { data: intentRow } = await supabase
-          .from("payment_intents")
-          .select("quote_id")
-          .eq("razorpay_order_id", orderId)
-          .maybeSingle();
-        quoteId = String((intentRow as any)?.quote_id || "").trim() || null;
-      } else {
-        console.error("Webhook capture error:", captureError);
+      if (eventType === "payment.captured" && orderId && paymentId && amountPaise) {
+        try {
+          await activateTrialFromPaidOrder({
+            supabase,
+            orderId,
+            paymentId,
+            amountPaise,
+            correlationId,
+            paymentNotes: payment?.notes || {},
+          });
+        } catch (trialActivationError) {
+          console.error("Webhook paid-trial activation error:", trialActivationError);
+          return jsonResponse({ ok: false, error: "TRIAL_ACTIVATION_FAILED", event_id: eventId }, 500);
+        }
       }
-    } else {
-      quoteId = String((captureResult as any)?.quote_id || "").trim() || null;
+
+      if (orderId && paymentId && amountPaise) {
+        let quoteId: string | null = null;
+
+        const { data: captureResult, error: captureError } = await supabase.rpc("process_payment_intent_capture", {
+          p_razorpay_order_id: orderId,
+          p_razorpay_payment_id: paymentId,
+          p_amount_paise: amountPaise,
+          p_correlation_id: correlationId,
+        });
+
+        if (captureError) {
+          const message = String(captureError.message || "");
+          if (message.includes("PAYMENT_INTENT_ALREADY_CAPTURED")) {
+            const { data: intentRow } = await supabase
+              .from("payment_intents")
+              .select("quote_id")
+              .eq("razorpay_order_id", orderId)
+              .maybeSingle();
+            quoteId = String((intentRow as any)?.quote_id || "").trim() || null;
+          } else if (!message.includes("PAYMENT_INTENT_NOT_FOUND")) {
+            console.error("Webhook capture error:", captureError);
+            return jsonResponse({ ok: false, error: "PAYMENT_CAPTURE_PROCESSING_FAILED", event_id: eventId }, 500);
+          }
+        } else {
+          quoteId = String((captureResult as any)?.quote_id || "").trim() || null;
+        }
+
+        if (quoteId) {
+          try {
+            await finalizeQuoteInternal({
+              supabase: supabase as any,
+              quoteId,
+              correlationId,
+            });
+          } catch (finalizeError: any) {
+            const message = String(finalizeError?.message || "");
+            if (!message.includes("already_fulfilled")) {
+              console.error("Webhook finalize error:", finalizeError);
+              return jsonResponse({ ok: false, error: "QUOTE_FINALIZATION_FAILED", event_id: eventId }, 500);
+            }
+          }
+        }
+      }
     }
 
-    if (quoteId) {
+    if (eventType.startsWith("subscription.") || eventType.startsWith("invoice.")) {
       try {
-        await finalizeQuoteInternal({
-          supabase: supabase as any,
-          quoteId,
+        await syncQuoteBackedSubscriptionFromWebhook({
+          supabase,
+          eventType,
+          event,
           correlationId,
         });
-      } catch (finalizeError) {
-        console.error("Webhook finalize error:", finalizeError);
+      } catch (subscriptionSyncError) {
+        console.error("Webhook subscription sync error:", subscriptionSyncError);
+        return jsonResponse({ ok: false, error: "SUBSCRIPTION_SYNC_FAILED", event_id: eventId }, 500);
       }
-    } else {
-      console.error("Webhook capture completed without quote_id", {
-        order_id: orderId,
-        payment_id: paymentId,
-      });
     }
 
-    const { error: webhookEventError } = await supabase.rpc("process_razorpay_webhook_event", {
-      p_event_id: paymentId,
+    const { data: webhookResult, error: webhookEventError } = await supabase.rpc("process_razorpay_webhook_event", {
+      p_event_id: eventId,
       p_event_type: event.event,
       p_payload: event,
       p_correlation_id: correlationId,
     });
     if (webhookEventError) {
       console.error("Webhook event RPC error:", webhookEventError);
+      return jsonResponse({ ok: false, error: "WEBHOOK_EVENT_RPC_FAILED", event_id: eventId }, 500);
     }
 
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
-  } catch (err) {
-    console.error("Webhook error:", err);
-
-    return new Response(JSON.stringify({ ok: true }), {
-      status: 200
+    return jsonResponse({
+      ok: true,
+      event_id: eventId,
+      duplicate: Boolean((webhookResult as any)?.duplicate),
+      event_type: eventType,
     });
+  } catch (err: any) {
+    console.error("Webhook error:", err);
+    return jsonResponse({ ok: false, error: String(err?.message || "UNKNOWN_WEBHOOK_ERROR") }, 500);
   }
 }
 

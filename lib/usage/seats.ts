@@ -1,8 +1,36 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { getTrialSeatUsage, getTrialStatus, TRIAL_LIMITS } from '@/lib/trial';
+import { getCompanyEntitlementSnapshot } from '@/lib/entitlement/canonical';
+
+async function getSeatAllocationBreakdown(
+  supabase: SupabaseClient,
+  company_id: string,
+  atIso: string
+): Promise<{ seatsFromPlan: number; seatsFromAddons: number }> {
+  const { data, error } = await supabase
+    .from('quota_allocations')
+    .select('source, amount')
+    .eq('company_id', company_id)
+    .eq('resource', 'seats')
+    .gt('expires_at', atIso);
+
+  if (error) throw error;
+
+  return ((data as Array<{ source: string | null; amount: number | null }>) || []).reduce(
+    (acc, row) => {
+      const amount = Math.max(0, Math.trunc(Number(row.amount ?? 0)));
+      if (row.source === 'subscription' || row.source === 'trial') {
+        acc.seatsFromPlan += amount;
+      } else if (row.source === 'addon') {
+        acc.seatsFromAddons += amount;
+      }
+      return acc;
+    },
+    { seatsFromPlan: 0, seatsFromAddons: 0 }
+  );
+}
 
 /**
- * Get seat limits for a company
+ * Get seat limits for a company from the canonical entitlement ledger.
  */
 export async function getSeatLimits(
   supabase: SupabaseClient,
@@ -14,83 +42,27 @@ export async function getSeatLimits(
   seats_from_plan: number;
   seats_from_addons: number;
 }> {
-  const { data: trialRow } = await supabase
-    .from('company_trials')
-    .select('trial_start, trial_end')
-    .eq('company_id', company_id)
-    .maybeSingle();
+  const atIso = new Date().toISOString();
+  const [snapshot, allocationBreakdown] = await Promise.all([
+    getCompanyEntitlementSnapshot(supabase, company_id, atIso),
+    getSeatAllocationBreakdown(supabase, company_id, atIso),
+  ]);
 
-  if (trialRow) {
-    const trialStatus = getTrialStatus({
-      trial_start: trialRow.trial_start,
-      trial_end: trialRow.trial_end,
-    });
-    if (trialStatus.active) {
-      const usedSeats = await getTrialSeatUsage(supabase, company_id);
-      const max = TRIAL_LIMITS.seat;
-      return {
-        max_seats: max,
-        used_seats: usedSeats,
-        available_seats: Math.max(0, max - usedSeats),
-        seats_from_plan: max,
-        seats_from_addons: 0,
-      };
-    }
-  }
-  // Get subscription
-  const { data: subscription } = await supabase
-    .from('company_subscriptions')
-    .select(`
-      plan_id,
-      subscription_plans!inner(max_users)
-    `)
-    .eq('company_id', company_id)
-    .eq('status', 'ACTIVE')
-    .maybeSingle();
-
-  const plan = Array.isArray(subscription?.subscription_plans) 
-    ? subscription.subscription_plans[0] 
-    : subscription?.subscription_plans;
-  const seatsFromPlan = (plan as { max_users?: number } | undefined)?.max_users || 1;
-
-  // Get seat add-ons
-  const { data: addOns } = await supabase
-    .from('company_add_ons')
-    .select(`
-      quantity,
-      add_ons!inner(name)
-    `)
-    .eq('company_id', company_id)
-    .eq('status', 'ACTIVE');
-
-  let seatsFromAddons = 0;
-  (addOns || []).forEach((addOn: any) => {
-    if (addOn.add_ons?.name?.toLowerCase().includes('seat') || 
-        addOn.add_ons?.name?.toLowerCase().includes('user')) {
-      seatsFromAddons += addOn.quantity || 0;
-    }
-  });
-
-  const maxSeats = seatsFromPlan + seatsFromAddons;
-
-  // Count active seats
-  const { count: usedSeats } = await supabase
-    .from('seats')
-    .select('id', { count: 'exact', head: true })
-    .eq('company_id', company_id)
-    .eq('active', true);
+  const maxSeats = Math.max(0, Math.trunc(snapshot.limits.seat ?? 0));
+  const usedSeats = Math.max(0, Math.trunc(snapshot.usage.seat ?? 0));
+  const availableSeats = Math.max(0, Math.trunc(snapshot.remaining.seat ?? 0));
 
   return {
     max_seats: maxSeats,
-    used_seats: usedSeats || 0,
-    available_seats: Math.max(0, maxSeats - (usedSeats || 0)),
-    seats_from_plan: seatsFromPlan,
-    seats_from_addons: seatsFromAddons,
+    used_seats: usedSeats,
+    available_seats: availableSeats,
+    seats_from_plan: allocationBreakdown.seatsFromPlan,
+    seats_from_addons: allocationBreakdown.seatsFromAddons,
   };
 }
 
 /**
- * Check if a new seat can be created
+ * Check if a new seat can be created.
  */
 export async function canCreateSeat(
   supabase: SupabaseClient,
@@ -105,7 +77,6 @@ export async function canCreateSeat(
   const limits = await getSeatLimits(supabase, company_id);
 
   if (limits.used_seats >= limits.max_seats) {
-    // Log seat limit reached to audit_logs (non-blocking)
     supabase.from('audit_logs').insert({
       action: 'SEAT_LIMIT_REACHED',
       company_id,

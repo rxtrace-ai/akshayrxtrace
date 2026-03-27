@@ -161,9 +161,16 @@ export default function UnitCodeGenerationPage() {
 
     try {
       setGenerating(true);
+      const idempotencyKey =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${selected.id}-${quantity}`;
       const res = await fetch('/api/unit/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        },
         body: JSON.stringify({
           unit_sku_master_id: selected.id,
           quantity,
