@@ -90,6 +90,7 @@ export async function POST(req: Request) {
       invalid: 0,
       errors: [] as Array<{ row: number; error: string }>,
     };
+    const auditIssues: Array<Record<string, any>> = [];
 
     const requestId =
       req.headers.get('Idempotency-Key') ||
@@ -139,24 +140,36 @@ export async function POST(req: Request) {
         // Validate required fields
         if (!sscc) {
           results.errors.push({ row: rowNum, error: 'SSCC is required' });
+          auditIssues.push({ row: rowNum, category: 'invalid', reason: 'SSCC is required' });
           results.invalid++;
           continue;
         }
 
         if (!isValidSSCC(sscc)) {
           results.errors.push({ row: rowNum, error: 'SSCC must be 18 digits' });
+          auditIssues.push({ row: rowNum, category: 'invalid', reason: 'SSCC must be 18 digits', sscc });
           results.invalid++;
           continue;
         }
 
         if (!skuCode) {
           results.errors.push({ row: rowNum, error: 'SKU Code is required' });
+          auditIssues.push({ row: rowNum, category: 'invalid', reason: 'SKU Code is required', sscc });
           results.invalid++;
           continue;
         }
 
         if (!hierarchyLevel || !['BOX', 'CARTON', 'PALLET'].includes(hierarchyLevel)) {
           results.errors.push({ row: rowNum, error: 'Hierarchy Level must be BOX, CARTON, or PALLET' });
+          auditIssues.push({
+            row: rowNum,
+            category: 'invalid',
+            reason: 'Hierarchy Level must be BOX, CARTON, or PALLET',
+            sscc,
+            sku_code: skuCode,
+            batch,
+            hierarchy_level: hierarchyLevel || null,
+          });
           results.invalid++;
           continue;
         }
@@ -200,6 +213,16 @@ export async function POST(req: Request) {
         if (existingCheck?.id) {
           results.duplicates++;
           results.skipped++;
+          auditIssues.push({
+            row: rowNum,
+            category: 'duplicate',
+            reason: `SSCC already exists for ${hierarchyLevel}`,
+            sscc,
+            sku_code: skuCode,
+            batch,
+            hierarchy_level: hierarchyLevel,
+            parent_sscc: parentSscc,
+          });
           continue;
         }
 
@@ -225,6 +248,16 @@ export async function POST(req: Request) {
             parentId = parent.id;
           } else {
             results.errors.push({ row: rowNum, error: `Parent SSCC not found: ${parentSscc}` });
+            auditIssues.push({
+              row: rowNum,
+              category: 'invalid',
+              reason: `Parent SSCC not found: ${parentSscc}`,
+              sscc,
+              sku_code: skuCode,
+              batch,
+              hierarchy_level: hierarchyLevel,
+              parent_sscc: parentSscc,
+            });
             results.invalid++;
             continue;
           }
@@ -262,6 +295,7 @@ export async function POST(req: Request) {
         }
       } catch (rowError: any) {
         results.errors.push({ row: rowNum, error: rowError.message || 'Row processing failed' });
+        auditIssues.push({ row: rowNum, category: 'invalid', reason: rowError.message || 'Row processing failed' });
         results.invalid++;
       }
     }
@@ -365,6 +399,7 @@ export async function POST(req: Request) {
             invalid: results.invalid,
           },
           error_count: results.errors.length,
+          issue_rows: auditIssues,
         },
       });
     } catch (auditError) {

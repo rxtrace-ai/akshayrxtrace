@@ -4,8 +4,6 @@ import { supabaseServer } from '@/lib/supabase/server';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { writeAuditLog } from '@/lib/audit';
 import { generateCanonicalGS1 } from '@/lib/gs1Canonical';
-import { resolveCodeMode } from '@/lib/codeMode';
-import { buildPicUnitPayload } from '@/lib/picPayload';
 import { enforceEntitlement, refundEntitlement } from '@/lib/entitlement/enforce';
 import { UsageType } from '@/lib/entitlement/usageTypes';
 import { resolveExactUnitSkuMasterId, resolveLegacySkuIdForCode } from '@/lib/unitSkuMasterLink';
@@ -87,6 +85,8 @@ export async function POST(req: Request) {
       invalid: 0,
       errors: [] as Array<{ row: number; error: string }>,
     };
+    const auditIssues: Array<Record<string, any>> = [];
+    const seenSerialKeys = new Set<string>();
 
     const requestId =
       req.headers.get('Idempotency-Key') ||
@@ -105,7 +105,7 @@ export async function POST(req: Request) {
       mrp: string | null;
       serial: string;
       gs1_payload: string;
-      code_mode: 'GS1' | 'PIC';
+      code_mode: 'GS1';
       payload: string;
     }> = [];
 
@@ -127,59 +127,108 @@ export async function POST(req: Request) {
         // Validate required fields
         if (!skuCode) {
           results.errors.push({ row: rowNum, error: 'SKU Code is required' });
+          auditIssues.push({ row: rowNum, category: 'invalid', reason: 'SKU Code is required' });
           results.invalid++;
           continue;
         }
 
         if (!batch) {
           results.errors.push({ row: rowNum, error: 'Batch Number is required' });
+          auditIssues.push({ row: rowNum, category: 'invalid', reason: 'Batch Number is required', sku_code: skuCode });
           results.invalid++;
           continue;
         }
 
         if (!expiryDate) {
           results.errors.push({ row: rowNum, error: 'Expiry Date is required' });
+          auditIssues.push({ row: rowNum, category: 'invalid', reason: 'Expiry Date is required', sku_code: skuCode, batch });
           results.invalid++;
           continue;
         }
 
         if (!serialNumber) {
           results.errors.push({ row: rowNum, error: 'Serial Number is required' });
+          auditIssues.push({ row: rowNum, category: 'invalid', reason: 'Serial Number is required', sku_code: skuCode, batch, gtin });
           results.invalid++;
           continue;
         }
 
         const skuId = await resolveLegacySkuIdForCode(admin, companyId, skuCode);
 
-        // Determine mode + normalize/validate GTIN if provided
-        const codeMode = resolveCodeMode({ gtin });
-        let finalGtin: string | null = null;
-        if (codeMode === 'GS1') {
-          const { validateGTIN } = await import('@/lib/gs1/gtin');
-          const validation = validateGTIN(gtin!);
-          if (!validation.valid) {
-            results.errors.push({ row: rowNum, error: validation.error || 'Invalid GTIN format' });
-            results.invalid++;
-            continue;
-          }
-          finalGtin = validation.normalized!;
+        if (!gtin) {
+          results.errors.push({
+            row: rowNum,
+            error: 'GTIN is required. ERP unit ingestion only accepts valid GS1/GTIN-based codes.',
+          });
+          auditIssues.push({
+            row: rowNum,
+            category: 'invalid',
+            reason: 'GTIN is required. ERP unit ingestion only accepts valid GS1/GTIN-based codes.',
+            sku_code: skuCode,
+            batch,
+            serial_number: serialNumber,
+          });
+          results.invalid++;
+          continue;
         }
 
-        // Check for duplicate serial (same company, GTIN, serial)
-        if (finalGtin) {
-          const { data: existing } = await admin
-            .from('labels_units')
-            .select('id')
-            .eq('company_id', companyId)
-            .eq('gtin', finalGtin)
-            .eq('serial', serialNumber)
-            .maybeSingle();
+        const { validateGTIN } = await import('@/lib/gs1/gtin');
+        const validation = validateGTIN(gtin);
+        if (!validation.valid) {
+          results.errors.push({ row: rowNum, error: validation.error || 'Invalid GTIN format' });
+          auditIssues.push({
+            row: rowNum,
+            category: 'invalid',
+            reason: validation.error || 'Invalid GTIN format',
+            sku_code: skuCode,
+            batch,
+            serial_number: serialNumber,
+            gtin,
+          });
+          results.invalid++;
+          continue;
+        }
+        const finalGtin = validation.normalized!;
 
-          if (existing?.id) {
-            results.duplicates++;
-            results.skipped++;
-            continue;
-          }
+        const serialKey = `${companyId}::${finalGtin}::${serialNumber}`;
+        if (seenSerialKeys.has(serialKey)) {
+          results.duplicates++;
+          results.skipped++;
+          auditIssues.push({
+            row: rowNum,
+            category: 'duplicate',
+            reason: 'Duplicate GTIN + serial in uploaded file',
+            sku_code: skuCode,
+            batch,
+            serial_number: serialNumber,
+            gtin: finalGtin,
+          });
+          continue;
+        }
+        seenSerialKeys.add(serialKey);
+
+        // Check for duplicate serial (same company, GTIN, serial)
+        const { data: existing } = await admin
+          .from('labels_units')
+          .select('id')
+          .eq('company_id', companyId)
+          .eq('gtin', finalGtin)
+          .eq('serial', serialNumber)
+          .maybeSingle();
+
+        if (existing?.id) {
+          results.duplicates++;
+          results.skipped++;
+          auditIssues.push({
+            row: rowNum,
+            category: 'duplicate',
+            reason: 'GTIN + serial already exists for this company',
+            sku_code: skuCode,
+            batch,
+            serial_number: serialNumber,
+            gtin: finalGtin,
+          });
+          continue;
         }
 
         // Generate payload (GS1 or PIC)
@@ -208,24 +257,23 @@ export async function POST(req: Request) {
         }
 
         try {
-          payload =
-            codeMode === 'GS1'
-              ? generateCanonicalGS1({
-                  gtin: finalGtin!,
-                  expiry: normalizedExpiry,
-                  batch,
-                  serial: serialNumber,
-                })
-              : buildPicUnitPayload({
-                  sku: skuCode,
-                  batch,
-                  expiryYYMMDD: normalizedExpiry.replace(/-/g, '').slice(2), // YYYYMMDD -> YYMMDD
-                  mfgYYMMDD: normalizedMfd ? normalizedMfd.replace(/-/g, '').slice(2) : undefined,
-                  serial: serialNumber,
-                  mrp: mrp || undefined,
-                });
+          payload = generateCanonicalGS1({
+            gtin: finalGtin,
+            expiry: normalizedExpiry,
+            batch,
+            serial: serialNumber,
+          });
         } catch (e: any) {
           results.errors.push({ row: rowNum, error: `Payload generation failed: ${e.message}` });
+          auditIssues.push({
+            row: rowNum,
+            category: 'invalid',
+            reason: `Payload generation failed: ${e.message}`,
+            sku_code: skuCode,
+            batch,
+            serial_number: serialNumber,
+            gtin: finalGtin,
+          });
           results.invalid++;
           continue;
         }
@@ -251,11 +299,12 @@ export async function POST(req: Request) {
           mrp,
           serial: serialNumber,
           gs1_payload: payload,
-          code_mode: codeMode,
+          code_mode: 'GS1',
           payload,
         });
       } catch (rowError: any) {
         results.errors.push({ row: rowNum, error: rowError.message || 'Row processing failed' });
+        auditIssues.push({ row: rowNum, category: 'invalid', reason: rowError.message || 'Row processing failed' });
         results.invalid++;
       }
     }
@@ -343,6 +392,7 @@ export async function POST(req: Request) {
             invalid: results.invalid,
           },
           error_count: results.errors.length,
+          issue_rows: auditIssues,
         },
       });
     } catch (auditError) {

@@ -8,6 +8,17 @@ import { sanitizeFilterToken } from "@/lib/api/filter";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function escapeCsvValue(value: unknown) {
+  const normalized =
+    value === null || value === undefined
+      ? ""
+      : typeof value === "string"
+        ? value
+        : JSON.stringify(value);
+
+  return `"${normalized.replace(/"/g, '""')}"`;
+}
+
 function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array<ArrayBuffer> {
   const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
   const buffer = new ArrayBuffer(total);
@@ -76,14 +87,24 @@ export async function GET(req: Request) {
     const { data } = await query;
 
     const csv = [
-      "Date,Actor,Action,Status,Integration",
+      "Date,Actor,Action,Status,Integration,Total,Imported,Duplicates,Invalid,Skipped,Issue Count,Issue Details",
       ...(data || []).map((r) => {
-        const createdAt = r.created_at ?? "";
-        const actor = r.actor ?? "";
-        const action = r.action ?? "";
-        const status = r.status ?? "";
-        const integration = r.integration_system ?? "";
-        return `"${createdAt}","${actor}","${action}","${status}","${integration}"`;
+        const validation = r.metadata?.validation_result || {};
+        const issues = Array.isArray(r.metadata?.issue_rows) ? r.metadata.issue_rows : [];
+        return [
+          escapeCsvValue(r.created_at),
+          escapeCsvValue(r.actor),
+          escapeCsvValue(r.action),
+          escapeCsvValue(r.status),
+          escapeCsvValue(r.integration_system),
+          escapeCsvValue(validation.total),
+          escapeCsvValue(validation.imported),
+          escapeCsvValue(validation.duplicates),
+          escapeCsvValue(validation.invalid),
+          escapeCsvValue(validation.skipped),
+          escapeCsvValue(issues.length),
+          escapeCsvValue(issues),
+        ].join(",");
       }),
     ].join("\n");
 
