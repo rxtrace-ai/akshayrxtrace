@@ -479,7 +479,7 @@ function SubscriptionPageContent() {
       if (!res.ok || !payload.success) {
         throw new Error(payload.error || "Failed to cancel subscription");
       }
-      setMessage(`Auto-renew cancelled. Active until ${formatDateLabel(payload.subscription?.current_period_end || currentSubscription?.current_period_end)}.`);
+      setMessage(`Subscription ends on ${formatDateLabel(payload.subscription?.current_period_end || currentSubscription?.current_period_end)}.`);
       await refreshPageState();
     } catch (err: any) {
       setError(err?.message || "Failed to cancel subscription");
@@ -488,8 +488,9 @@ function SubscriptionPageContent() {
     }
   }, [currentSubscription?.current_period_end, refreshPageState]);
 
-  const startSubscription = useCallback(async () => {
-    if (!selectedPlanTemplateId) {
+  const startSubscription = useCallback(async (overridePlanTemplateId?: string) => {
+    const targetPlanTemplateId = overridePlanTemplateId || selectedPlanTemplateId;
+    if (!targetPlanTemplateId) {
       setError("Select a plan first.");
       return;
     }
@@ -499,8 +500,21 @@ function SubscriptionPageContent() {
         : currentSubscription
           ? "Plan update initiated. Subscription lifecycle and local sync will continue through provider events."
           : "Subscription authentication completed. Provider activation and local sync will continue through the subscription lifecycle.";
-    await beginCheckout({ planTemplateId: selectedPlanTemplateId, successMessage });
+    await beginCheckout({ planTemplateId: targetPlanTemplateId, successMessage });
   }, [beginCheckout, currentSubscription, selectedPlanTemplateId, subscriptionStatus]);
+
+  const renewSubscription = useCallback(async () => {
+    const targetPlanTemplateId = currentPlanId || selectedPlanTemplateId;
+    if (!targetPlanTemplateId) {
+      setError("Select a plan first.");
+      return;
+    }
+    await startSubscription(targetPlanTemplateId);
+  }, [currentPlanId, selectedPlanTemplateId, startSubscription]);
+
+  const upgradeSubscription = useCallback(async () => {
+    await startSubscription(selectedPlanTemplateId);
+  }, [selectedPlanTemplateId, startSubscription]);
 
   const buyCapacity = useCallback(async () => {
     if (!context?.current_subscription) {
@@ -535,13 +549,6 @@ function SubscriptionPageContent() {
 
   if (loading) return <p className="text-sm text-gray-500">Loading subscription...</p>;
   if (!context) return <p className="text-sm text-rose-600">Unable to load subscription context.</p>;
-
-  const subscriptionActionLabel =
-    !currentSubscription
-      ? "Start Subscription"
-      : subscriptionStatus === "expired" || subscriptionStatus === "cancelled"
-        ? "Renew"
-        : "Upgrade";
 
   return (
     <div className="space-y-6">
@@ -578,20 +585,22 @@ function SubscriptionPageContent() {
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-lg font-semibold">{currentSubscription.plan_name || "Subscription"}</p>
                     <Badge variant="outline">{normalizeStatusLabel(subscriptionStatus)}</Badge>
-                    {isCancelledAtPeriodEnd ? <Badge className="bg-amber-100 text-amber-900">Auto-renew cancelled</Badge> : null}
                   </div>
                   <p className="text-gray-500">
                     {currentSubscription.billing_cycle || "-"} | {formatINRFromPaise(currentSubscription.plan_price_paise || 0)}
                   </p>
                   <p className="text-gray-600">
                     {isCancelledAtPeriodEnd
-                      ? `Active until ${formatDateLabel(currentSubscription.current_period_end)}`
+                      ? `Ends on ${formatDateLabel(currentSubscription.current_period_end)}`
                       : `Active until ${formatDateLabel(currentSubscription.current_period_end)}`}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button onClick={startSubscription} disabled={submitting}>
-                    {subscriptionActionLabel}
+                  <Button onClick={renewSubscription} disabled={submitting}>
+                    Renew
+                  </Button>
+                  <Button onClick={upgradeSubscription} disabled={submitting}>
+                    Upgrade
                   </Button>
                   {!isCancelledAtPeriodEnd ? (
                     <Button variant="destructive" onClick={cancelSubscription} disabled={submitting}>
@@ -637,7 +646,7 @@ function SubscriptionPageContent() {
                 <p className="font-medium">No active subscription</p>
                 <p className="text-gray-500">Start or renew a plan to enable generation and quota usage.</p>
               </div>
-              <Button onClick={startSubscription} disabled={submitting || !selectedPlanTemplateId}>
+              <Button onClick={() => startSubscription()} disabled={submitting || !selectedPlanTemplateId}>
                 {subscriptionStatus === "expired" || subscriptionStatus === "cancelled" ? "Renew" : "Start Subscription"}
               </Button>
             </div>
@@ -697,8 +706,8 @@ function SubscriptionPageContent() {
                   {selectedPlan.billing_cycle} | {formatINRFromPaise(selectedPlan.plan_price_paise)}
                 </p>
               </div>
-              <Button onClick={startSubscription} disabled={submitting}>
-                {subscriptionActionLabel}
+              <Button onClick={currentSubscription ? upgradeSubscription : () => startSubscription()} disabled={submitting}>
+                {currentSubscription ? "Upgrade" : subscriptionStatus === "expired" || subscriptionStatus === "cancelled" ? "Renew" : "Start Subscription"}
               </Button>
             </div>
           ) : null}
