@@ -58,6 +58,22 @@ function getCacheKey(companyId: string, view: SummaryView) {
   return `${companyId}:${view}`;
 }
 
+function classifyInvoiceLabel(row: any): string {
+  const invoiceType = String(row?.invoice_type || "").trim().toLowerCase();
+  if (invoiceType === "subscription") return "Subscription";
+
+  const metadata = row?.metadata as Record<string, any> | null | undefined;
+  const addonSnapshot = metadata?.addons_snapshot as Record<string, any> | undefined;
+  const capacityCount = Array.isArray(addonSnapshot?.capacity_addons) ? addonSnapshot.capacity_addons.length : 0;
+  const codeCount = Array.isArray(addonSnapshot?.code_addons) ? addonSnapshot.code_addons.length : 0;
+
+  if (capacityCount > 0 && codeCount === 0) return "Capacity Add-on";
+  if (codeCount > 0 && capacityCount === 0) return "Code Top-Up";
+  if (capacityCount > 0 || codeCount > 0) return "Add-on Purchase";
+  if (invoiceType === "addon_topup") return "Code Top-Up";
+  return "Invoice";
+}
+
 async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwnerContext>>, view: SummaryView) {
   if (!owner.ok) {
     throw new Error("UNAUTHORIZED");
@@ -77,11 +93,12 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
 
   const currentSubscription = subscriptionStatus.subscription ?? null;
   const subTemplate = (currentSubscription as any)?.subscription_plan_templates || null;
+  const nowTs = Date.now();
 
   const structuralAddOnsPromise = includeCapacity
     ? owner.supabase
         .from("company_addon_subscriptions")
-        .select("addon_id, quantity, status, add_ons(name, entitlement_key, addon_kind, billing_mode)")
+        .select("addon_id, quantity, status, starts_at, ends_at, add_ons(name, entitlement_key, addon_kind, billing_mode, duration_days)")
         .eq("company_id", owner.companyId)
         .eq("status", "active")
         .order("created_at", { ascending: false })
@@ -91,7 +108,7 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
     ? owner.supabase
         .from("billing_invoices")
         .select(
-          "id, invoice_type, status, reference, plan, amount, currency, period_start, period_end, due_at, issued_at, paid_at, invoice_pdf_url, created_at"
+          "id, invoice_type, status, reference, plan, amount, currency, period_start, period_end, due_at, issued_at, paid_at, invoice_pdf_url, created_at, metadata"
         )
         .eq("company_id", owner.companyId)
         .order("created_at", { ascending: false })
@@ -142,7 +159,10 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
 
   const structuralCapacityRows = ((structuralResult.data as any[]) || []).filter((row: any) => {
     const addon = row.add_ons;
-    return addon?.addon_kind === "structural" && addon?.billing_mode === "recurring";
+    const startsAt = row?.starts_at ? Date.parse(String(row.starts_at)) : Number.NEGATIVE_INFINITY;
+    const endsAt = row?.ends_at ? Date.parse(String(row.ends_at)) : Number.POSITIVE_INFINITY;
+    const activeByDate = startsAt <= nowTs && endsAt > nowTs;
+    return addon?.addon_kind === "structural" && addon?.billing_mode === "recurring" && activeByDate;
   });
 
   const addonCapacityByMetric = structuralCapacityRows.reduce<Record<"seat" | "plant" | "handset", number>>(
@@ -266,6 +286,9 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       entitlement_key: row.add_ons?.entitlement_key ?? null,
       quantity: row.quantity,
       status: row.status,
+      starts_at: row.starts_at ?? null,
+      ends_at: row.ends_at ?? null,
+      duration_days: row.add_ons?.duration_days ?? null,
     }));
     responseBody.add_on_balances = {
       unit: entitlement.topups?.unit ?? 0,
@@ -284,6 +307,7 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       })(),
       id: row.id,
       invoice_type: row.invoice_type,
+      invoice_label: classifyInvoiceLabel(row),
       status: row.status,
       reference: row.reference,
       plan: row.plan,
@@ -304,6 +328,9 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       entitlement_key: row.add_ons?.entitlement_key ?? null,
       quantity: row.quantity,
       status: row.status,
+      starts_at: row.starts_at ?? null,
+      ends_at: row.ends_at ?? null,
+      duration_days: row.add_ons?.duration_days ?? null,
     }));
     responseBody.company_profile = companyProfileResult.data ?? null;
   }

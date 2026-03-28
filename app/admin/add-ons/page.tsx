@@ -22,6 +22,7 @@ type AddOn = {
   recurring: boolean;
   is_active: boolean;
   display_order: number;
+  duration_days: number | null;
   addon_kind: AddOnKind;
   entitlement_key: EntitlementKey;
   billing_mode: BillingMode;
@@ -34,10 +35,10 @@ type AddOnFormState = {
   unit: string;
   pricing_unit_size: string;
   display_order: string;
+  duration_days: string;
   is_active: boolean;
   addon_kind: AddOnKind;
   entitlement_key: EntitlementKey;
-  billing_mode: BillingMode;
 };
 
 const CAPACITY_KEYS: EntitlementKey[] = ['seat', 'plant', 'handset'];
@@ -56,14 +57,14 @@ function toFormState(addOn: AddOn | null): AddOnFormState {
       name: '',
       description: '',
       price: '0',
-      unit: 'unit',
-      pricing_unit_size: '10000',
-      display_order: '0',
-      is_active: true,
-      addon_kind: 'variable_quota',
-      entitlement_key: 'unit',
-      billing_mode: 'one_time',
-    };
+        unit: 'unit',
+        pricing_unit_size: '10000',
+        display_order: '0',
+        duration_days: '30',
+        is_active: true,
+        addon_kind: 'variable_quota',
+        entitlement_key: 'unit',
+      };
   }
   return {
     name: addOn.name || '',
@@ -72,10 +73,10 @@ function toFormState(addOn: AddOn | null): AddOnFormState {
     unit: addOn.unit || 'unit',
     pricing_unit_size: String(addOn.pricing_unit_size ?? 1),
     display_order: String(addOn.display_order ?? 0),
+    duration_days: addOn.duration_days == null ? '30' : String(addOn.duration_days),
     is_active: addOn.is_active,
     addon_kind: addOn.addon_kind || 'variable_quota',
     entitlement_key: addOn.entitlement_key || 'unit',
-    billing_mode: addOn.billing_mode || (addOn.recurring ? 'recurring' : 'one_time'),
   };
 }
 
@@ -88,6 +89,7 @@ function validateForm(form: AddOnFormState): string | null {
   if (!Number.isFinite(displayOrder) || displayOrder < 0) return 'Display order must be a non-negative number';
   const pricingUnitSize = Number(form.pricing_unit_size);
   if (!Number.isFinite(pricingUnitSize) || pricingUnitSize <= 0) return 'Pricing unit size must be greater than zero';
+  const durationDays = Number(form.duration_days);
 
   if (form.addon_kind === 'structural' && !CAPACITY_KEYS.includes(form.entitlement_key)) {
     return 'Capacity add-ons require seat/plant/handset';
@@ -95,13 +97,16 @@ function validateForm(form: AddOnFormState): string | null {
   if (form.addon_kind === 'variable_quota' && !CODE_KEYS.includes(form.entitlement_key)) {
     return 'Code add-ons require unit/box/carton/pallet';
   }
+  if (form.addon_kind === 'structural' && ![30, 60, 90].includes(durationDays)) {
+    return 'Capacity add-ons require duration 30, 60, or 90 days';
+  }
   return null;
 }
 
 function normalizePayload(form: AddOnFormState) {
   const price = Number(form.price);
   const displayOrder = Number(form.display_order);
-  const recurring = form.billing_mode === 'recurring';
+  const isCapacity = form.addon_kind === 'structural';
   return {
     name: form.name.trim(),
     description: form.description.trim() || null,
@@ -109,12 +114,21 @@ function normalizePayload(form: AddOnFormState) {
     unit: form.unit.trim(),
     pricing_unit_size: Math.max(1, Math.trunc(Number(form.pricing_unit_size) || 1)),
     display_order: Number.isFinite(displayOrder) ? Math.trunc(displayOrder) : 0,
+    duration_days: isCapacity ? Math.max(30, Math.trunc(Number(form.duration_days) || 30)) : null,
     is_active: form.is_active,
     addon_kind: form.addon_kind,
     entitlement_key: form.entitlement_key,
-    billing_mode: form.billing_mode,
-    recurring,
+    billing_mode: isCapacity ? 'recurring' : 'one_time',
+    recurring: isCapacity,
   };
+}
+
+function buildCatalogExample(form: AddOnFormState) {
+  const price = Number(form.price || 0);
+  if (form.addon_kind === 'structural') {
+    return `1 ${form.unit || 'unit'} = 1 ${form.entitlement_key} for ${form.duration_days || '30'} days @ INR ${Number.isFinite(price) ? price : 0}`;
+  }
+  return `1 ${form.unit || 'unit'} = ${Math.max(1, Math.trunc(Number(form.pricing_unit_size) || 1)).toLocaleString()} ${form.entitlement_key} codes @ INR ${Number.isFinite(price) ? price : 0}`;
 }
 
 export default function AdminAddOnsPage() {
@@ -239,7 +253,7 @@ export default function AdminAddOnsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-[#0052CC]">Add-ons</h1>
-          <p className="mt-1 text-gray-600">Admin-managed code add-ons and capacity add-ons.</p>
+          <p className="mt-1 text-gray-600">Admin-managed code top-ups and time-bound capacity add-ons.</p>
         </div>
         <div className="flex gap-2">
           <Button onClick={fetchAddOns} disabled={loading || saving} variant="outline">
@@ -282,7 +296,7 @@ export default function AdminAddOnsPage() {
                       ...prev,
                       addon_kind: addonKind,
                       entitlement_key: addonKind === 'structural' ? 'seat' : 'unit',
-                      billing_mode: addonKind === 'structural' ? 'recurring' : 'one_time',
+                      duration_days: addonKind === 'structural' ? '30' : prev.duration_days,
                       pricing_unit_size: addonKind === 'structural' ? '1' : prev.pricing_unit_size,
                     }));
                   }}
@@ -308,32 +322,46 @@ export default function AdminAddOnsPage() {
                 <Input type="number" min={0} value={form.price} onChange={(e) => setForm((prev) => ({ ...prev, price: e.target.value }))} />
               </div>
               <div className="space-y-2">
-                <Label>Billing Mode</Label>
-                <select
-                  className="w-full rounded-md border px-3 py-2 text-sm"
-                  value={form.billing_mode}
-                  onChange={(e) => setForm((prev) => ({ ...prev, billing_mode: e.target.value as BillingMode }))}
-                >
-                  <option value="one_time">One-time</option>
-                  <option value="recurring">Recurring</option>
-                </select>
+                <Label>Purchase Model</Label>
+                <Input
+                  value={form.addon_kind === 'structural' ? 'Time-bound capacity add-on' : 'One-time code top-up'}
+                  readOnly
+                  disabled
+                />
               </div>
               <div className="space-y-2">
                 <Label>Unit Label</Label>
                 <Input value={form.unit} onChange={(e) => setForm((prev) => ({ ...prev, unit: e.target.value }))} />
               </div>
               <div className="space-y-2">
-                <Label>Pricing Unit Size</Label>
+                <Label>{form.addon_kind === 'structural' ? 'Quantity Per Unit' : 'Codes Per Unit'}</Label>
                 <Input
                   type="number"
                   min={1}
                   value={form.pricing_unit_size}
                   onChange={(e) => setForm((prev) => ({ ...prev, pricing_unit_size: e.target.value }))}
+                  disabled={form.addon_kind === 'structural'}
                 />
                 <p className="text-xs text-gray-500">
-                  For code add-ons, 1 purchased unit grants this many codes. Capacity add-ons should stay at 1.
+                  {form.addon_kind === 'structural'
+                    ? 'Capacity add-ons always grant one entitlement per purchased unit.'
+                    : 'For code add-ons, 1 purchased unit grants this many codes.'}
                 </p>
               </div>
+              {form.addon_kind === 'structural' ? (
+                <div className="space-y-2">
+                  <Label>Duration</Label>
+                  <select
+                    className="w-full rounded-md border px-3 py-2 text-sm"
+                    value={form.duration_days}
+                    onChange={(e) => setForm((prev) => ({ ...prev, duration_days: e.target.value }))}
+                  >
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                  </select>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <Label>Display Order</Label>
                 <Input
@@ -343,6 +371,11 @@ export default function AdminAddOnsPage() {
                   onChange={(e) => setForm((prev) => ({ ...prev, display_order: e.target.value }))}
                 />
               </div>
+            </div>
+
+            <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
+              <p className="font-medium text-slate-900">Catalog Preview</p>
+              <p className="mt-1">{buildCatalogExample(form)}</p>
             </div>
 
             <div className="flex gap-2">
@@ -408,6 +441,9 @@ export default function AdminAddOnsPage() {
                   </Badge>
                 </div>
                 {addOn.description ? <p className="mt-2 text-sm text-gray-600">{addOn.description}</p> : null}
+                <p className="mt-2 text-xs text-slate-600">
+                  Duration: {addOn.duration_days ?? 30} days. Purchase unit: {addOn.unit}.
+                </p>
                 <div className="mt-3 flex gap-2">
                   <Button size="sm" variant="outline" onClick={() => openEdit(addOn)}>Edit</Button>
                   <Button size="sm" variant="outline" onClick={() => handleToggleActive(addOn)}>

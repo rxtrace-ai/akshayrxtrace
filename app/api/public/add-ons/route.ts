@@ -13,7 +13,7 @@ export async function GET() {
     );
     const { data, error } = await supabase
       .from("add_ons")
-      .select("id, name, description, price, unit, pricing_unit_size, recurring, addon_kind, entitlement_key, billing_mode")
+      .select("id, name, description, price, unit, pricing_unit_size, duration_days, recurring, addon_kind, entitlement_key, billing_mode")
       .eq("is_active", true)
       .order("display_order", { ascending: true });
 

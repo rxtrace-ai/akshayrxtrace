@@ -394,6 +394,17 @@ export async function PUT(req: NextRequest) {
   const templateId = normalizeText((body as any).template_id);
   if (!templateId) return errorResponse(400, "BAD_REQUEST", "template_id is required", correlationId);
 
+  const immutableCommercialFields = ["name", "description", "billing_cycle", "plan_price", "razorpay_plan_id", "pricing_unit_size"];
+  const attemptedCommercialEdit = immutableCommercialFields.some((field) => field in (body as any));
+  if (attemptedCommercialEdit) {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "Commercial plan fields are locked after creation. Create a new plan for name/price/timeline/provider changes, or publish a new version for quota updates.",
+      correlationId
+    );
+  }
+
   const idempotency = await checkAdminIdempotency({
     adminId: auth.userId,
     endpoint,
@@ -411,26 +422,6 @@ export async function PUT(req: NextRequest) {
   if (!beforeState) return errorResponse(404, "NOT_FOUND", "Template not found", correlationId);
 
   const templateUpdates: Record<string, unknown> = {};
-  if ("name" in (body as any)) templateUpdates.name = normalizeText((body as any).name);
-  if ("description" in (body as any)) templateUpdates.description = normalizeText((body as any).description) || null;
-  if ("billing_cycle" in (body as any)) {
-    const billingCycle = normalizeText((body as any).billing_cycle).toLowerCase();
-    if (!["monthly", "yearly"].includes(billingCycle)) {
-      return errorResponse(400, "BAD_REQUEST", "billing_cycle must be monthly or yearly", correlationId);
-    }
-    templateUpdates.billing_cycle = billingCycle;
-  }
-  if ("plan_price" in (body as any)) templateUpdates.plan_price = toPaise((body as any).plan_price);
-  if ("razorpay_plan_id" in (body as any)) {
-    const nextProviderPlanId = normalizeProviderPlanId((body as any).razorpay_plan_id);
-    if (!nextProviderPlanId) {
-      return errorResponse(400, "BAD_REQUEST", "razorpay_plan_id cannot be empty", correlationId);
-    }
-    templateUpdates.razorpay_plan_id = nextProviderPlanId;
-  }
-  if ("pricing_unit_size" in (body as any)) {
-    templateUpdates.pricing_unit_size = Math.max(1, nonNegativeInt((body as any).pricing_unit_size, 1));
-  }
   if ("is_active" in (body as any)) templateUpdates.is_active = (body as any).is_active === true;
 
   if (Object.keys(templateUpdates).length > 0) {

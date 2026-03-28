@@ -27,6 +27,7 @@ type NormalizedAddOn = {
   pricing_unit_size: number;
   recurring: boolean;
   display_order: number;
+  duration_days: number | null;
   is_active?: boolean;
   addon_kind: "structural" | "variable_quota";
   entitlement_key: "seat" | "plant" | "handset" | "unit" | "box" | "carton" | "pallet";
@@ -59,11 +60,15 @@ function normalizeAddOnPayload(body: Record<string, unknown>, isUpdate: boolean)
   const unit = normalizeText(body.unit) || "unit";
   const entitlementRaw = normalizeText(body.entitlement_key).toLowerCase();
   const kindRaw = normalizeText(body.addon_kind).toLowerCase();
-  const billingModeRaw = normalizeText(body.billing_mode).toLowerCase();
   const recurringRaw = body.recurring;
   const price = parseNumber(body.price, NaN);
   const displayOrder = parseNumber(body.display_order, 0);
   const pricingUnitSize = Math.max(1, Math.trunc(parseNumber(body.pricing_unit_size, 1)));
+  const rawDurationDays = body.duration_days;
+  const durationDays =
+    rawDurationDays === null || rawDurationDays === undefined || rawDurationDays === ""
+      ? null
+      : Math.max(0, Math.trunc(parseNumber(rawDurationDays, 0)));
   const isActive = typeof body.is_active === "boolean" ? body.is_active : undefined;
 
   if (!isUpdate) {
@@ -75,13 +80,6 @@ function normalizeAddOnPayload(body: Record<string, unknown>, isUpdate: boolean)
     (entitlementRaw && VALID_KEYS.has(entitlementRaw) ? entitlementRaw : inferEntitlementFromName(name || "unit")) as NormalizedAddOn["entitlement_key"];
   const inferredKind: NormalizedAddOn["addon_kind"] = CAPACITY_KEYS.has(entitlement) ? "structural" : "variable_quota";
   const addonKind = (kindRaw === "structural" || kindRaw === "variable_quota" ? kindRaw : inferredKind) as NormalizedAddOn["addon_kind"];
-  const billingMode =
-    (billingModeRaw === "recurring" || billingModeRaw === "one_time"
-      ? billingModeRaw
-      : addonKind === "structural"
-      ? "recurring"
-      : "one_time") as NormalizedAddOn["billing_mode"];
-
   if (addonKind === "structural" && !CAPACITY_KEYS.has(entitlement)) {
     return { error: "capacity add-ons must use entitlement_key seat|plant|handset" };
   }
@@ -89,7 +87,16 @@ function normalizeAddOnPayload(body: Record<string, unknown>, isUpdate: boolean)
     return { error: "code add-ons must use entitlement_key unit|box|carton|pallet" };
   }
 
-  const recurring = typeof recurringRaw === "boolean" ? recurringRaw : billingMode === "recurring";
+  if (addonKind === "structural") {
+    if (![30, 60, 90].includes(durationDays ?? 0)) {
+      return { error: "capacity add-ons must use duration_days 30, 60, or 90" };
+    }
+  } else if (durationDays !== null) {
+    return { error: "code add-ons cannot define duration_days" };
+  }
+
+  const effectiveBillingMode = addonKind === "structural" ? "recurring" : "one_time";
+  const recurring = typeof recurringRaw === "boolean" ? recurringRaw : effectiveBillingMode === "recurring";
 
   return {
     value: {
@@ -100,10 +107,11 @@ function normalizeAddOnPayload(body: Record<string, unknown>, isUpdate: boolean)
       pricing_unit_size: pricingUnitSize,
       recurring,
       display_order: Math.max(0, Math.trunc(displayOrder)),
+      duration_days: addonKind === "structural" ? durationDays : null,
       is_active: isActive,
       addon_kind: addonKind,
       entitlement_key: entitlement,
-      billing_mode: billingMode,
+      billing_mode: effectiveBillingMode,
     },
   };
 }
@@ -232,6 +240,9 @@ export async function PUT(req: NextRequest) {
   if ("price" in (body as any)) updates.price = normalized.value.price;
   if ("unit" in (body as any)) updates.unit = normalized.value.unit;
   if ("pricing_unit_size" in (body as any)) updates.pricing_unit_size = normalized.value.pricing_unit_size;
+  if ("duration_days" in (body as any) || normalized.value.addon_kind === "structural") {
+    updates.duration_days = normalized.value.duration_days;
+  }
   if ("recurring" in (body as any) || "billing_mode" in (body as any)) updates.recurring = normalized.value.recurring;
   if ("display_order" in (body as any)) updates.display_order = normalized.value.display_order;
   if ("is_active" in (body as any)) updates.is_active = normalized.value.is_active;

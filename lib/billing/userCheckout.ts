@@ -42,6 +42,7 @@ export type ActiveAddOn = {
   price: number;
   unit: string;
   pricing_unit_size: number;
+  duration_days?: number | null;
   addon_kind: AddOnKind;
   entitlement_key: CheckoutMetric;
   billing_mode: BillingMode;
@@ -253,6 +254,7 @@ export async function loadCheckoutCatalog(supabase: SupabaseClient): Promise<{
     price: toNumber(row.price, 0),
     unit: String(row.unit || "unit"),
     pricing_unit_size: Math.max(1, toPositiveInt(row.pricing_unit_size || 1)),
+    duration_days: row.duration_days == null ? null : Math.max(0, toPositiveInt(row.duration_days)),
     addon_kind: row.addon_kind === "structural" ? "structural" : "variable_quota",
     entitlement_key: row.entitlement_key as CheckoutMetric,
     billing_mode: row.billing_mode === "recurring" ? "recurring" : "one_time",

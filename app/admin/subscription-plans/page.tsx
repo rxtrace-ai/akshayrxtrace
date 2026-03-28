@@ -273,7 +273,7 @@ export default function SubscriptionPlansPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-[#0052CC]">Subscription Plans</h1>
-          <p className="mt-1 text-sm text-gray-600">Admin-controlled plan pricing, quota units, and capacity limits.</p>
+          <p className="mt-1 text-sm text-gray-600">Create multiple plans, lock their commercial identity, and manage quotas through published versions only.</p>
         </div>
         <div className="flex gap-2">
           <Button onClick={fetchPlans} disabled={loading || saving} variant="outline">
@@ -345,6 +345,15 @@ export default function SubscriptionPlansPage() {
               </div>
             )}
 
+            {!creatingTemplate ? (
+              <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
+                <p className="font-medium text-slate-900">Quota-only versioning</p>
+                <p className="mt-1">
+                  Name, timeline, price, pricing unit, and Razorpay plan mapping are locked after a plan is created. Use new versions only for quota and capacity changes.
+                </p>
+              </div>
+            ) : null}
+
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {[
                 ['Unit Quota Units', 'unit_quota_units'],
@@ -408,6 +417,7 @@ export default function SubscriptionPlansPage() {
                 <p><span className="text-gray-500">Provider Plan:</span> {plan.template.razorpay_plan_id || "-"}</p>
                 <p><span className="text-gray-500">Unit Size:</span> {plan.template.pricing_unit_size.toLocaleString()}</p>
                 <p><span className="text-gray-500">Versions:</span> {plan.versions_count}</p>
+                <p><span className="text-gray-500">Commercial Fields:</span> Locked</p>
               </div>
 
               {plan.template.description ? <p className="text-gray-600">{plan.template.description}</p> : null}

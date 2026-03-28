@@ -47,6 +47,7 @@ export async function GET() {
         price_inr: addon.price,
         pricing_unit_size: addon.pricing_unit_size,
         unit: addon.unit,
+        duration_days: (addon as any).duration_days ?? null,
         addon_kind: addon.addon_kind,
         entitlement_key: addon.entitlement_key,
         billing_mode: addon.billing_mode,
@@ -59,6 +60,7 @@ export async function GET() {
         ? {
             id: (currentSubscription as any).id,
             status: (currentSubscription as any).status,
+            cancel_at_period_end: Boolean((currentSubscription as any).cancel_at_period_end),
             current_period_start: (currentSubscription as any).current_period_start,
             current_period_end: (currentSubscription as any).current_period_end,
             next_billing_at: (currentSubscription as any).next_billing_at,
