@@ -5,6 +5,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type Plan = {
   template_id: string;
@@ -126,12 +136,55 @@ type CheckoutQuote = {
   checkout_mode: "recurring_plan" | "one_time_addon";
 };
 
+type CheckoutQuoteDetails = CheckoutQuote & {
+  plan_snapshot?: {
+    name: string;
+    billing_cycle: "monthly" | "yearly";
+    plan_price_paise: number;
+  };
+  addons_snapshot?: {
+    capacity_addons: Array<{
+      addon_id: string;
+      name: string;
+      entitlement_key: string;
+      quantity: number;
+      unit_price_paise: number;
+      line_total_paise: number;
+      allocated_capacity: number;
+    }>;
+    code_addons: Array<{
+      addon_id: string;
+      name: string;
+      entitlement_key: string;
+      quantity: number;
+      pricing_unit_size: number;
+      allocated_quota: number;
+      unit_price_paise: number;
+      line_total_paise: number;
+    }>;
+  };
+  coupon?: {
+    code: string;
+  } | null;
+  totals: {
+    subscription_paise: number;
+    capacity_addons_paise: number;
+    code_addons_paise: number;
+    addons_paise: number;
+    discount_paise: number;
+    taxable_subtotal_paise: number;
+    gst_rate_percent: number;
+    gst_paise: number;
+    final_total_paise: number;
+  };
+};
+
 type QuoteApiResponse = {
   success: boolean;
   quote_id?: string;
   quote_status?: string;
   quote_expires_at?: string;
-  quote?: CheckoutQuote;
+  quote?: CheckoutQuoteDetails;
   error?: string;
 };
 
@@ -149,6 +202,15 @@ type PaymentInitiateResponse = {
 type RazorpayStepResult =
   | { status: "paid"; payload: Record<string, any> }
   | { status: "dismissed" };
+
+type PendingCheckoutState = {
+  title: string;
+  successMessage: string;
+  quoteId: string;
+  quoteStatus: string;
+  quoteExpiresAt: string;
+  quote: CheckoutQuoteDetails;
+};
 
 function formatINRFromPaise(paise: number) {
   return `\u20B9${(Number(paise || 0) / 100).toFixed(2)}`;
@@ -219,6 +281,8 @@ function SubscriptionPageContent() {
   const [capacityQty, setCapacityQty] = useState<Record<string, number>>({});
   const [codeQty, setCodeQty] = useState<Record<string, number>>({});
   const [couponCode, setCouponCode] = useState("");
+  const [pendingCheckout, setPendingCheckout] = useState<PendingCheckoutState | null>(null);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
 
   const loadContext = useCallback(async () => {
     setLoading(true);
@@ -253,7 +317,7 @@ function SubscriptionPageContent() {
 
   const plans = context?.plans || [];
   const addOns = context?.add_ons || [];
-  const currentSubscription = summary?.subscription ?? null;
+  const currentSubscription = summary?.subscription ?? context?.current_subscription ?? null;
   const subscriptionStatus = summary?.subscriptionStatus?.status ?? context?.subscriptionStatus?.status ?? "expired";
   const isCancelledAtPeriodEnd = Boolean(currentSubscription?.cancel_at_period_end);
   const accessBlocked = summary?.decisions?.generation?.blocked ?? false;
@@ -378,21 +442,14 @@ function SubscriptionPageContent() {
     return payload;
   }, []);
 
-  const beginCheckout = useCallback(async (config: {
-    planTemplateId?: string;
-    capacityItems?: Array<{ addon_id: string; quantity: number }>;
-    codeItems?: Array<{ addon_id: string; quantity: number }>;
-    coupon?: string;
-    successMessage: string;
-  }) => {
+  const confirmCheckout = useCallback(async (config: PendingCheckoutState) => {
     setSubmitting(true);
     setError(null);
     setMessage(null);
     try {
-      const quotePayload = await fetchQuote(config);
-      const quoteId = String(quotePayload.quote_id || "");
-      const quoteStatus = String(quotePayload.quote_status || "active").toLowerCase();
-      const quoteExpiresAt = String(quotePayload.quote_expires_at || quotePayload.quote?.expires_at || "");
+      const quoteId = String(config.quoteId || "");
+      const quoteStatus = String(config.quoteStatus || "active").toLowerCase();
+      const quoteExpiresAt = String(config.quoteExpiresAt || "");
 
       if (!quoteId || quoteStatus !== "active") {
         throw new Error("Quote is not active. Please refresh and try again.");
@@ -400,7 +457,7 @@ function SubscriptionPageContent() {
 
       const expiresAtMs = new Date(quoteExpiresAt).getTime();
       if (Number.isNaN(expiresAtMs) || Date.now() > expiresAtMs) {
-        throw new Error("Quote expired. Please try again.");
+        throw new Error("Quote expired. Please review the checkout again.");
       }
 
       const paymentRes = await fetch("/api/user/subscription/checkout/payment/initiate", {
@@ -454,13 +511,55 @@ function SubscriptionPageContent() {
         await refreshPageState();
       }
 
+      setPendingCheckout(null);
       setMessage(config.successMessage);
     } catch (err: any) {
       setError(err?.message || "Failed to initialize checkout");
     } finally {
       setSubmitting(false);
     }
-  }, [fetchQuote, openRazorpayStep, refreshPageState]);
+  }, [openRazorpayStep, refreshPageState]);
+
+  const prepareCheckout = useCallback(async (config: {
+    planTemplateId?: string;
+    capacityItems?: Array<{ addon_id: string; quantity: number }>;
+    codeItems?: Array<{ addon_id: string; quantity: number }>;
+    coupon?: string;
+    title: string;
+    successMessage: string;
+  }) => {
+    setSubmitting(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const quotePayload = await fetchQuote(config);
+      const quoteId = String(quotePayload.quote_id || "");
+      const quoteStatus = String(quotePayload.quote_status || "active").toLowerCase();
+      const quoteExpiresAt = String(quotePayload.quote_expires_at || quotePayload.quote?.expires_at || "");
+
+      if (!quoteId || quoteStatus !== "active") {
+        throw new Error("Quote is not active. Please refresh and try again.");
+      }
+
+      const expiresAtMs = new Date(quoteExpiresAt).getTime();
+      if (Number.isNaN(expiresAtMs) || Date.now() > expiresAtMs) {
+        throw new Error("Quote expired. Please try again.");
+      }
+
+      setPendingCheckout({
+        title: config.title,
+        successMessage: config.successMessage,
+        quoteId,
+        quoteStatus,
+        quoteExpiresAt,
+        quote: quotePayload.quote!,
+      });
+    } catch (err: any) {
+      setError(err?.message || "Failed to prepare checkout");
+    } finally {
+      setSubmitting(false);
+    }
+  }, [fetchQuote]);
 
   const cancelSubscription = useCallback(async () => {
     setSubmitting(true);
@@ -500,8 +599,17 @@ function SubscriptionPageContent() {
         : currentSubscription
           ? "Plan update initiated. Subscription lifecycle and local sync will continue through provider events."
           : "Subscription authentication completed. Provider activation and local sync will continue through the subscription lifecycle.";
-    await beginCheckout({ planTemplateId: targetPlanTemplateId, successMessage });
-  }, [beginCheckout, currentSubscription, selectedPlanTemplateId, subscriptionStatus]);
+    await prepareCheckout({
+      planTemplateId: targetPlanTemplateId,
+      title:
+        subscriptionStatus === "expired" || subscriptionStatus === "cancelled"
+          ? "Subscription Renewal Summary"
+          : currentSubscription
+            ? "Subscription Upgrade Summary"
+            : "Subscription Summary",
+      successMessage,
+    });
+  }, [currentSubscription, prepareCheckout, selectedPlanTemplateId, subscriptionStatus]);
 
   const renewSubscription = useCallback(async () => {
     const targetPlanTemplateId = currentPlanId || selectedPlanTemplateId;
@@ -525,11 +633,12 @@ function SubscriptionPageContent() {
       setError("Select at least one capacity add-on.");
       return;
     }
-    await beginCheckout({
+    await prepareCheckout({
       capacityItems: selectedCapacityItems,
+      title: "Capacity Add-on Summary",
       successMessage: "Payment captured. Capacity add-on activation is being completed by webhook.",
     });
-  }, [beginCheckout, context?.current_subscription, selectedCapacityItems]);
+  }, [context?.current_subscription, prepareCheckout, selectedCapacityItems]);
 
   const buyCodes = useCallback(async () => {
     if (!context?.current_subscription) {
@@ -540,12 +649,13 @@ function SubscriptionPageContent() {
       setError("Select at least one code top-up.");
       return;
     }
-    await beginCheckout({
+    await prepareCheckout({
       codeItems: selectedCodeItems,
       coupon: couponCode.trim().toUpperCase() || undefined,
+      title: "Code Top-up Summary",
       successMessage: "Payment captured. Code top-up activation is being completed by webhook.",
     });
-  }, [beginCheckout, context?.current_subscription, couponCode, selectedCodeItems]);
+  }, [context?.current_subscription, couponCode, prepareCheckout, selectedCodeItems]);
 
   if (loading) return <p className="text-sm text-gray-500">Loading subscription...</p>;
   if (!context) return <p className="text-sm text-rose-600">Unable to load subscription context.</p>;
@@ -562,6 +672,86 @@ function SubscriptionPageContent() {
 
       {error ? <p className="text-sm text-rose-600">{error}</p> : null}
       {message ? <p className="text-sm text-emerald-700">{message}</p> : null}
+
+      {pendingCheckout ? (
+        <Card className="border-green-200 bg-green-50">
+          <CardHeader>
+            <CardTitle>{pendingCheckout.title}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            {pendingCheckout.quote.plan_snapshot?.plan_price_paise ? (
+              <div className="rounded-lg border border-green-200 bg-white p-4">
+                <p className="font-medium">{pendingCheckout.quote.plan_snapshot.name}</p>
+                <p className="text-xs text-gray-500">
+                  {pendingCheckout.quote.plan_snapshot.billing_cycle} | {formatINRFromPaise(pendingCheckout.quote.plan_snapshot.plan_price_paise)}
+                </p>
+              </div>
+            ) : null}
+
+            {pendingCheckout.quote.addons_snapshot?.capacity_addons?.length ? (
+              <div className="space-y-2">
+                <p className="font-medium text-gray-700">Capacity Add-ons</p>
+                {pendingCheckout.quote.addons_snapshot.capacity_addons.map((item) => (
+                  <div key={item.addon_id} className="flex items-center justify-between rounded-lg border border-green-100 bg-white px-3 py-2">
+                    <p>{item.name} x {item.quantity}</p>
+                    <p className="font-medium">{formatINRFromPaise(item.line_total_paise)}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {pendingCheckout.quote.addons_snapshot?.code_addons?.length ? (
+              <div className="space-y-2">
+                <p className="font-medium text-gray-700">Code Top-Ups</p>
+                {pendingCheckout.quote.addons_snapshot.code_addons.map((item) => (
+                  <div key={item.addon_id} className="flex items-center justify-between rounded-lg border border-green-100 bg-white px-3 py-2">
+                    <p>{item.name} x {item.quantity}</p>
+                    <p className="font-medium">{formatINRFromPaise(item.line_total_paise)}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="rounded-lg border border-green-200 bg-white p-4">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span>Subscription Amount</span>
+                  <span>{formatINRFromPaise(pendingCheckout.quote.totals.subscription_paise)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Capacity Add-ons</span>
+                  <span>{formatINRFromPaise(pendingCheckout.quote.totals.capacity_addons_paise)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Code Top-Ups</span>
+                  <span>{formatINRFromPaise(pendingCheckout.quote.totals.code_addons_paise)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Discount{pendingCheckout.quote.coupon?.code ? ` (${pendingCheckout.quote.coupon.code})` : ""}</span>
+                  <span>-{formatINRFromPaise(pendingCheckout.quote.totals.discount_paise)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>GST {pendingCheckout.quote.totals.gst_rate_percent}%</span>
+                  <span>{formatINRFromPaise(pendingCheckout.quote.totals.gst_paise)}</span>
+                </div>
+                <div className="flex items-center justify-between border-t border-green-100 pt-2 font-semibold text-gray-900">
+                  <span>Total Amount</span>
+                  <span>{formatINRFromPaise(pendingCheckout.quote.totals.final_total_paise)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => confirmCheckout(pendingCheckout)} disabled={submitting}>
+                Proceed to Pay
+              </Button>
+              <Button variant="outline" onClick={() => setPendingCheckout(null)} disabled={submitting}>
+                Close Summary
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {accessBlocked ? (
         <Card className="border-amber-200 bg-amber-50">
@@ -603,7 +793,7 @@ function SubscriptionPageContent() {
                     Upgrade
                   </Button>
                   {!isCancelledAtPeriodEnd ? (
-                    <Button variant="destructive" onClick={cancelSubscription} disabled={submitting}>
+                    <Button variant="destructive" onClick={() => setCancelDialogOpen(true)} disabled={submitting}>
                       Cancel
                     </Button>
                   ) : null}
@@ -888,6 +1078,31 @@ function SubscriptionPageContent() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Subscription?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your subscription will remain active until {formatDateLabel(currentSubscription?.current_period_end)}.
+              After this date, the subscription will expire. You can renew or upgrade later from the subscription page.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={submitting}>Keep Subscription</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={submitting}
+              onClick={(event) => {
+                event.preventDefault();
+                cancelSubscription().then(() => setCancelDialogOpen(false));
+              }}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Confirm Cancel
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

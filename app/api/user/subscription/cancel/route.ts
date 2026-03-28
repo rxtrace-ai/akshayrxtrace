@@ -4,6 +4,9 @@ import { headers } from "next/headers";
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { getOrGenerateCorrelationId } from "@/lib/observability/correlation";
 import { checkUserIdempotency, hashRequestBody, storeUserIdempotencyResponse } from "@/lib/user/idempotency";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { getAppUrl } from "@/lib/config";
+import { sendTransactionalEmail } from "@/lib/transactionalEmail";
 import {
   cancelRazorpaySubscription,
   mapRazorpaySubscriptionStatusToLocal,
@@ -15,6 +18,14 @@ export const dynamic = "force-dynamic";
 
 function normalizeIdempotencyKey(req: NextRequest, body: any): string {
   return String(body?.idempotency_key || req.headers.get("idempotency-key") || "").trim();
+}
+
+function formatDateForEmail(dateIso: string): string {
+  return new Date(dateIso).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -119,6 +130,33 @@ export async function POST(req: NextRequest) {
     },
     correlation_id: correlationId,
   };
+
+  try {
+    const admin = getSupabaseAdmin();
+    const ownerResult = await admin.auth.admin.getUserById(owner.userId);
+    const ownerEmail = String(ownerResult?.data?.user?.email || "").trim();
+    const ownerName = String((ownerResult?.data?.user?.user_metadata as any)?.full_name || "").trim() || "there";
+    const currentPeriodEnd = String((updated as any).current_period_end || "").trim();
+
+    if (ownerEmail && currentPeriodEnd) {
+      await sendTransactionalEmail({
+        to: ownerEmail,
+        event: "SUBSCRIPTION_CANCELLED",
+        payload: {
+          user_name: ownerName,
+          expiry_date: formatDateForEmail(currentPeriodEnd),
+          renew_link: `${getAppUrl()}/dashboard/subscription`,
+        },
+      });
+    }
+  } catch (emailError) {
+    console.error("SUBSCRIPTION_CANCEL_EMAIL_FAILED", {
+      correlationId,
+      companyId: owner.companyId,
+      userId: owner.userId,
+      error: String((emailError as any)?.message || "UNKNOWN"),
+    });
+  }
 
   await storeUserIdempotencyResponse({
     supabase: owner.supabase,

@@ -139,6 +139,7 @@ export default function SubscriptionPlansPage() {
 
   const [creatingTemplate, setCreatingTemplate] = useState(false);
   const [targetTemplateId, setTargetTemplateId] = useState<string | null>(null);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [form, setForm] = useState<PlanPayload>(DEFAULT_PAYLOAD);
 
   async function fetchPlans() {
@@ -170,6 +171,7 @@ export default function SubscriptionPlansPage() {
   function openCreateTemplate() {
     setCreatingTemplate(true);
     setTargetTemplateId(null);
+    setEditingTemplateId(null);
     setForm(DEFAULT_PAYLOAD);
     setMessage(null);
     setError(null);
@@ -178,6 +180,16 @@ export default function SubscriptionPlansPage() {
   function openCreateVersion(plan: PlanView) {
     setCreatingTemplate(false);
     setTargetTemplateId(plan.template.id);
+    setEditingTemplateId(null);
+    setForm(mapVersionToPayload(plan.active_version || (plan.versions[0] as PlanVersion), plan.template));
+    setMessage(null);
+    setError(null);
+  }
+
+  function openEditTemplate(plan: PlanView) {
+    setCreatingTemplate(false);
+    setTargetTemplateId(null);
+    setEditingTemplateId(plan.template.id);
     setForm(mapVersionToPayload(plan.active_version || (plan.versions[0] as PlanVersion), plan.template));
     setMessage(null);
     setError(null);
@@ -186,6 +198,7 @@ export default function SubscriptionPlansPage() {
   function closeForm() {
     setCreatingTemplate(false);
     setTargetTemplateId(null);
+    setEditingTemplateId(null);
     setForm(DEFAULT_PAYLOAD);
   }
 
@@ -196,6 +209,7 @@ export default function SubscriptionPlansPage() {
     try {
       const version = buildVersionBody(form);
       const isNewTemplate = creatingTemplate;
+      const isEditingTemplate = Boolean(editingTemplateId);
       const body = isNewTemplate
         ? {
             name: form.name.trim(),
@@ -212,24 +226,38 @@ export default function SubscriptionPlansPage() {
             version,
             publish: true,
           };
+      const editBody = isEditingTemplate
+        ? {
+            template_id: editingTemplateId,
+            name: form.name.trim(),
+            description: form.description.trim() || null,
+            billing_cycle: form.billing_cycle,
+            plan_price: parseNonNegativeInt(form.plan_price),
+            razorpay_plan_id: form.razorpay_plan_id.trim(),
+            pricing_unit_size: Math.max(1, parseNonNegativeInt(form.pricing_unit_size)),
+          }
+        : null;
 
       if (isNewTemplate && !body.name) {
         throw new Error('Plan name is required');
       }
+      if (isEditingTemplate && !editBody?.name) {
+        throw new Error('Plan name is required');
+      }
 
       const res = await fetch('/api/admin/subscription-plans', {
-        method: 'POST',
+        method: isEditingTemplate ? 'PUT' : 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': createIdempotencyKey(),
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(isEditingTemplate ? editBody : body),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.message || data.error || 'Failed to save plan');
       }
-      setMessage(isNewTemplate ? 'Plan created and published' : 'New plan version created and published');
+      setMessage(isNewTemplate ? 'Plan created and published' : isEditingTemplate ? 'Plan updated' : 'New plan version created and published');
       closeForm();
       await fetchPlans();
     } catch (err: any) {
@@ -290,15 +318,15 @@ export default function SubscriptionPlansPage() {
       {message ? <p className="text-sm text-green-700">{message}</p> : null}
       {error ? <p className="text-sm text-red-700">{error}</p> : null}
 
-      {(creatingTemplate || targetTemplateId) && (
+      {(creatingTemplate || targetTemplateId || editingTemplateId) && (
         <Card>
           <CardHeader>
             <CardTitle>
-              {creatingTemplate ? 'Create Plan + Publish v1' : `Create New Version (${targetPlan?.template.name || ''})`}
+              {creatingTemplate ? 'Create Plan + Publish v1' : editingTemplateId ? 'Edit Plan' : `Create New Version (${targetPlan?.template.name || ''})`}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {creatingTemplate && (
+            {(creatingTemplate || editingTemplateId) && (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Plan Name *</Label>
@@ -345,7 +373,7 @@ export default function SubscriptionPlansPage() {
               </div>
             )}
 
-            {!creatingTemplate ? (
+            {targetTemplateId ? (
               <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
                 <p className="font-medium text-slate-900">Quota-only versioning</p>
                 <p className="mt-1">
@@ -354,6 +382,7 @@ export default function SubscriptionPlansPage() {
               </div>
             ) : null}
 
+            {!editingTemplateId ? (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {[
                 ['Unit Quota Units', 'unit_quota_units'],
@@ -373,9 +402,11 @@ export default function SubscriptionPlansPage() {
                     onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
                   />
                 </div>
-              ))}
+                ))}
             </div>
+            ) : null}
 
+            {!editingTemplateId ? (
             <div className="space-y-2">
               <Label>Change Note</Label>
               <Input
@@ -384,11 +415,12 @@ export default function SubscriptionPlansPage() {
                 placeholder="Optional note for audit trail"
               />
             </div>
+            ) : null}
 
             <div className="flex gap-2">
               <Button onClick={submitForm} disabled={saving}>
                 <Upload className="mr-2 h-4 w-4" />
-                {saving ? 'Saving...' : 'Save & Publish'}
+                {saving ? 'Saving...' : editingTemplateId ? 'Update Plan' : 'Save & Publish'}
               </Button>
               <Button variant="outline" onClick={closeForm} disabled={saving}>
                 Cancel
@@ -438,6 +470,9 @@ export default function SubscriptionPlansPage() {
               ) : null}
 
               <div className="flex gap-2">
+                <Button variant="outline" onClick={() => openEditTemplate(plan)} disabled={saving}>
+                  Edit Plan
+                </Button>
                 <Button variant="outline" onClick={() => openCreateVersion(plan)} disabled={saving}>
                   Create Version
                 </Button>

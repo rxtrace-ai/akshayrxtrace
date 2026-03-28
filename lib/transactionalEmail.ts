@@ -3,6 +3,7 @@ import { getAppUrl } from "@/lib/config";
 export type TransactionalEmailEvent =
   | "PASSWORD_RESET"
   | "TRIAL_EXPIRED"
+  | "SUBSCRIPTION_CANCELLED"
   | "SUBSCRIPTION_REMINDER_7"
   | "SUBSCRIPTION_REMINDER_2"
   | "SUBSCRIPTION_EXPIRED"
@@ -15,6 +16,7 @@ type CommonPayload = {
 type EventPayloadMap = {
   PASSWORD_RESET: CommonPayload & { reset_link: string };
   TRIAL_EXPIRED: CommonPayload & { upgrade_link: string };
+  SUBSCRIPTION_CANCELLED: CommonPayload & { expiry_date: string; renew_link: string };
   SUBSCRIPTION_REMINDER_7: CommonPayload & { expiry_date: string; renew_link: string };
   SUBSCRIPTION_REMINDER_2: CommonPayload & { expiry_date: string; renew_link: string };
   SUBSCRIPTION_EXPIRED: CommonPayload & { renew_link: string };
@@ -145,6 +147,23 @@ function buildTemplate<E extends TransactionalEmailEvent>(event: E, payload: Eve
           ],
           ctaLabel: "Upgrade Plan",
           ctaLink: trialPayload.upgrade_link,
+        }),
+      };
+    case "SUBSCRIPTION_CANCELLED":
+      const cancelledPayload = payload as EventPayloadMap["SUBSCRIPTION_CANCELLED"];
+      return {
+        subject: "Subscription cancellation confirmed",
+        html: baseEmailShell({
+          preheader: "Your subscription cancellation is confirmed",
+          title: "Subscription cancellation confirmed",
+          greetingName: userName,
+          lines: [
+            `Your RxTrace subscription will remain active until ${cancelledPayload.expiry_date}.`,
+            "After this date, the subscription will expire.",
+            "You can renew or upgrade later from the subscription page.",
+          ],
+          ctaLabel: "Open Subscription Page",
+          ctaLink: cancelledPayload.renew_link,
         }),
       };
     case "SUBSCRIPTION_REMINDER_7":
