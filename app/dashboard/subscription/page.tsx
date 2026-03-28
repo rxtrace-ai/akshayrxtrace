@@ -320,6 +320,7 @@ function SubscriptionPageContent() {
   const currentSubscription = summary?.subscription ?? context?.current_subscription ?? null;
   const subscriptionStatus = summary?.subscriptionStatus?.status ?? context?.subscriptionStatus?.status ?? "expired";
   const isCancelledAtPeriodEnd = Boolean(currentSubscription?.cancel_at_period_end);
+  const isActiveSubscription = subscriptionStatus === "active";
   const accessBlocked = summary?.decisions?.generation?.blocked ?? false;
 
   const capacityCatalog = useMemo(
@@ -792,7 +793,7 @@ function SubscriptionPageContent() {
                   <Button onClick={upgradeSubscription} disabled={submitting}>
                     Upgrade
                   </Button>
-                  {!isCancelledAtPeriodEnd ? (
+                  {isActiveSubscription ? (
                     <Button variant="destructive" onClick={() => setCancelDialogOpen(true)} disabled={submitting}>
                       Cancel
                     </Button>

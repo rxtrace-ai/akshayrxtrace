@@ -93,6 +93,17 @@ function parseNonNegativeInt(value: string): number {
   return Math.trunc(parsed);
 }
 
+function formatPaiseForInput(value: number): string {
+  const rupees = (value || 0) / 100;
+  return Number.isInteger(rupees) ? String(rupees) : rupees.toFixed(2);
+}
+
+function parseINRToPaise(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.round(parsed * 100);
+}
+
 function formatINRFromPaise(value: number): string {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format((value || 0) / 100);
 }
@@ -116,7 +127,7 @@ function mapVersionToPayload(version: PlanVersion, template: PlanTemplate): Plan
     name: template.name,
     description: template.description || '',
     billing_cycle: template.billing_cycle,
-    plan_price: String(template.plan_price ?? 0),
+    plan_price: formatPaiseForInput(template.plan_price ?? 0),
     razorpay_plan_id: template.razorpay_plan_id || '',
     pricing_unit_size: String(template.pricing_unit_size ?? 10000),
     change_note: version.change_note || '',
@@ -215,7 +226,7 @@ export default function SubscriptionPlansPage() {
             name: form.name.trim(),
             description: form.description.trim() || null,
             billing_cycle: form.billing_cycle,
-            plan_price: parseNonNegativeInt(form.plan_price),
+            plan_price: parseINRToPaise(form.plan_price),
             razorpay_plan_id: form.razorpay_plan_id.trim(),
             pricing_unit_size: Math.max(1, parseNonNegativeInt(form.pricing_unit_size)),
             version,
@@ -232,7 +243,7 @@ export default function SubscriptionPlansPage() {
             name: form.name.trim(),
             description: form.description.trim() || null,
             billing_cycle: form.billing_cycle,
-            plan_price: parseNonNegativeInt(form.plan_price),
+            plan_price: parseINRToPaise(form.plan_price),
             razorpay_plan_id: form.razorpay_plan_id.trim(),
             pricing_unit_size: Math.max(1, parseNonNegativeInt(form.pricing_unit_size)),
           }
@@ -348,8 +359,8 @@ export default function SubscriptionPlansPage() {
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Plan Price (paise)</Label>
-                  <Input type="number" min={0} value={form.plan_price} onChange={(e) => setForm((prev) => ({ ...prev, plan_price: e.target.value }))} />
+                  <Label>Plan Price (INR)</Label>
+                  <Input type="number" min={0} step="0.01" value={form.plan_price} onChange={(e) => setForm((prev) => ({ ...prev, plan_price: e.target.value }))} />
                 </div>
                 <div className="space-y-2">
                   <Label>Razorpay Plan ID *</Label>
