@@ -593,15 +593,11 @@ function SubscriptionPageContent() {
                   <Button onClick={startSubscription} disabled={submitting}>
                     {subscriptionActionLabel}
                   </Button>
-                  {isCancelledAtPeriodEnd ? (
-                    <Button variant="outline" disabled title="Provider-side reactivation is not available from this page yet.">
-                      Reactivate
-                    </Button>
-                  ) : (
+                  {!isCancelledAtPeriodEnd ? (
                     <Button variant="destructive" onClick={cancelSubscription} disabled={submitting}>
                       Cancel
                     </Button>
-                  )}
+                  ) : null}
                 </div>
               </div>
 
