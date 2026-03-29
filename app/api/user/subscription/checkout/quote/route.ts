@@ -112,14 +112,6 @@ export async function POST(req: NextRequest) {
       return apiJson({ error: quotePersistError.message }, { status: 500 });
     }
 
-    console.log("ADDONS:", {
-      capacity_addons: quote.capacity_addons,
-      code_addons: quote.code_addons,
-    });
-    console.log("DISCOUNT:", quote.totals.discount_paise);
-    console.log("FINAL_TOTAL:", quote.totals.final_total_paise);
-    console.log("QUOTE_ID:", (persistedQuote as any).id);
-    console.log("QUOTE:", quote);
     return apiJson({
       success: true,
       quote_id: (persistedQuote as any).id,

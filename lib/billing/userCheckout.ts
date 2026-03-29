@@ -82,6 +82,7 @@ export type CheckoutQuotePayload = {
     name: string;
     entitlement_key: CheckoutMetric;
     quantity: number;
+    duration_days: number | null;
     unit_price_paise: number;
     line_total_paise: number;
     allocated_capacity: number;
@@ -316,6 +317,7 @@ export function buildCheckoutQuote(
       name: addon.name,
       entitlement_key: addon.entitlement_key,
       quantity: selection.quantity,
+      duration_days: addon.duration_days ?? null,
       allocated_capacity: selection.quantity,
       unit_price_paise: unitPrice,
       line_total_paise: unitPrice * selection.quantity,

@@ -70,6 +70,41 @@ export type SubscriptionSummaryResponse = {
   invoices?: Array<{
     id: string;
     invoice_type: string;
+    invoice_label?: string;
+    status: string;
+    reference: string | null;
+    plan: string | null;
+    amount: number;
+    currency: string | null;
+    period_start: string | null;
+    period_end: string | null;
+    due_at?: string | null;
+    issued_at: string | null;
+    paid_at: string | null;
+    invoice_pdf_url: string | null;
+    created_at: string | null;
+  }>;
+  subscription_invoices?: Array<{
+    id: string;
+    invoice_type: string;
+    invoice_label?: string;
+    status: string;
+    reference: string | null;
+    plan: string | null;
+    amount: number;
+    currency: string | null;
+    period_start: string | null;
+    period_end: string | null;
+    due_at?: string | null;
+    issued_at: string | null;
+    paid_at: string | null;
+    invoice_pdf_url: string | null;
+    created_at: string | null;
+  }>;
+  addon_invoices?: Array<{
+    id: string;
+    invoice_type: string;
+    invoice_label?: string;
     status: string;
     reference: string | null;
     plan: string | null;

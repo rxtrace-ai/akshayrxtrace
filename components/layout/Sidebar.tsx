@@ -31,6 +31,7 @@ const MENU = [
   { label: "Plant Management", path: "/dashboard/plants", icon: TreeDeciduous },
   { label: "Seat Management", path: "/dashboard/seats", icon: Users },
   { label: "Subscription", path: "/dashboard/subscription", icon: CreditCard },
+  { label: "Add-ons", path: "/dashboard/add-ons", icon: CreditCard },
   { label: "Handsets", path: "/dashboard/handsets", icon: Smartphone },
   { label: "Scan Logs", path: "/dashboard/scans", icon: ScanLine },
   { label: "Reports", path: "/dashboard/audit", icon: FileText },

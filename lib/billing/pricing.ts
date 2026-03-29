@@ -43,8 +43,9 @@ export function buildPricingBreakdown(input: PricingInput): PricingBreakdown {
       discountPaise = Math.min(discountPaise, Math.max(0, input.coupon.maxDiscountPaise));
     }
   }
-  const addonsPayablePaise = Math.max(0, addonsSubtotalPaise - discountPaise);
-  const taxableSubtotalPaise = subscriptionSubtotalPaise + addonsPayablePaise;
+  const discountedTotalPaise = Math.max(0, couponableSubtotalPaise - discountPaise);
+  const addonsPayablePaise = Math.max(0, Math.min(addonsSubtotalPaise, discountedTotalPaise));
+  const taxableSubtotalPaise = discountedTotalPaise;
   const gstRatePercent = Number.isFinite(input.gstRatePercent) ? Number(input.gstRatePercent) : 18;
   const gstPaise = Math.max(0, Math.round((taxableSubtotalPaise * gstRatePercent) / 100));
   const finalTotalPaise = taxableSubtotalPaise + gstPaise;

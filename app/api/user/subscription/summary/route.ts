@@ -271,6 +271,30 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
   };
 
   if (view === "full") {
+    const invoices = ((invoicesResult.data as any[]) || []).map((row: any) => ({
+      ...(() => {
+        const rawPdfUrl = String(row.invoice_pdf_url || "").trim();
+        const pdfUrl =
+          rawPdfUrl && !rawPdfUrl.startsWith("data:application/pdf;base64,")
+            ? rawPdfUrl
+            : `/api/billing/invoice/${row.id}/pdf`;
+        return { invoice_pdf_url: pdfUrl };
+      })(),
+      id: row.id,
+      invoice_type: row.invoice_type,
+      invoice_label: classifyInvoiceLabel(row),
+      status: row.status,
+      reference: row.reference,
+      plan: row.plan,
+      amount: row.amount,
+      currency: row.currency,
+      period_start: row.period_start,
+      period_end: row.period_end,
+      due_at: row.due_at,
+      issued_at: row.issued_at,
+      paid_at: row.paid_at,
+      created_at: row.created_at,
+    }));
     responseBody.company = { id: owner.companyId, name: owner.companyName };
     responseBody.state = entitlement.state;
     responseBody.period = {
@@ -296,30 +320,9 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       carton: entitlement.topups?.carton ?? 0,
       pallet: entitlement.topups?.pallet ?? 0,
     };
-    responseBody.invoices = ((invoicesResult.data as any[]) || []).map((row: any) => ({
-      ...(() => {
-        const rawPdfUrl = String(row.invoice_pdf_url || "").trim();
-        const pdfUrl =
-          rawPdfUrl && !rawPdfUrl.startsWith("data:application/pdf;base64,")
-            ? rawPdfUrl
-            : `/api/billing/invoice/${row.id}/pdf`;
-        return { invoice_pdf_url: pdfUrl };
-      })(),
-      id: row.id,
-      invoice_type: row.invoice_type,
-      invoice_label: classifyInvoiceLabel(row),
-      status: row.status,
-      reference: row.reference,
-      plan: row.plan,
-      amount: row.amount,
-      currency: row.currency,
-      period_start: row.period_start,
-      period_end: row.period_end,
-      due_at: row.due_at,
-      issued_at: row.issued_at,
-      paid_at: row.paid_at,
-      created_at: row.created_at,
-    }));
+    responseBody.invoices = invoices;
+    responseBody.subscription_invoices = invoices.filter((row) => String((row as any).invoice_type || "").trim().toLowerCase() === "subscription");
+    responseBody.addon_invoices = invoices.filter((row) => String((row as any).invoice_type || "").trim().toLowerCase() !== "subscription");
   } else if (view === "settings") {
     responseBody.capacity_table = capacityTable;
     responseBody.capacity_addons = structuralCapacityRows.map((row: any) => ({
