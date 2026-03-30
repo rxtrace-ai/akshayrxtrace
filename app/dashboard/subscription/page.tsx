@@ -169,7 +169,7 @@ export default function SubscriptionPage() {
     });
   }, [refreshPageState]);
 
-  const plans = context?.plans || [];
+  const plans = useMemo(() => context?.plans ?? [], [context?.plans]);
   const currentSubscription = summary?.subscription ?? context?.current_subscription ?? null;
   const subscriptionStatus = summary?.subscriptionStatus?.status ?? context?.subscriptionStatus?.status ?? "expired";
   const selectedPlan = useMemo(

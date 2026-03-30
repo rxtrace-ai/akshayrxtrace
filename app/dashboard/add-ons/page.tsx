@@ -119,7 +119,7 @@ export default function AddOnsPage() {
     });
   }, [refreshPageState]);
 
-  const addOns = context?.add_ons || [];
+  const addOns = useMemo(() => context?.add_ons ?? [], [context?.add_ons]);
   const capacityCatalog = useMemo(
     () => addOns.filter((addon) => addon.addon_kind === "structural" && addon.billing_mode === "recurring"),
     [addOns]

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -51,7 +51,7 @@ export default function CompanyDetailPage() {
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
-  async function fetchCompany() {
+  const fetchCompany = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -66,7 +66,7 @@ export default function CompanyDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [companyId]);
 
   async function handleBonusSubmit() {
     if (unitBonus <= 0 && boxBonus <= 0 && cartonBonus <= 0 && palletBonus <= 0) {
@@ -112,7 +112,7 @@ export default function CompanyDetailPage() {
 
   useEffect(() => {
     if (companyId) fetchCompany();
-  }, [companyId]);
+  }, [companyId, fetchCompany]);
 
   return (
     <div className="space-y-6">

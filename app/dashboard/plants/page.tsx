@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,7 +46,7 @@ export default function DashboardPlantsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const fetchPlants = async () => {
+  const fetchPlants = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -73,11 +73,11 @@ export default function DashboardPlantsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [subscriptionSummary]);
 
   useEffect(() => {
     fetchPlants();
-  }, []);
+  }, [fetchPlants]);
 
   useEffect(() => {
     if (!subscriptionSummary) return;

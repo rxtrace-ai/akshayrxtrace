@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import React, { useEffect, useState } from 'react';
 
 interface Props {
@@ -63,5 +64,5 @@ export default function DataMatrixComponent({ value, size = 200 }: Props) {
     );
   }
 
-  return <img src={src} alt="DataMatrix" width={size} height={size} />;
+  return <Image src={src} alt="DataMatrix" width={size} height={size} unoptimized />;
 }

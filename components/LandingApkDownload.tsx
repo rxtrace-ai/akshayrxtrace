@@ -19,7 +19,7 @@ export default function LandingApkDownload() {
         <br />
         2) Tap the link to open the download page.
         <br />
-        3) If Android blocks the install, enable "Install unknown apps" for your browser.
+        3) If Android blocks the install, enable <span>&quot;Install unknown apps&quot;</span> for your browser.
       </p>
 
       <div className="mt-3 inline-flex items-center gap-4">
