@@ -3,11 +3,7 @@
 import QRCodeComponent from "@/components/custom/QRCodeComponent";
 import { useMemo } from "react";
 
-type Props = {
-  apkPath?: string;
-};
-
-export default function LandingApkDownload({ apkPath = "/rxtrace-scanner.apk" }: Props) {
+export default function LandingApkDownload() {
   const downloadPagePath = "/scanner/download";
 
   const downloadPageUrl = useMemo(() => {
@@ -17,17 +13,17 @@ export default function LandingApkDownload({ apkPath = "/rxtrace-scanner.apk" }:
 
   return (
     <div>
-      <p className="text-sm text-white font-medium">Scanner App</p>
-      <p className="text-xs text-slate-400 mt-1">
-        1) Open your phone camera (or Google Lens) and scan the QR.
+      <p className="text-sm font-medium text-white">Scanner App</p>
+      <p className="mt-1 text-xs text-slate-400">
+        1) Open your phone camera or Google Lens and scan the QR.
         <br />
         2) Tap the link to open the download page.
         <br />
-        3) If Android blocks the install, enable “Install unknown apps” for your browser.
+        3) If Android blocks the install, enable "Install unknown apps" for your browser.
       </p>
 
       <div className="mt-3 inline-flex items-center gap-4">
-        <div className="bg-white rounded-md p-2">
+        <div className="rounded-md bg-white p-2">
           <QRCodeComponent value={downloadPageUrl} size={96} />
         </div>
 
