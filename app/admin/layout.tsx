@@ -1,9 +1,17 @@
-// app/admin/layout.tsx - Super Admin Layout
 'use client';
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { LogOut, Building2, Database, BarChart, Tag, FileText } from 'lucide-react';
+import {
+  LogOut,
+  Building2,
+  Database,
+  BarChart,
+  Tag,
+  FileText,
+  MessageSquare,
+  Users,
+} from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { supabaseClient } from '@/lib/supabase/client';
@@ -20,12 +28,11 @@ export default function AdminLayout({
 
   useEffect(() => {
     async function checkAdmin() {
-      const { data: { user } } = await supabaseClient().auth.getUser();
+      const {
+        data: { user },
+      } = await supabaseClient().auth.getUser();
       if (user) {
         setAdminEmail(user.email || '');
-        // Admin role check: Only authenticated users can access
-        // For super-admin features, add additional role verification in specific pages
-        // In production, check if user has admin role
       } else {
         router.push('/auth/signin?redirect=/admin');
       }
@@ -39,14 +46,13 @@ export default function AdminLayout({
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-lime-50 flex">
-      {/* Sidebar */}
-      <div className="w-64 bg-green-100 border-r border-green-200 flex flex-col shadow-lg">
-        <Link href="/" className="p-6 border-b bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 transition">
+    <div className="flex min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-lime-50">
+      <div className="flex w-64 flex-col border-r border-green-200 bg-green-100 shadow-lg">
+        <Link href="/" className="border-b bg-gradient-to-r from-green-500 to-emerald-600 p-6 transition hover:from-green-600 hover:to-emerald-700">
           <div className="flex items-center gap-3">
-            <Image src="/logo.png" alt="RxTrace" width={32} height={32} className="bg-white rounded-md p-1" />
+            <Image src="/logo.png" alt="RxTrace" width={32} height={32} className="rounded-md bg-white p-1" />
             <div>
-              <span className="text-xl font-bold text-white block">Super Admin</span>
+              <span className="block text-xl font-bold text-white">Super Admin</span>
               <span className="text-xs text-green-100">RxTrace India</span>
             </div>
           </div>
@@ -97,31 +103,42 @@ export default function AdminLayout({
               </Link>
             </li>
             <li>
+              <Link href="/admin/demo-requests">
+                <Button variant="ghost" className="w-full justify-start gap-3 hover:bg-green-200">
+                  <Users className="h-5 w-5" /> Demo Requests
+                </Button>
+              </Link>
+            </li>
+            <li>
+              <Link href="/admin/support-requests">
+                <Button variant="ghost" className="w-full justify-start gap-3 hover:bg-green-200">
+                  <MessageSquare className="h-5 w-5" /> Support Requests
+                </Button>
+              </Link>
+            </li>
+            <li>
               <Link href="/dashboard">
-                <Button variant="outline" className="w-full justify-start gap-3 mt-4 border-blue-500 text-blue-600 hover:bg-blue-50">
-                  <Database className="h-5 w-5" /> User Dashboard →
+                <Button variant="outline" className="mt-4 w-full justify-start gap-3 border-blue-500 text-blue-600 hover:bg-blue-50">
+                  <Database className="h-5 w-5" /> User Dashboard
                 </Button>
               </Link>
             </li>
           </ul>
         </nav>
 
-        <div className="p-4 border-t">
-          <Card className="p-4 bg-gradient-to-br from-green-50 to-emerald-100">
+        <div className="border-t p-4">
+          <Card className="bg-gradient-to-br from-green-50 to-emerald-100 p-4">
             <p className="text-xs font-medium text-gray-600">Logged in as:</p>
-            <p className="text-sm text-gray-800 truncate font-semibold">{adminEmail}</p>
-            <div className="mt-1 text-xs text-emerald-700 font-medium">System Administrator</div>
+            <p className="truncate text-sm font-semibold text-gray-800">{adminEmail}</p>
+            <div className="mt-1 text-xs font-medium text-emerald-700">System Administrator</div>
           </Card>
-          <Button onClick={handleSignOut} variant="outline" className="w-full mt-4 gap-2 border-red-300 text-red-600 hover:bg-red-50">
+          <Button onClick={handleSignOut} variant="outline" className="mt-4 w-full gap-2 border-red-300 text-red-600 hover:bg-red-50">
             <LogOut className="h-4 w-4" /> Sign Out
           </Button>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 p-8 overflow-auto">
-        {children}
-      </div>
+      <div className="flex-1 overflow-auto p-8">{children}</div>
     </div>
   );
 }
