@@ -46,16 +46,19 @@ export default function Sidebar() {
   return (
     <aside
       className={cn(
-        "bg-green-100 text-green-900 flex flex-col transition-all duration-300 border-r border-green-200",
+        "flex flex-col border-r border-[#0F5D5E] bg-[#083B3C] text-[#D7EAEA] transition-all duration-300",
         collapsed ? "w-16" : "w-64"
       )}
     >
       {/* Brand */}
-      <div className="h-16 flex items-center justify-between px-4 border-b border-green-200">
+      <div className="flex h-16 items-center justify-between border-b border-[#0F5D5E] px-4">
         {!collapsed && (
           <Link href="/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-lg font-semibold hover:opacity-80 transition">
             <Image src="/logo.png" alt="RxTrace" width={32} height={32} />
-            <span>RxTrace</span>
+            <div>
+              <span className="block text-white">RxTrace</span>
+              <span className="block text-[10px] uppercase tracking-[0.2em] text-[#F7C35F]">Be Original</span>
+            </div>
           </Link>
         )}
         {collapsed && (
@@ -65,7 +68,7 @@ export default function Sidebar() {
         )}
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="p-1.5 rounded-md hover:bg-green-200 transition text-green-600 hover:text-green-900"
+          className="rounded-md p-1.5 text-[#9FC2C4] transition hover:bg-[#0F5D5E] hover:text-white"
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -85,8 +88,8 @@ export default function Sidebar() {
                 "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors",
                 collapsed ? "justify-center" : "",
                 active
-                  ? "bg-green-300 font-medium text-green-950"
-                  : "text-green-800 hover:bg-green-200 hover:text-green-950"
+                  ? "bg-[#0F5D5E] font-medium text-white"
+                  : "text-[#C7DFE0] hover:bg-[#0D4748] hover:text-white"
               )}
               title={collapsed ? item.label : undefined}
             >

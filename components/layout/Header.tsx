@@ -88,10 +88,10 @@ export default function Header() {
   };
 
   return (
-    <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6">
+    <header className="flex h-16 items-center justify-between border-b border-[#0F5D5E] bg-[#083B3C] px-6">
       {/* Left: Application Name */}
       <div className="flex items-center">
-        <h1 className="text-xl font-semibold text-gray-900">RxTrace</h1>
+        <h1 className="text-xl font-semibold text-white">RxTrace</h1>
       </div>
 
       {/* Right: Actions */}
@@ -100,7 +100,7 @@ export default function Header() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              className="relative p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition"
+              className="relative rounded-md p-2 text-[#C7DFE0] transition hover:bg-[#0F5D5E] hover:text-white"
               aria-label="Notifications"
             >
               <Bell className="w-5 h-5" />
@@ -150,7 +150,7 @@ export default function Header() {
 
         {/* Company Name */}
         {state.companyName && (
-          <div className="hidden md:block text-sm text-gray-600 px-3 py-1.5 bg-gray-50 rounded-md">
+          <div className="hidden rounded-md bg-[#0F5D5E] px-3 py-1.5 text-sm text-[#D7EAEA] md:block">
             {companyText}
           </div>
         )}
@@ -158,7 +158,7 @@ export default function Header() {
         {/* Profile Dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="w-9 h-9 rounded-full bg-blue-700 text-white flex items-center justify-center text-sm font-semibold hover:bg-blue-800 transition">
+            <button className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F59E0B] text-sm font-semibold text-[#083B3C] transition hover:bg-[#F7B733]">
               {state.profileInitial}
             </button>
           </DropdownMenuTrigger>

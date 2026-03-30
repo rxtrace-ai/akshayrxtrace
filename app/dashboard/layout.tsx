@@ -32,11 +32,11 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-[linear-gradient(180deg,#062C2D_0%,#083B3C_100%)]">
       <Sidebar />
       <div className="flex flex-col flex-1">
         <Header />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto bg-[#F3F8F8] p-6">{children}</main>
       </div>
     </div>
   );

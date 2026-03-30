@@ -39,19 +39,15 @@ export async function POST(req: Request) {
       return apiJson({ error: "Company not found" }, { status: 404 });
     }
 
-    const company = resolved.company as Record<string, unknown>;
     const { data, error } = await admin
       .from("support_requests")
       .insert({
-        user_id: user.id,
-        company_id: resolved.companyId,
         full_name: fullName,
-        company_name: String(company.company_name ?? "").trim() || null,
+        company_name: String((resolved.company as Record<string, unknown>).company_name ?? "").trim() || null,
         email,
         category,
         priority: priority === "high" ? "high" : "normal",
         message,
-        source: "dashboard_help",
       })
       .select("id, created_at, status")
       .single();
