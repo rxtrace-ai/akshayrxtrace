@@ -207,7 +207,7 @@ export default function HelpSupportPage() {
               {submitted ? (
                 <div className="rounded-lg border border-green-200 bg-green-50 p-6 text-center">
                   <p className="mb-1 font-medium text-green-800">Request submitted successfully</p>
-                  <p className="text-sm text-green-700">Your request is now visible to the admin support team.</p>
+                  <p className="text-sm text-green-700">Our team will review your request and send a solution within 3 working days.</p>
                 </div>
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-4">

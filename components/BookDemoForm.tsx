@@ -38,7 +38,7 @@ export default function BookDemoForm({ className }: Props) {
         throw new Error(payload?.error?.message || payload?.error || 'Failed to submit. Please try again.');
       }
 
-      setSuccess('Your request has been submitted. Our team will contact you shortly.');
+      setSuccess('Your demo request has been submitted. Our team will contact you within 24 hours.');
       setName('');
       setCompanyName('');
       setEmail('');
