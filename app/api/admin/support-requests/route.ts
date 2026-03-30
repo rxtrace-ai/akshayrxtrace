@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("support_requests")
-    .select("id, user_id, company_id, full_name, company_name, email, category, priority, message, status, source, created_at")
+    .select("id, full_name, company_name, email, category, priority, message, status, source, created_at")
     .order("created_at", { ascending: false })
     .limit(limit);
 
