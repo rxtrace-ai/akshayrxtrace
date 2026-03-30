@@ -22,13 +22,23 @@ export default function BookDemoForm({ className }: Props) {
     setSuccess('');
 
     try {
-      const subject = encodeURIComponent('RxTrace Demo Request');
-      const body = encodeURIComponent(
-        `Name: ${name}\nCompany: ${companyName}\nEmail: ${email}\nPhone: ${phone}\nSource: landing`
-      );
-      window.location.href = `mailto:support@rxtrace.in?subject=${subject}&body=${body}`;
+      const res = await fetch('/api/public/demo-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          company_name: companyName,
+          email,
+          phone,
+          source: 'landing',
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.error?.message || payload?.error || 'Failed to submit. Please try again.');
+      }
 
-      setSuccess('Your request is ready. Our team will contact you shortly.');
+      setSuccess('Your request has been submitted. Our team will contact you shortly.');
       setName('');
       setCompanyName('');
       setEmail('');
