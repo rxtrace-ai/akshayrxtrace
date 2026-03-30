@@ -49,7 +49,7 @@ export async function POST(req: Request) {
         priority: priority === "high" ? "high" : "normal",
         message,
       })
-      .select("id, created_at, status")
+      .select("id, created_at")
       .single();
 
     if (error) {

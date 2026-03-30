@@ -14,8 +14,6 @@ type SupportRequest = {
   category: string;
   priority: string;
   message: string;
-  status: string;
-  source: string;
   created_at: string;
 };
 
@@ -91,7 +89,7 @@ export default function SupportRequestsAdminPage() {
                       <Badge variant={request.priority === 'high' ? 'destructive' : 'secondary'}>
                         {formatLabel(request.priority)}
                       </Badge>
-                      <Badge variant="secondary">{formatLabel(request.status)}</Badge>
+                      <Badge variant="secondary">Received</Badge>
                     </div>
                   </div>
                   <div className="text-xs text-gray-500">{new Date(request.created_at).toLocaleString()}</div>
