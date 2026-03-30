@@ -28,6 +28,14 @@ type PlanSummary = {
   versions_count: number;
 };
 
+function getErrorMessage(payload: any, fallback: string) {
+  if (typeof payload?.error?.message === 'string' && payload.error.message.trim()) return payload.error.message;
+  if (typeof payload?.legacy_message === 'string' && payload.legacy_message.trim()) return payload.legacy_message;
+  if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message;
+  if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error;
+  return fallback;
+}
+
 function formatInrFromPaise(value: number): string {
   const inr = Number(value || 0) / 100;
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(inr);
@@ -68,12 +76,10 @@ export default function AdminDashboardPage() {
         supportRes.json(),
       ]);
 
-      if (!revenueRes.ok || !revenueData?.success) throw new Error(revenueData?.message || revenueData?.error || 'Failed to load revenue summary');
-      if (!companiesRes.ok || !companiesData?.success) throw new Error(companiesData?.message || companiesData?.error || 'Failed to load companies');
-      if (!plansRes.ok || !plansData?.success) throw new Error(plansData?.message || plansData?.error || 'Failed to load plans');
-      if (!addonsRes.ok || !addonsData?.success) throw new Error(addonsData?.message || addonsData?.error || 'Failed to load add-ons');
-      if (!demoRes.ok || !demoData?.success) throw new Error(demoData?.message || demoData?.error || 'Failed to load demo requests');
-      if (!supportRes.ok || !supportData?.success) throw new Error(supportData?.message || supportData?.error || 'Failed to load support requests');
+      if (!revenueRes.ok || !revenueData?.success) throw new Error(getErrorMessage(revenueData, 'Failed to load revenue summary'));
+      if (!companiesRes.ok || !companiesData?.success) throw new Error(getErrorMessage(companiesData, 'Failed to load companies'));
+      if (!plansRes.ok || !plansData?.success) throw new Error(getErrorMessage(plansData, 'Failed to load plans'));
+      if (!addonsRes.ok || !addonsData?.success) throw new Error(getErrorMessage(addonsData, 'Failed to load add-ons'));
 
       setRevenue(
         revenueData.totals || {
@@ -84,8 +90,18 @@ export default function AdminDashboardPage() {
       setCompanies(companiesData.companies || []);
       setPlans(plansData.plans || []);
       setAddonsCount((addonsData.add_ons || []).length);
-      setDemoRequestsCount((demoData.rows || []).length);
-      setSupportRequestsCount((supportData.rows || []).length);
+
+      if (demoRes.ok && demoData?.success) {
+        setDemoRequestsCount((demoData.rows || []).length);
+      } else {
+        setDemoRequestsCount(0);
+      }
+
+      if (supportRes.ok && supportData?.success) {
+        setSupportRequestsCount((supportData.rows || []).length);
+      } else {
+        setSupportRequestsCount(0);
+      }
     } catch (err: any) {
       setError(err?.message || 'Failed to load admin dashboard');
     } finally {
