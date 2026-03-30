@@ -1,410 +1,357 @@
-// Next.js 14 App Router – Production-ready RxTrace Landing Page
-// Path: app/page.tsx
-
 import Image from "next/image";
 import Link from "next/link";
 import BookDemoForm from "@/components/BookDemoForm";
 import LandingAuthLinks from "@/components/LandingAuthLinks";
 import LandingApkDownload from "@/components/LandingApkDownload";
 
+const valueCards = [
+  {
+    title: "Protect Your Brand",
+    text: "Give every product a unique identity so your team can spot duplicates, misuse, and counterfeit risk faster.",
+  },
+  {
+    title: "Verify What Is Original",
+    text: "Help teams confirm whether a code is genuine across manufacturing, dispatch, warehouse, and market checks.",
+  },
+  {
+    title: "Trace Every Movement",
+    text: "Track products from unit to box, carton, and pallet with one consistent traceability flow.",
+  },
+  {
+    title: "Stay Audit Ready",
+    text: "Keep clear records for code generation, packaging hierarchy, and traceability reports without extra complexity.",
+  },
+];
+
+const workflowSteps = [
+  "Create your company and product master.",
+  "Generate product codes using GTIN or PIC-based flows.",
+  "Print labels for units and packaging levels.",
+  "Scan and verify products across the supply chain.",
+  "Track history and export reports when needed.",
+];
+
+const codeModes = [
+  {
+    title: "GTIN-Based Codes",
+    text: "If your product already has a GTIN, Rxtrace uses it to generate standards-aligned traceability codes.",
+  },
+  {
+    title: "PIC-Based Codes",
+    text: "If your product does not use GTIN yet, Rxtrace can still help you identify and trace products with PIC-based codes.",
+  },
+];
+
+const complianceItems = [
+  "Supports GS1-aligned traceability workflows",
+  "Supports packaging hierarchy from unit to pallet",
+  "Supports India-focused pharmaceutical barcode and QR workflows",
+  "Supports EU FMD and US DSCSA-style serialization workflows",
+];
+
+const industries = [
+  "Pharmaceuticals",
+  "Medical Devices",
+  "Healthcare Products",
+  "Cosmetics & Personal Care",
+  "Food & Beverage",
+  "Consumer Goods",
+];
+
+const footerLinks = [
+  { href: "/privacy", label: "Privacy Policy" },
+  { href: "/terms", label: "Terms of Use" },
+  { href: "/billing-policy", label: "Billing Policy" },
+  { href: "/cancellation-policy", label: "Refund & Cancellation" },
+  { href: "/compliance", label: "Compliance" },
+  { href: "/contact", label: "Help & Support" },
+];
+
 export default function HomePage() {
   return (
-    <main className="bg-white text-slate-900">
-      {/* Header */}
-      <header className="sticky top-0 z-50 backdrop-blur bg-white/80 border-b">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition">
-            <Image src="/logo.png" alt="RxTrace" width={36} height={36} />
-            <span className="font-semibold text-lg">RxTrace</span>
+    <main className="bg-[#F8FAFC] text-[#0F172A]">
+      <header className="sticky top-0 z-50 border-b border-[#D7E3E4] bg-[#F8FAFC]/95 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+          <Link href="/" className="flex items-center gap-3 transition hover:opacity-90">
+            <Image src="/logo.png" alt="RxTrace" width={40} height={40} />
+            <div>
+              <span className="block text-lg font-semibold tracking-tight text-[#083B3C]">RxTrace</span>
+              <span className="block text-xs uppercase tracking-[0.24em] text-[#0F5D5E]/70">Be Original</span>
+            </div>
           </Link>
-          <nav className="hidden md:flex gap-8 text-sm font-medium">
-            <Link href="/compliance">Compliance</Link>
-            <Link href="/services">Services</Link>
-            <Link href="/pricing">Pricing</Link>
-            <Link href="/contact">Contact Us</Link>
+
+          <nav className="hidden items-center gap-8 text-sm font-medium text-[#365456] md:flex">
+            <Link href="#how-it-works" className="hover:text-[#0F5D5E]">How It Works</Link>
+            <Link href="#industries" className="hover:text-[#0F5D5E]">Industries</Link>
+            <Link href="/compliance" className="hover:text-[#0F5D5E]">Compliance</Link>
+            <Link href="/pricing" className="hover:text-[#0F5D5E]">Pricing</Link>
+            <Link href="/contact" className="hover:text-[#0F5D5E]">Contact</Link>
           </nav>
-          <div className="flex items-center gap-4">
+
+          <div className="flex items-center gap-3">
             <LandingAuthLinks
-              loginClassName="text-sm"
-              registerClassName="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm shadow hover:bg-blue-700"
+              loginClassName="hidden text-sm font-medium text-[#365456] hover:text-[#0F5D5E] md:inline-flex"
+              registerClassName="inline-flex rounded-xl bg-[#0F5D5E] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#083B3C]"
+              dashboardClassName="inline-flex rounded-xl border border-[#B9CDCE] px-4 py-2 text-sm font-semibold text-[#0F5D5E] transition hover:border-[#0F5D5E] hover:bg-[#EAF3F3]"
+              logoutClassName="inline-flex rounded-xl bg-[#0F5D5E] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#083B3C]"
             />
           </div>
         </div>
       </header>
 
-      {/* Hero */}
-      <section className="relative bg-gradient-to-br from-blue-700 to-blue-500 text-white">
-        <div className="max-w-7xl mx-auto px-6 py-24 grid md:grid-cols-2 gap-16 items-center">
-          <div>
-            <h1 className="text-4xl md:text-5xl font-bold leading-tight">
-              Enterprise-Grade Pharmaceutical Traceability
+      <section className="relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(245,158,11,0.18),_transparent_34%),radial-gradient(circle_at_bottom_right,_rgba(15,93,94,0.14),_transparent_40%)]" />
+        <div className="mx-auto grid max-w-7xl gap-14 px-6 py-20 md:grid-cols-[1.15fr_0.85fr] md:py-24">
+          <div className="relative">
+            <div className="inline-flex rounded-full border border-[#B9CDCE] bg-white/80 px-4 py-1 text-sm font-medium text-[#0F5D5E] shadow-sm">
+              Product traceability for original brands
+            </div>
+            <h1 className="mt-6 max-w-3xl text-5xl font-semibold tracking-tight text-[#083B3C] md:text-6xl">
+              Be Original.
             </h1>
-            <p className="mt-6 text-lg text-blue-100">
-              GS1-compliant unit-to-pallet tracking with zero consumer data capture.
+            <p className="mt-5 max-w-2xl text-xl leading-8 text-[#365456]">
+              Rxtrace helps brands protect products from counterfeit, track every unit, and prove authenticity across the supply chain.
             </p>
-            <ul className="mt-8 space-y-3 text-sm">
-              <li>✔ GS1 QR & DataMatrix only</li>
-              <li>✔ Unit → Box → Carton → Pallet (SSCC)</li>
-              <li>✔ Code-only security model</li>
-            </ul>
+            <p className="mt-4 max-w-2xl text-base leading-7 text-[#5C7173]">
+              Simple code-based traceability for regulated products, from unit to box, carton, and pallet.
+            </p>
+
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Link
+                href="/auth/signup"
+                className="inline-flex items-center justify-center rounded-xl bg-[#0F5D5E] px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#083B3C]"
+              >
+                Start Trial
+              </Link>
+              <Link
+                href="#book-demo"
+                className="inline-flex items-center justify-center rounded-xl border border-[#C8D9DA] bg-white px-6 py-3 text-sm font-semibold text-[#0F5D5E] transition hover:border-[#0F5D5E] hover:bg-[#EEF5F5]"
+              >
+                Book a Demo
+              </Link>
+            </div>
+
+            <div className="mt-10 grid gap-4 sm:grid-cols-3">
+              <div className="rounded-2xl border border-[#D7E3E4] bg-white/90 p-4 shadow-sm">
+                <div className="text-sm font-semibold text-[#083B3C]">Stop Counterfeit</div>
+                <p className="mt-2 text-sm text-[#5C7173]">Make product identity visible and harder to fake.</p>
+              </div>
+              <div className="rounded-2xl border border-[#D7E3E4] bg-white/90 p-4 shadow-sm">
+                <div className="text-sm font-semibold text-[#083B3C]">Verify Faster</div>
+                <p className="mt-2 text-sm text-[#5C7173]">Help teams check codes quickly across the supply chain.</p>
+              </div>
+              <div className="rounded-2xl border border-[#D7E3E4] bg-white/90 p-4 shadow-sm">
+                <div className="text-sm font-semibold text-[#083B3C]">Stay Audit Ready</div>
+                <p className="mt-2 text-sm text-[#5C7173]">Keep clean records for operations and compliance reviews.</p>
+              </div>
+            </div>
           </div>
 
-          <div id="book-demo" className="bg-white/90 backdrop-blur rounded-2xl shadow-xl p-8 text-slate-900">
-            <h3 className="text-lg font-semibold mb-4">Book a Demo</h3>
-            <BookDemoForm className="space-y-4" />
+          <div
+            id="book-demo"
+            className="relative rounded-[28px] border border-[#D7E3E4] bg-white p-8 shadow-[0_24px_80px_rgba(8,59,60,0.12)]"
+          >
+            <div className="inline-flex rounded-full bg-[#FFF4D8] px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-[#9A6500]">
+              Talk to Sales
+            </div>
+            <h2 className="mt-5 text-2xl font-semibold text-[#083B3C]">See Rxtrace in action</h2>
+            <p className="mt-3 text-sm leading-6 text-[#5C7173]">
+              Share your details and our team will walk you through anti-counterfeit workflows, code generation, and traceability setup.
+            </p>
+            <div className="mt-6">
+              <BookDemoForm className="space-y-4" />
+            </div>
           </div>
         </div>
       </section>
 
-{/* Compliance Overview */}
-<section className="py-20 bg-slate-50">
-  <div className="max-w-7xl mx-auto px-6">
-    <h2 className="text-3xl font-semibold text-center">
-      Regulatory Compliance Overview
-    </h2>
-    <p className="text-center text-slate-600 mt-4 max-w-3xl mx-auto">
-      RxTrace supports GS1-aligned serialization and traceability workflows
-      required under major global and Indian pharmaceutical regulations.
-    </p>
+      <section className="border-y border-[#D7E3E4] bg-white">
+        <div className="mx-auto grid max-w-7xl gap-6 px-6 py-16 md:grid-cols-2 lg:grid-cols-4">
+          {valueCards.map((card) => (
+            <div key={card.title} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-6 shadow-sm">
+              <div className="text-lg font-semibold text-[#083B3C]">{card.title}</div>
+              <p className="mt-3 text-sm leading-6 text-[#5C7173]">{card.text}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
-    <div className="mt-12 grid md:grid-cols-4 gap-6">
-      <div className="bg-white rounded-xl shadow p-6">
-        <h3 className="font-semibold mb-2">EU-FMD</h3>
-        <p className="text-sm text-slate-600">
-          Mandatory GS1 DataMatrix with unique identifier for prescription
-          medicines across the European Union.
-        </p>
-        <a href="/compliance" className="text-sm text-blue-600 font-medium mt-3 inline-block">
-          Read more →
-        </a>
-      </div>
-
-      <div className="bg-white rounded-xl shadow p-6">
-        <h3 className="font-semibold mb-2">US-FDA (DSCSA)</h3>
-        <p className="text-sm text-slate-600">
-          Serialized product identifiers required for interoperable electronic
-          tracing of prescription drugs.
-        </p>
-        <a href="/compliance" className="text-sm text-blue-600 font-medium mt-3 inline-block">
-          Read more →
-        </a>
-      </div>
-
-      <div className="bg-white rounded-xl shadow p-6">
-        <h3 className="font-semibold mb-2">Indian FDA</h3>
-        <p className="text-sm text-slate-600">
-          QR / barcode mandate for top drug formulations under amended Drugs &
-          Cosmetics Rules.
-        </p>
-        <a href="/compliance" className="text-sm text-blue-600 font-medium mt-3 inline-block">
-          Read more →
-        </a>
-      </div>
-
-      <div className="bg-white rounded-xl shadow p-6">
-        <h3 className="font-semibold mb-2">CDSCO</h3>
-        <p className="text-sm text-slate-600">
-          GS1-based identification and traceability aligned with India’s central
-          drug regulator guidelines.
-        </p>
-        <a href="/compliance" className="text-sm text-blue-600 font-medium mt-3 inline-block">
-          Read more →
-        </a>
-      </div>
-    </div>
-  </div>
-</section>
-
-{/* How RxTrace Works */}
-<section className="py-24 bg-slate-50">
-  <div className="max-w-7xl mx-auto px-6">
-    <h2 className="text-3xl font-semibold text-center">
-      How RxTrace Works
-    </h2>
-    <p className="text-center text-slate-600 mt-4 max-w-3xl mx-auto">
-      A simple GS1 compliant traceability process from company setup
-      to label generation and printing.
-    </p>
-
-    {/* Flow Grid */}
-    <div className="mt-16 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-
-      {/* STEP 1 */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <div className="text-blue-600 font-semibold text-sm">Step 1</div>
-        <h3 className="mt-2 font-semibold">Setup Company</h3>
-        <p className="mt-2 text-sm text-slate-600">
-          Register company details and compliance profile once in the system.
-        </p>
-      </div>
-
-      {/* STEP 2 */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <div className="text-blue-600 font-semibold text-sm">Step 2</div>
-        <h3 className="mt-2 font-semibold">Create SKU Master</h3>
-        <p className="mt-2 text-sm text-slate-600">
-          Create SKU Master records manually or upload CSV with fixed Unit
-          fields such as SKU code, batch, expiry, optional MFD, optional MRP,
-          and optional GTIN.
-        </p>
-      </div>
-
-      {/* STEP 3 */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <div className="text-blue-600 font-semibold text-sm">Step 3</div>
-        <h3 className="mt-2 font-semibold">Select SKU for Generation</h3>
-        <p className="mt-2 text-sm text-slate-600">
-          Unit generation reads fixed payload values from SKU Master so users
-          only select SKU and enter quantity during generation.
-        </p>
-      </div>
-
-      {/* STEP 4 */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <div className="text-blue-600 font-semibold text-sm">Step 4</div>
-        <h3 className="mt-2 font-semibold">Setup Printer</h3>
-        <p className="mt-2 text-sm text-slate-600">
-          Configure printer or output format such as PDF, PNG, EPL, or ZPL.
-        </p>
-      </div>
-
-      {/* STEP 5 */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <div className="text-blue-600 font-semibold text-sm">Step 5</div>
-        <h3 className="mt-2 font-semibold">Set Packaging Rules</h3>
-        <p className="mt-2 text-sm text-slate-600">
-          Define box, carton and pallet hierarchy using SSCC rules.
-        </p>
-      </div>
-
-      {/* STEP 6 */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <div className="text-blue-600 font-semibold text-sm">Step 6</div>
-        <h3 className="mt-2 font-semibold">Generate Unit Payload</h3>
-        <p className="mt-2 text-sm text-slate-600">
-          RxTrace generates GS1 automatically when GTIN exists in SKU Master,
-          otherwise it generates PIC, always with backend-created serials.
-        </p>
-      </div>
-
-      {/* STEP 7 */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <div className="text-blue-600 font-semibold text-sm">Step 7</div>
-        <h3 className="mt-2 font-semibold">Add to Batch</h3>
-        <p className="mt-2 text-sm text-slate-600">
-          Generated payloads are grouped into batches for controlled processing.
-        </p>
-      </div>
-
-      {/* STEP 8 */}
-      <div className="bg-white rounded-xl shadow p-6 border border-blue-600">
-        <div className="text-blue-600 font-semibold text-sm">Step 8</div>
-        <h3 className="mt-2 font-semibold">Generate & Print Codes</h3>
-        <p className="mt-2 text-sm text-slate-600">
-          Export labels in PDF, PNG, EPL, ZPL format or print directly.
-        </p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-      {/* Industry Support */}
-<section className="py-20">
-  <div className="max-w-7xl mx-auto px-6">
-    <h2 className="text-3xl font-semibold text-center">
-      Industry Support
-    </h2>
-    <p className="text-center text-slate-600 mt-4 max-w-3xl mx-auto">
-      RxTrace is designed to support all key participants in the regulated
-      supply chain with a single GS1 compliant traceability system.
-    </p>
-
-    <div className="mt-12 grid md:grid-cols-4 gap-6 text-sm">
-      <div className="bg-slate-50 rounded-xl p-6 text-center">
-        <h3 className="font-semibold mb-2">Manufacturers</h3>
-        <ul className="space-y-2 text-slate-700">
-          <li>Generate GS1 QR or DataMatrix codes</li>
-          <li>Serialize products at unit level</li>
-          <li>Meet India, US, and EU regulations</li>
-          <li>Prepare audit ready reports</li>
-        </ul>
-      </div>
-
-      <div className="bg-slate-50 rounded-xl p-6 text-center">
-        <h3 className="font-semibold mb-2">Distributors</h3>
-        <ul className="space-y-2 text-slate-700">
-          <li>Verify incoming and outgoing shipments</li>
-          <li>Scan cartons and pallets using SSCC</li>
-          <li>Handle partial shipments easily</li>
-          <li>No access to manufacturer sensitive data</li>
-        </ul>
-      </div>
-
-      <div className="bg-slate-50 rounded-xl p-6 text-center">
-        <h3 className="font-semibold mb-2">Warehouses</h3>
-        <ul className="space-y-2 text-slate-700">
-          <li>Quick receiving and dispatch scanning</li>
-          <li>Pallet and carton level visibility</li>
-          <li>Support cold chain and 3PL operations</li>
-          <li>Reduce manual inventory errors</li>
-        </ul>
-      </div>
-
-      <div className="bg-slate-50 rounded-xl p-6 text-center">
-        <h3 className="font-semibold mb-2">Logistics</h3>
-        <ul className="space-y-2 text-slate-700">
-          <li>Track movement without data duplication</li>
-          <li>Scan once, use everywhere</li>
-          <li>Compatible with existing workflows</li>
-          <li>Improved traceability across transit</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-</section>
-
-
-      {/* Data Security */}
-<section className="py-20 bg-slate-900 text-white">
-  <div className="max-w-7xl mx-auto px-6">
-    <h2 className="text-3xl font-semibold text-center">
-      Data Security and Trust
-    </h2>
-    <p className="text-center text-slate-300 mt-4 max-w-3xl mx-auto">
-      RxTrace follows a code centric security model that minimizes data exposure
-      while meeting regulatory traceability requirements.
-    </p>
-
-    <div className="mt-12 grid md:grid-cols-4 gap-6 text-sm">
-      <div className="bg-white/10 rounded-xl p-6">
-        <h3 className="font-semibold mb-2">Code Only Architecture</h3>
-        <ul className="space-y-2 text-slate-200">
-          <li>All trust is embedded inside GS1 codes</li>
-          <li>No dependency on personal data</li>
-          <li>Works even without internet access</li>
-        </ul>
-      </div>
-
-      <div className="bg-white/10 rounded-xl p-6">
-        <h3 className="font-semibold mb-2">No Consumer Data Capture</h3>
-        <ul className="space-y-2 text-slate-200">
-          <li>No patient or consumer tracking</li>
-          <li>No scan level personal data stored</li>
-          <li>Privacy safe by design</li>
-        </ul>
-      </div>
-
-      <div className="bg-white/10 rounded-xl p-6">
-        <h3 className="font-semibold mb-2">Controlled Access</h3>
-        <ul className="space-y-2 text-slate-200">
-          <li>Role based user permissions</li>
-          <li>Token based handset activation</li>
-          <li>Higher scans enabled only when authorized</li>
-        </ul>
-      </div>
-
-      <div className="bg-white/10 rounded-xl p-6">
-        <h3 className="font-semibold mb-2">Audit Ready</h3>
-        <ul className="space-y-2 text-slate-200">
-          <li>Immutable generation logs</li>
-          <li>Packaging and aggregation history</li>
-          <li>Regulator friendly reports</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-</section>
-
-      {/* Footer */}
-      <footer className="bg-slate-900 text-slate-300 py-12">
-        <div className="max-w-7xl mx-auto px-6 grid md:grid-cols-4 gap-8">
-          <div>
-            <p className="font-semibold text-white">RxTrace</p>
-            <p className="text-sm mt-2">
-              RxTrace is a traceability and serialization platform enabling secure product tracking using GS1-compliant codes across the supply chain.
+      <section id="how-it-works" className="bg-[#F3F8F8] py-20">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="max-w-3xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">How It Works</p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C] md:text-4xl">
+              Clear traceability without complex setup
+            </h2>
+            <p className="mt-4 text-base leading-7 text-[#5C7173]">
+              Rxtrace keeps the flow simple so your team can mark, print, verify, and trace products without getting lost in technical steps.
             </p>
           </div>
-          <div>
-            <table className="text-sm w-full">
-              <tbody>
-                <tr>
-                  <td className="py-1">
-                    <Link href="/privacy" className="text-slate-300 hover:text-white">Privacy Policy</Link>
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-1">
-                    <Link href="/terms" className="text-slate-300 hover:text-white">User Policy</Link>
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-1">
-                    <Link href="/billing-policy" className="text-slate-300 hover:text-white">Billing Policy</Link>
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-1">
-                    <Link href="/cancellation-policy" className="text-slate-300 hover:text-white">Cancellation & Refund Policy</Link>
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-1">
-                    <Link href="/contact" className="text-slate-300 hover:text-white">Help & Support</Link>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+
+          <div className="mt-12 grid gap-5 md:grid-cols-5">
+            {workflowSteps.map((step, index) => (
+              <div key={step} className="rounded-2xl border border-[#D7E3E4] bg-white p-5 shadow-sm">
+                <div className="text-sm font-semibold text-[#C17A00]">Step {index + 1}</div>
+                <p className="mt-3 text-sm leading-6 text-[#365456]">{step}</p>
+              </div>
+            ))}
           </div>
-          <div className="text-sm space-y-2">
-            <Link href="#">LinkedIn</Link>
-            <Link href="#">X</Link>
+        </div>
+      </section>
+
+      <section className="bg-white py-20">
+        <div className="mx-auto grid max-w-7xl gap-10 px-6 lg:grid-cols-[1fr_1fr]">
+          <div className="rounded-3xl border border-[#D7E3E4] bg-[#083B3C] p-8 text-white shadow-[0_20px_60px_rgba(8,59,60,0.18)]">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">Code Options</p>
+            <h2 className="mt-3 text-3xl font-semibold">GTIN or PIC, with one simple explanation</h2>
+            <p className="mt-4 text-sm leading-7 text-[#D7EAEA]">
+              If you already use GTIN, Rxtrace works with it. If you do not, Rxtrace can still help you trace products using PIC-based identification.
+            </p>
+            <p className="mt-4 text-sm leading-7 text-[#D7EAEA]">
+              Rxtrace reads structure for code generation workflows, but GTIN ownership and lawful use remain the company&apos;s responsibility.
+            </p>
           </div>
+
+          <div className="grid gap-5">
+            {codeModes.map((item) => (
+              <div key={item.title} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-6 shadow-sm">
+                <div className="text-lg font-semibold text-[#083B3C]">{item.title}</div>
+                <p className="mt-3 text-sm leading-6 text-[#5C7173]">{item.text}</p>
+              </div>
+            ))}
+            <div className="rounded-2xl border border-[#F2D9A1] bg-[#FFF8E8] p-6 shadow-sm">
+              <div className="text-lg font-semibold text-[#9A6500]">Important Notice</div>
+              <p className="mt-3 text-sm leading-6 text-[#7A5A11]">
+                Rxtrace does not verify GTIN ownership, licensing, or regulatory validity. The customer is solely responsible for using valid GTINs.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-[#F3F8F8] py-20">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="max-w-3xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Compliance Support</p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C] md:text-4xl">
+              Built to support regulated traceability workflows
+            </h2>
+            <p className="mt-4 text-base leading-7 text-[#5C7173]">
+              Rxtrace supports clear, audit-friendly traceability records and packaging hierarchy while keeping the language and workflow easy for teams to use.
+            </p>
+          </div>
+
+          <div className="mt-12 grid gap-5 md:grid-cols-2">
+            {complianceItems.map((item) => (
+              <div key={item} className="rounded-2xl border border-[#D7E3E4] bg-white p-6 shadow-sm">
+                <div className="text-base font-semibold text-[#083B3C]">{item}</div>
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-6 text-sm text-[#5C7173]">
+            Final compliance depends on your implementation and the rules that apply to your market.
+          </p>
+        </div>
+      </section>
+
+      <section id="industries" className="bg-white py-20">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div className="max-w-3xl">
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Industries</p>
+              <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C] md:text-4xl">
+                Designed for brands that need trust and traceability
+              </h2>
+            </div>
+            <Link href="/pricing" className="text-sm font-semibold text-[#0F5D5E] hover:text-[#083B3C]">
+              Explore plans
+            </Link>
+          </div>
+
+          <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {industries.map((industry) => (
+              <div key={industry} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-6 shadow-sm">
+                <div className="text-lg font-semibold text-[#083B3C]">{industry}</div>
+                <p className="mt-3 text-sm leading-6 text-[#5C7173]">
+                  Clear product identity, better verification, and stronger traceability for regulated or brand-sensitive goods.
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-[#083B3C] py-20 text-white">
+        <div className="mx-auto flex max-w-7xl flex-col gap-8 px-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="max-w-2xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">Start Now</p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
+              Start your traceability setup with a guided trial
+            </h2>
+            <p className="mt-4 text-base leading-7 text-[#D7EAEA]">
+              Use the trial flow to create your account, complete company setup, and begin exploring Rxtrace with your team.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Link
+              href="/auth/signup"
+              className="inline-flex items-center justify-center rounded-xl bg-[#F59E0B] px-6 py-3 text-sm font-semibold text-[#083B3C] transition hover:bg-[#F7B733]"
+            >
+              Start Trial
+            </Link>
+            <Link
+              href="/contact"
+              className="inline-flex items-center justify-center rounded-xl border border-white/30 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
+            >
+              Talk to Sales
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <footer className="bg-[#062C2D] py-12 text-[#D7EAEA]">
+        <div className="mx-auto grid max-w-7xl gap-10 px-6 md:grid-cols-[1.2fr_1fr_1fr_0.9fr]">
           <div>
+            <p className="text-lg font-semibold text-white">RxTrace</p>
+            <p className="mt-3 max-w-sm text-sm leading-6 text-[#B7CDCE]">
+              Rxtrace is a product traceability platform that helps brands protect original products, reduce counterfeit risk, and maintain clear supply chain records.
+            </p>
+            <p className="mt-4 text-xs uppercase tracking-[0.18em] text-[#F7C35F]">Be Original</p>
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-white">Company</p>
+            <div className="mt-4 flex flex-col gap-3 text-sm">
+              <Link href="/pricing" className="hover:text-white">Pricing</Link>
+              <Link href="/services" className="hover:text-white">Services</Link>
+              <Link href="/compliance" className="hover:text-white">Compliance</Link>
+              <Link href="/contact" className="hover:text-white">Contact</Link>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-white">Legal</p>
+            <div className="mt-4 flex flex-col gap-3 text-sm">
+              {footerLinks.map((link) => (
+                <Link key={link.href} href={link.href} className="hover:text-white">
+                  {link.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-white">Mobile Access</p>
             <LandingApkDownload />
           </div>
         </div>
-        <p className="text-center text-xs text-slate-500 mt-8">© {new Date().getFullYear()} RxTrace India. All rights reserved.</p>
+
+        <div className="mx-auto mt-10 max-w-7xl border-t border-white/10 px-6 pt-6 text-xs text-[#9FB8B9]">
+          Copyright {new Date().getFullYear()} RxTrace India. All rights reserved.
+        </div>
       </footer>
     </main>
   );
-}
-type FlowStepProps = {
-  step: string
-  title: string
-  text: string
-  align: "top" | "bottom"
-  highlight?: boolean
-}
-
-function FlowStep({
-  step,
-  title,
-  text,
-  align,
-  highlight
-}: FlowStepProps) {
-  return (
-    <div
-      className={`flex flex-col items-center text-center ${
-        align === "top" ? "-mt-28" : "mt-28"
-      }`}
-    >
-      <div
-        className={`w-16 h-16 rounded-full flex items-center justify-center text-lg font-bold ${
-          highlight ? "bg-blue-600" : "bg-blue-500"
-        }`}
-      >
-        {step}
-      </div>
-
-      <h3 className="mt-4 font-semibold text-sm text-blue-400 max-w-[180px]">
-        {title}
-      </h3>
-
-      <p className="mt-2 text-xs text-slate-400 max-w-[180px]">
-        {text}
-      </p>
-    </div>
-  )
 }

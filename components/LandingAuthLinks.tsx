@@ -57,14 +57,13 @@ export default function LandingAuthLinks({
   }
 
   if (hasSession === null) {
-    // Avoid layout shift; render logged-out links until session check completes.
     return (
       <>
         <Link href="/auth/signin" className={loginClassName}>
-          Login
+          Log in
         </Link>
         <Link href="/auth/signup" className={registerClassName}>
-          Register (Setup Company)
+          Start Trial
         </Link>
       </>
     );
@@ -74,10 +73,10 @@ export default function LandingAuthLinks({
     return (
       <>
         <Link href="/auth/signin" className={loginClassName}>
-          Login
+          Log in
         </Link>
         <Link href="/auth/signup" className={registerClassName}>
-          Register (Setup Company)
+          Start Trial
         </Link>
       </>
     );
@@ -94,7 +93,7 @@ export default function LandingAuthLinks({
         className={logoutClassName ?? registerClassName}
         disabled={signingOut}
       >
-        {signingOut ? 'Signing out…' : 'Logout'}
+        {signingOut ? 'Signing out...' : 'Log out'}
       </button>
     </>
   );
