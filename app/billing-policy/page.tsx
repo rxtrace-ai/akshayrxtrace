@@ -1,90 +1,82 @@
-import Link from 'next/link';
-import Image from 'next/image';
+import Link from "next/link";
+import PublicFooter from "@/components/public-site/PublicFooter";
+import PublicHeader from "@/components/public-site/PublicHeader";
 
 export default function BillingPolicyPage() {
   return (
-    <main className="bg-white text-slate-900 min-h-screen">
-      {/* Header */}
-      <header className="sticky top-0 z-50 backdrop-blur bg-white/80 border-b">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition">
-            <Image src="/logo.png" alt="RxTrace" width={36} height={36} />
-            <span className="font-semibold text-lg">RxTrace</span>
-          </Link>
-          <Link href="/" className="text-sm text-gray-600 hover:text-gray-900">
-            ← Back to Home
-          </Link>
+    <main className="min-h-screen bg-[#F8FAFC] text-[#0F172A]">
+      <PublicHeader />
+
+      <section className="bg-[linear-gradient(135deg,#083B3C_0%,#0F5D5E_62%,#2D7677_100%)] text-white">
+        <div className="mx-auto max-w-5xl px-6 py-16">
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">Billing Policy</p>
+          <h1 className="mt-4 text-4xl font-semibold tracking-tight md:text-5xl">Clear billing terms for trial and paid plans</h1>
+          <p className="mt-4 text-base leading-7 text-[#D7EAEA]">
+            Last updated: {new Date().toLocaleDateString("en-IN", { year: "numeric", month: "long", day: "numeric" })}
+          </p>
         </div>
-      </header>
+      </section>
 
-      {/* Content */}
-      <div className="max-w-4xl mx-auto px-6 py-16">
-        <h1 className="text-4xl font-bold mb-4">Billing Policy</h1>
-        <p className="text-gray-600 mb-8">Last updated: {new Date().toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
-
-        <div className="prose prose-slate max-w-none space-y-8">
+      <div className="mx-auto max-w-4xl px-6 py-16">
+        <div className="space-y-8 rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm">
           <section>
-            <h2 className="text-2xl font-semibold mb-4">Free Trial (15 Days)</h2>
-            <p className="text-gray-700 mb-4">
-              RxTrace offers a 15-day free trial period with full access to all features. 
-              No charges are applied during the trial period.
+            <h2 className="text-2xl font-semibold text-[#083B3C]">Trial Activation</h2>
+            <p className="mt-4 text-sm leading-7 text-[#4E6769]">
+              Rxtrace offers a 10-day trial that is activated through an INR 1 Razorpay payment. The trial starts only after payment confirmation and webhook processing.
             </p>
-            <ul className="list-disc list-inside space-y-2 text-gray-700">
-              <li>Full access to all features during trial</li>
-              <li>No charges applied during the 15-day trial period</li>
-              <li>No payment or credit card required to start the trial</li>
-              <li>Unlimited label generation during trial</li>
+            <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-7 text-[#4E6769]">
+              <li>Trial duration is 10 days.</li>
+              <li>Trial activation amount is INR 1.</li>
+              <li>Trial access starts after payment confirmation.</li>
+              <li>Commercial subscription charges apply only if you choose a paid plan later.</li>
             </ul>
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold mb-4">After Trial Ends</h2>
-            <p className="text-gray-700 mb-4">
-              After your 15-day trial ends, you can choose to:
+            <h2 className="text-2xl font-semibold text-[#083B3C]">Paid Plans</h2>
+            <p className="mt-4 text-sm leading-7 text-[#4E6769]">
+              Paid plans are billed according to the pricing shown on the website or in your checkout flow at the time of purchase. Taxes, add-ons, and discounts are shown before payment confirmation.
             </p>
-            <ul className="list-disc list-inside space-y-2 text-gray-700">
-              <li>Start a new trial (contact support for extension)</li>
-              <li>Subscribe to a paid plan (coming soon)</li>
-              <li>Contact us for enterprise solutions</li>
+            <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-7 text-[#4E6769]">
+              <li>Plan charges are billed in INR unless stated otherwise.</li>
+              <li>Add-ons may be charged separately based on the selected configuration.</li>
+              <li>Yearly pricing follows the commercial terms shown during checkout.</li>
+              <li>Enterprise pricing is provided by custom quotation.</li>
             </ul>
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold mb-4">No Payment Required</h2>
-            <p className="text-gray-700 mb-4">
-              Since the trial is completely free, no payment information is collected:
+            <h2 className="text-2xl font-semibold text-[#083B3C]">No Automatic Upgrade</h2>
+            <p className="mt-4 text-sm leading-7 text-[#4E6769]">
+              Completing a trial does not automatically start a paid subscription unless you explicitly choose and pay for a commercial plan.
             </p>
-            <ul className="list-disc list-inside space-y-2 text-gray-700">
-              <li>No credit card required for signup</li>
-              <li>No charges during trial period</li>
-              <li>No automatic billing setup</li>
-              <li>No refund policy applies since no payments are made</li>
-            </ul>
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold mb-4">Contact</h2>
-            <p className="text-gray-700">
-              For billing inquiries or questions about this policy, please contact us at{' '}
-              <a href="mailto:billing@rxtrace.in" className="text-blue-600 hover:underline">
+            <h2 className="text-2xl font-semibold text-[#083B3C]">Refunds</h2>
+            <p className="mt-4 text-sm leading-7 text-[#4E6769]">
+              Subscription fees, setup fees, and add-on charges are generally non-refundable except where required by applicable law or where Rxtrace confirms otherwise in writing.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-2xl font-semibold text-[#083B3C]">Contact</h2>
+            <p className="mt-4 text-sm leading-7 text-[#4E6769]">
+              For billing questions, contact{" "}
+              <a href="mailto:billing@rxtrace.in" className="font-medium text-[#0F5D5E] hover:text-[#083B3C]">
                 billing@rxtrace.in
-              </a>
-              {' '}or visit our{' '}
-              <Link href="/contact" className="text-blue-600 hover:underline">
-                Contact Us
+              </a>{" "}
+              or visit the{" "}
+              <Link href="/contact" className="font-medium text-[#0F5D5E] hover:text-[#083B3C]">
+                Contact page
               </Link>
-              {' '}page.
+              .
             </p>
           </section>
         </div>
       </div>
 
-      {/* Footer */}
-      <footer className="bg-slate-900 text-slate-300 py-12 mt-16">
-        <div className="max-w-7xl mx-auto px-6 text-center">
-          <p className="text-xs text-slate-500">© {new Date().getFullYear()} RxTrace. All rights reserved.</p>
-        </div>
-      </footer>
+      <PublicFooter />
     </main>
   );
 }

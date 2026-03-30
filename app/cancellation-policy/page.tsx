@@ -1,98 +1,69 @@
-import Link from 'next/link';
-import Image from 'next/image';
+import Link from "next/link";
+import PublicFooter from "@/components/public-site/PublicFooter";
+import PublicHeader from "@/components/public-site/PublicHeader";
 
 export default function CancellationPolicyPage() {
   return (
-    <main className="bg-white text-slate-900 min-h-screen">
-      {/* Header */}
-      <header className="sticky top-0 z-50 backdrop-blur bg-white/80 border-b">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition">
-            <Image src="/logo.png" alt="RxTrace" width={36} height={36} />
-            <span className="font-semibold text-lg">RxTrace</span>
-          </Link>
-          <Link href="/" className="text-sm text-gray-600 hover:text-gray-900">
-            ← Back to Home
-          </Link>
+    <main className="min-h-screen bg-[#F8FAFC] text-[#0F172A]">
+      <PublicHeader />
+
+      <section className="bg-[linear-gradient(135deg,#083B3C_0%,#0F5D5E_62%,#2D7677_100%)] text-white">
+        <div className="mx-auto max-w-5xl px-6 py-16">
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">Cancellation Policy</p>
+          <h1 className="mt-4 text-4xl font-semibold tracking-tight md:text-5xl">How trial and subscription cancellation works</h1>
+          <p className="mt-4 text-base leading-7 text-[#D7EAEA]">
+            Last updated: {new Date().toLocaleDateString("en-IN", { year: "numeric", month: "long", day: "numeric" })}
+          </p>
         </div>
-      </header>
+      </section>
 
-      {/* Content */}
-      <div className="max-w-4xl mx-auto px-6 py-16">
-        <h1 className="text-4xl font-bold mb-4">Cancellation Policy</h1>
-        <p className="text-gray-600 mb-8">Last updated: {new Date().toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
-
-        <div className="prose prose-slate max-w-none space-y-8">
+      <div className="mx-auto max-w-4xl px-6 py-16">
+        <div className="space-y-8 rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm">
           <section>
-            <h2 className="text-2xl font-semibold mb-4">Free Trial Cancellation</h2>
-            <p className="text-gray-700 mb-4">
-              You can cancel your 15-day free trial at any time from your dashboard settings. 
-              Cancellation results in immediate loss of access to all features.
+            <h2 className="text-2xl font-semibold text-[#083B3C]">Trial Cancellation</h2>
+            <p className="mt-4 text-sm leading-7 text-[#4E6769]">
+              You can cancel your 10-day trial from the dashboard settings while it is active. Cancellation takes effect immediately and trial access ends at once.
             </p>
-            <ul className="list-disc list-inside space-y-2 text-gray-700">
-              <li>Cancel anytime from Dashboard → Settings → Trial Management</li>
-              <li>Immediate effect - access is revoked right away</li>
-              <li>No charges - the trial is completely free</li>
-              <li>No questions asked</li>
+            <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-7 text-[#4E6769]">
+              <li>Cancel from Dashboard to Settings to Trial.</li>
+              <li>Trial access stops immediately after cancellation.</li>
+              <li>The INR 1 trial activation amount is not a recurring subscription charge.</li>
+              <li>A cancelled trial does not automatically restart.</li>
             </ul>
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold mb-4">How to Cancel Your Trial</h2>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-              <ol className="list-decimal list-inside space-y-3 text-gray-700">
-                <li>Log in to your RxTrace dashboard</li>
-                <li>Navigate to Settings</li>
-                <li>Find the Trial Management section</li>
-                <li>Click on &quot;Cancel Trial&quot;</li>
-                <li>Confirm your cancellation</li>
-              </ol>
-            </div>
-          </section>
-
-          <section>
-            <h2 className="text-2xl font-semibold mb-4">No Charges or Refunds</h2>
-            <p className="text-gray-700 mb-4">
-              Since the trial is completely free, there are no charges to refund:
-            </p>
-            <ul className="list-disc list-inside space-y-2 text-gray-700">
-              <li>No payment information is collected during trial signup</li>
-              <li>No charges are applied during or after the trial</li>
-              <li>No refund policy applies since no payments are made</li>
-            </ul>
-          </section>
-
-          <section>
-            <h2 className="text-2xl font-semibold mb-4">Data Retention</h2>
-            <p className="text-gray-700 mb-4">
-              After trial cancellation, your account data is retained for a limited period. 
-              If you restart your trial within 30 days, your data will still be available.
+            <h2 className="text-2xl font-semibold text-[#083B3C]">Paid Subscription Cancellation</h2>
+            <p className="mt-4 text-sm leading-7 text-[#4E6769]">
+              Paid subscription cancellation terms depend on the plan and billing cycle you choose. Cancelling a subscription stops future renewals, but previously paid fees are generally not refunded except where required by law.
             </p>
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold mb-4">Contact</h2>
-            <p className="text-gray-700">
-              For cancellation requests or questions about this policy, please contact us at{' '}
-              <a href="mailto:support@rxtrace.in" className="text-blue-600 hover:underline">
+            <h2 className="text-2xl font-semibold text-[#083B3C]">Effect of Cancellation</h2>
+            <p className="mt-4 text-sm leading-7 text-[#4E6769]">
+              After cancellation, access to paid or trial-only features may be reduced or removed. Your account and operational data may be retained for a limited period for support, audit, and reactivation purposes.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-2xl font-semibold text-[#083B3C]">Contact</h2>
+            <p className="mt-4 text-sm leading-7 text-[#4E6769]">
+              For cancellation questions, contact{" "}
+              <a href="mailto:support@rxtrace.in" className="font-medium text-[#0F5D5E] hover:text-[#083B3C]">
                 support@rxtrace.in
-              </a>
-              {' '}or visit our{' '}
-              <Link href="/contact" className="text-blue-600 hover:underline">
-                Contact Us
+              </a>{" "}
+              or visit the{" "}
+              <Link href="/contact" className="font-medium text-[#0F5D5E] hover:text-[#083B3C]">
+                Contact page
               </Link>
-              {' '}page.
+              .
             </p>
           </section>
         </div>
       </div>
 
-      {/* Footer */}
-      <footer className="bg-slate-900 text-slate-300 py-12 mt-16">
-        <div className="max-w-7xl mx-auto px-6 text-center">
-          <p className="text-xs text-slate-500">© {new Date().getFullYear()} RxTrace. All rights reserved.</p>
-        </div>
-      </footer>
+      <PublicFooter />
     </main>
   );
 }
