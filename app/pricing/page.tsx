@@ -149,8 +149,8 @@ function buildComparisonRows(planCards: PricingCard[], hasAddOns: boolean) {
   const valuesFor = (mapper: (plan: PricingCard) => string) => planCards.map(mapper);
 
   return [
-    ["10-day trial available", ...valuesFor((plan) => (normalizePlanName(plan.name) === "scale" ? "Sales-led" : "Yes")), "Sales-led"],
-    ["Trial activation", ...valuesFor((plan) => (normalizePlanName(plan.name) === "scale" ? "Custom" : "INR 1")), "Custom"],
+    ["10-day trial available", ...valuesFor(() => "Yes"), "Sales-led"],
+    ["Trial activation", ...valuesFor(() => "INR 1"), "Custom"],
     ["GTIN workflow support", ...valuesFor(() => "Yes"), "Yes"],
     ["PIC workflow support", ...valuesFor(() => "Yes"), "Yes"],
     ["Packaging hierarchy", ...valuesFor(() => "Yes"), "Yes"],
