@@ -27,6 +27,21 @@ type PlanVersionInput = {
   change_note: string | null;
 };
 
+const VERSION_FIELD_KEYS = [
+  "unit_quota_units",
+  "unit_quota",
+  "box_quota_units",
+  "box_quota",
+  "carton_quota_units",
+  "carton_quota",
+  "pallet_quota_units",
+  "pallet_quota",
+  "seat_limit",
+  "plant_limit",
+  "handset_limit",
+  "change_note",
+] as const;
+
 function normalizeText(value: unknown): string {
   return String(value ?? "").trim();
 }
@@ -64,6 +79,11 @@ function normalizeVersionInput(input: Record<string, unknown>): PlanVersionInput
     is_active: input.is_active === true,
     change_note: normalizeText(input.change_note) || null,
   };
+}
+
+function hasVersionUpdates(input: Record<string, unknown>): boolean {
+  const nested = typeof input.version === "object" && input.version ? (input.version as Record<string, unknown>) : null;
+  return VERSION_FIELD_KEYS.some((key) => key in input || Boolean(nested && key in nested));
 }
 
 function mapVersionForResponse(row: any, pricingUnitSize: number) {
@@ -393,6 +413,7 @@ export async function PUT(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const templateId = normalizeText((body as any).template_id);
   if (!templateId) return errorResponse(400, "BAD_REQUEST", "template_id is required", correlationId);
+  const shouldUpdateVersion = hasVersionUpdates(body as Record<string, unknown>);
 
   const idempotency = await checkAdminIdempotency({
     adminId: auth.userId,
@@ -445,6 +466,58 @@ export async function PUT(req: NextRequest) {
     if (templateError) return errorResponse(500, "INTERNAL_ERROR", templateError.message, correlationId);
   }
 
+  if (shouldUpdateVersion) {
+    const versionInput = normalizeVersionInput(((body as any).version || body) as Record<string, unknown>);
+    const resolvedPricingUnitSize =
+      "pricing_unit_size" in templateUpdates
+        ? Math.max(1, nonNegativeInt(templateUpdates.pricing_unit_size, 1))
+        : Math.max(1, nonNegativeInt(beforeState.template.pricing_unit_size, 1));
+
+    if (beforeState.active_version?.id) {
+      const { error: versionUpdateError } = await supabase
+        .from("subscription_plan_versions")
+        .update({
+          unit_quota_units: versionInput.unit_quota_units,
+          box_quota_units: versionInput.box_quota_units,
+          carton_quota_units: versionInput.carton_quota_units,
+          pallet_quota_units: versionInput.pallet_quota_units,
+          unit_limit: computeFinalQuota(versionInput.unit_quota_units, resolvedPricingUnitSize),
+          box_limit: computeFinalQuota(versionInput.box_quota_units, resolvedPricingUnitSize),
+          carton_limit: computeFinalQuota(versionInput.carton_quota_units, resolvedPricingUnitSize),
+          pallet_limit: computeFinalQuota(versionInput.pallet_quota_units, resolvedPricingUnitSize),
+          seat_limit: versionInput.seat_limit,
+          plant_limit: versionInput.plant_limit,
+          handset_limit: versionInput.handset_limit,
+          change_note: versionInput.change_note,
+        })
+        .eq("id", beforeState.active_version.id)
+        .eq("template_id", templateId);
+      if (versionUpdateError) return errorResponse(500, "INTERNAL_ERROR", versionUpdateError.message, correlationId);
+    } else {
+      const { error: createVersionError } = await supabase
+        .from("subscription_plan_versions")
+        .insert({
+          template_id: templateId,
+          version_number: 1,
+          unit_quota_units: versionInput.unit_quota_units,
+          box_quota_units: versionInput.box_quota_units,
+          carton_quota_units: versionInput.carton_quota_units,
+          pallet_quota_units: versionInput.pallet_quota_units,
+          unit_limit: computeFinalQuota(versionInput.unit_quota_units, resolvedPricingUnitSize),
+          box_limit: computeFinalQuota(versionInput.box_quota_units, resolvedPricingUnitSize),
+          carton_limit: computeFinalQuota(versionInput.carton_quota_units, resolvedPricingUnitSize),
+          pallet_limit: computeFinalQuota(versionInput.pallet_quota_units, resolvedPricingUnitSize),
+          seat_limit: versionInput.seat_limit,
+          plant_limit: versionInput.plant_limit,
+          handset_limit: versionInput.handset_limit,
+          is_active: true,
+          effective_from: new Date().toISOString(),
+          change_note: versionInput.change_note,
+        });
+      if (createVersionError) return errorResponse(500, "INTERNAL_ERROR", createVersionError.message, correlationId);
+    }
+  }
+
   const activateVersionId = normalizeText((body as any).activate_version_id);
   if (activateVersionId) {
     const { error: deactivateError } = await supabase
@@ -473,7 +546,11 @@ export async function PUT(req: NextRequest) {
   await appendAdminMutationAuditEvent({
     adminId: auth.userId,
     endpoint,
-    action: activateVersionId ? "ADMIN_PLAN_VERSION_PUBLISHED" : "ADMIN_PLAN_TEMPLATE_UPDATED",
+    action: activateVersionId
+      ? "ADMIN_PLAN_VERSION_PUBLISHED"
+      : shouldUpdateVersion
+        ? "ADMIN_PLAN_UPDATED"
+        : "ADMIN_PLAN_TEMPLATE_UPDATED",
     entityType: "subscription_plan_template",
     entityId: templateId,
     beforeState: beforeState as unknown as Record<string, unknown>,
