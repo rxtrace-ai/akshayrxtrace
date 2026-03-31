@@ -60,6 +60,18 @@ const comparisonRows = [
   },
 ];
 
+const costStructurePoints = [
+  "QR-first platforms generally charge for dynamic code management, scan analytics, landing pages, and campaign tooling.",
+  "Enterprise-heavy traceability platforms often deliver deeper capability, but usually through larger contracts, longer sales cycles, and heavier implementation models.",
+  "Rxtrace is designed to give companies a clearer commercial path: monthly subscription entry, operational add-ons, and code top-ups as usage expands.",
+];
+
+const valueCoveragePoints = [
+  "Companies are not only paying for code generation. They are paying for trust, traceability, verification, and revenue protection.",
+  "Low-cost QR tools can be easy to adopt, but they are not naturally optimized for packaging hierarchy, anti-counterfeit workflows, or operational traceability depth.",
+  "Rxtrace is positioned to cover a broader set of pain points in one system: product identity, verification, hierarchy, operational history, and recurring growth.",
+];
+
 const whyRxtrace = [
   "We are solving a direct commercial problem: revenue leakage and trust erosion from fake or uncontrolled products.",
   "The business model expands naturally through more companies, more plants, more users, and more code usage.",
@@ -222,6 +234,36 @@ export default function InvestorsPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div className="mt-10 grid gap-8 lg:grid-cols-2">
+            <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm">
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Cost Structure</p>
+              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#083B3C]">
+                What companies pay for today
+              </h3>
+              <div className="mt-6 space-y-4">
+                {costStructurePoints.map((item) => (
+                  <div key={item} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-5 text-sm leading-6 text-[#365456] shadow-sm">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm">
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Value Coverage</p>
+              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#083B3C]">
+                Where Rxtrace adds more operational value
+              </h3>
+              <div className="mt-6 space-y-4">
+                {valueCoveragePoints.map((item) => (
+                  <div key={item} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-5 text-sm leading-6 text-[#365456] shadow-sm">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </section>
