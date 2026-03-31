@@ -72,6 +72,59 @@ const valueCoveragePoints = [
   "Rxtrace is positioned to cover a broader set of pain points in one system: product identity, verification, hierarchy, operational history, and recurring growth.",
 ];
 
+const publicPricingRows = [
+  {
+    platform: "Rxtrace Starter",
+    price: "INR 4,900 / month",
+    offering: "Product traceability operations, packaging hierarchy, verification workflow, recurring expansion model",
+  },
+  {
+    platform: "Rxtrace Growth",
+    price: "INR 12,900 / month",
+    offering: "Higher operational capacity with more usage and team support",
+  },
+  {
+    platform: "Rxtrace Scale",
+    price: "INR 29,900 / month",
+    offering: "Larger rollout capacity without moving into enterprise-only procurement",
+  },
+  {
+    platform: "Uniqode",
+    price: "From USD 9 / 49 / 99 / 399 per month",
+    offering: "Dynamic QR codes, landing pages, scan limits, analytics, QR management",
+  },
+  {
+    platform: "Scanova",
+    price: "From USD 5 / 15 / 50 / 100 per month",
+    offering: "Dynamic QR codes, campaign pages, analytics, QR generation",
+  },
+  {
+    platform: "Scantrust Pro",
+    price: "From USD 250 / 650 per month",
+    offering: "Secure QR, connected packaging, anti-counterfeit workflows, higher-tier enterprise scope",
+  },
+  {
+    platform: "SAP ATTP / enterprise suites",
+    price: "Custom / contact sales",
+    offering: "Serialization repository, reporting, ERP and warehouse integration, enterprise rollout",
+  },
+];
+
+const commercialComparison = [
+  {
+    category: "QR-first tools",
+    detail: "Customers mainly pay for code management, landing pages, and scan analytics.",
+  },
+  {
+    category: "Enterprise traceability suites",
+    detail: "Customers often pay through larger contracts, implementation scope, integration effort, and longer sales cycles.",
+  },
+  {
+    category: "Rxtrace",
+    detail: "Customers can start with a monthly subscription, then expand through seats, plants, handsets, and code top-ups as operations grow.",
+  },
+];
+
 const whyRxtrace = [
   "We are solving a direct commercial problem: revenue leakage and trust erosion from fake or uncontrolled products.",
   "The business model expands naturally through more companies, more plants, more users, and more code usage.",
@@ -260,6 +313,51 @@ export default function InvestorsPage() {
                 {valueCoveragePoints.map((item) => (
                   <div key={item} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-5 text-sm leading-6 text-[#365456] shadow-sm">
                     {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm lg:col-span-2">
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Public Pricing Comparison</p>
+              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#083B3C]">
+                Sourced pricing shows where Rxtrace sits in the market
+              </h3>
+              <div className="mt-8 overflow-x-auto rounded-2xl border border-[#E2ECEC]">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-[#083B3C] text-white">
+                    <tr>
+                      <th className="px-5 py-4 font-semibold">Platform</th>
+                      <th className="px-5 py-4 font-semibold">Public price</th>
+                      <th className="px-5 py-4 font-semibold">What customer is paying for</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {publicPricingRows.map((row, index) => (
+                      <tr key={row.platform} className={index % 2 === 0 ? "bg-[#FCFEFE]" : "bg-white"}>
+                        <td className="border-t border-[#E5EFEF] px-5 py-4 font-medium text-[#083B3C]">{row.platform}</td>
+                        <td className="border-t border-[#E5EFEF] px-5 py-4 text-[#365456]">{row.price}</td>
+                        <td className="border-t border-[#E5EFEF] px-5 py-4 text-[#365456]">{row.offering}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-4 text-xs leading-6 text-[#5C7173]">
+                Public pricing is used where vendors publish it. Enterprise platforms often move key commercial terms into custom quotation and implementation scope.
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm lg:col-span-2">
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Commercial Model Comparison</p>
+              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#083B3C]">
+                The gap between QR tooling and enterprise-heavy rollout
+              </h3>
+              <div className="mt-6 grid gap-4 md:grid-cols-3">
+                {commercialComparison.map((item) => (
+                  <div key={item.category} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-5 shadow-sm">
+                    <div className="text-sm font-semibold text-[#083B3C]">{item.category}</div>
+                    <p className="mt-3 text-sm leading-6 text-[#365456]">{item.detail}</p>
                   </div>
                 ))}
               </div>
