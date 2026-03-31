@@ -42,8 +42,8 @@ const planMarketingByName: Record<
   },
   scale: {
     featured: false,
-    cta: "Talk to Sales",
-    href: "/contact",
+    cta: "Start 10-Day Trial",
+    href: "/auth/signup",
     fallbackDescription: "For multi-site operations that need stronger throughput and rollout control.",
     extraItems: ["Priority onboarding support", "Advanced rollout planning"],
   },
