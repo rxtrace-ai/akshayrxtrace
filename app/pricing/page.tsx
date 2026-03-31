@@ -1,6 +1,11 @@
 import Link from "next/link";
 import PublicFooter from "@/components/public-site/PublicFooter";
 import PublicHeader from "@/components/public-site/PublicHeader";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { loadCheckoutCatalog, type ActiveAddOn, type ActivePlan } from "@/lib/billing/userCheckout";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const planHighlights = [
   "10-day guided trial activation for INR 1",
@@ -11,100 +16,38 @@ const planHighlights = [
   "Commercial plans that scale with rollout volume",
 ];
 
-const plans = [
+const planMarketingByName: Record<
+  string,
   {
-    name: "Starter",
-    monthly: "INR 9,900",
-    yearly: "INR 99,000 / year",
-    description: "For pilot teams starting product traceability with a focused rollout.",
-    cta: "Start 10-Day Trial",
-    href: "/auth/signup",
+    featured: boolean;
+    cta: string;
+    href: string;
+    fallbackDescription: string;
+    extraItems: string[];
+  }
+> = {
+  starter: {
     featured: false,
-    items: [
-      "1 plant",
-      "3 users",
-      "2 handsets",
-      "10,000 codes / month",
-      "GTIN and PIC workflows",
-      "Reports and traceability history",
-    ],
-  },
-  {
-    name: "Growth",
-    monthly: "INR 24,900",
-    yearly: "INR 249,000 / year",
-    description: "For growing operations that need more team capacity and higher monthly volume.",
     cta: "Start 10-Day Trial",
     href: "/auth/signup",
-    featured: true,
-    items: [
-      "2 plants",
-      "8 users",
-      "5 handsets",
-      "50,000 codes / month",
-      "Everything in Starter",
-      "Guided rollout support",
-    ],
+    fallbackDescription: "For pilot teams starting product traceability with a focused rollout.",
+    extraItems: ["GTIN and PIC workflows", "Reports and traceability history"],
   },
-  {
-    name: "Scale",
-    monthly: "INR 59,900",
-    yearly: "INR 599,000 / year",
-    description: "For multi-site operations that need stronger throughput and rollout control.",
+  growth: {
+    featured: true,
+    cta: "Start 10-Day Trial",
+    href: "/auth/signup",
+    fallbackDescription: "For growing operations that need more team capacity and higher monthly volume.",
+    extraItems: ["Everything in Starter", "Guided rollout support"],
+  },
+  scale: {
+    featured: false,
     cta: "Talk to Sales",
     href: "/contact",
-    featured: false,
-    items: [
-      "5 plants",
-      "20 users",
-      "12 handsets",
-      "200,000 codes / month",
-      "Priority onboarding support",
-      "Advanced rollout planning",
-    ],
+    fallbackDescription: "For multi-site operations that need stronger throughput and rollout control.",
+    extraItems: ["Priority onboarding support", "Advanced rollout planning"],
   },
-  {
-    name: "Enterprise",
-    monthly: "Custom",
-    yearly: "Custom",
-    description: "For large regulated deployments with custom workflows, integrations, and support expectations.",
-    cta: "Book a Demo",
-    href: "/#book-demo",
-    featured: false,
-    items: [
-      "Custom plants, users, and devices",
-      "Custom code volumes",
-      "API and ERP integration",
-      "Dedicated onboarding",
-      "SLA-backed support",
-      "Commercial scoping by requirement",
-    ],
-  },
-];
-
-const comparisonRows = [
-  ["10-day trial available", "Yes", "Yes", "Sales-led", "Sales-led"],
-  ["Trial activation", "INR 1", "INR 1", "Custom", "Custom"],
-  ["GTIN workflow support", "Yes", "Yes", "Yes", "Yes"],
-  ["PIC workflow support", "Yes", "Yes", "Yes", "Yes"],
-  ["Packaging hierarchy", "Yes", "Yes", "Yes", "Yes"],
-  ["Plants included", "1", "2", "5", "Custom"],
-  ["Users included", "3", "8", "20", "Custom"],
-  ["Handsets included", "2", "5", "12", "Custom"],
-  ["Included codes / month", "10,000", "50,000", "200,000", "Custom"],
-  ["Add-ons supported", "Yes", "Yes", "Yes", "Yes"],
-  ["API / ERP integration", "Add-on", "Add-on", "Available", "Included by scope"],
-  ["Onboarding support", "Standard", "Guided", "Priority", "Dedicated"],
-];
-
-const addOnRows = [
-  ["Extra user seat", "INR 1,500 / month"],
-  ["Extra plant", "INR 4,500 / month"],
-  ["Extra handset", "INR 1,200 / month"],
-  ["10,000 extra codes", "INR 2,500 / month"],
-  ["50,000 extra codes", "INR 9,000 / month"],
-  ["100,000 extra codes", "INR 16,000 / month"],
-];
+};
 
 const faqItems = [
   {
@@ -129,7 +72,155 @@ const faqItems = [
   },
 ];
 
-export default function PricingPage() {
+type PricingCard = {
+  name: string;
+  monthly: string;
+  description: string;
+  featured: boolean;
+  cta: string;
+  href: string;
+  items: string[];
+  quotas: ActivePlan["quotas"];
+  capacities: ActivePlan["capacities"];
+};
+
+function formatInrFromPaise(value: number): string {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format((value || 0) / 100);
+}
+
+function formatInteger(value: number): string {
+  return new Intl.NumberFormat("en-IN").format(Math.max(0, value || 0));
+}
+
+function titleCaseMetric(metric: string): string {
+  return metric.charAt(0).toUpperCase() + metric.slice(1);
+}
+
+function normalizePlanName(value: string): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function planSortWeight(name: string): number {
+  if (name === "starter") return 1;
+  if (name === "growth") return 2;
+  if (name === "scale") return 3;
+  return 99;
+}
+
+function buildPlanCards(plans: ActivePlan[]): PricingCard[] {
+  return plans
+    .filter((plan) => plan.billing_cycle === "monthly")
+    .sort((a, b) => planSortWeight(normalizePlanName(a.template_name)) - planSortWeight(normalizePlanName(b.template_name)))
+    .map((plan) => {
+      const normalizedName = normalizePlanName(plan.template_name);
+      const marketing = planMarketingByName[normalizedName] || {
+        featured: false,
+        cta: "Talk to Sales",
+        href: "/contact",
+        fallbackDescription: "For teams that need a commercial traceability rollout.",
+        extraItems: [],
+      };
+
+      return {
+        name: plan.template_name,
+        monthly: `${formatInrFromPaise(plan.plan_price_paise)} / month`,
+        description: plan.description || marketing.fallbackDescription,
+        featured: marketing.featured,
+        cta: marketing.cta,
+        href: marketing.href,
+        items: [
+          `${formatInteger(plan.capacities.plant)} plants`,
+          `${formatInteger(plan.capacities.seat)} users`,
+          `${formatInteger(plan.capacities.handset)} handsets`,
+          `${formatInteger(plan.quotas.unit)} codes / month`,
+          ...marketing.extraItems,
+        ],
+        quotas: plan.quotas,
+        capacities: plan.capacities,
+      };
+    });
+}
+
+function buildComparisonRows(planCards: PricingCard[], hasAddOns: boolean) {
+  const valuesFor = (mapper: (plan: PricingCard) => string) => planCards.map(mapper);
+
+  return [
+    ["10-day trial available", ...valuesFor((plan) => (normalizePlanName(plan.name) === "scale" ? "Sales-led" : "Yes")), "Sales-led"],
+    ["Trial activation", ...valuesFor((plan) => (normalizePlanName(plan.name) === "scale" ? "Custom" : "INR 1")), "Custom"],
+    ["GTIN workflow support", ...valuesFor(() => "Yes"), "Yes"],
+    ["PIC workflow support", ...valuesFor(() => "Yes"), "Yes"],
+    ["Packaging hierarchy", ...valuesFor(() => "Yes"), "Yes"],
+    ["Plants included", ...valuesFor((plan) => formatInteger(plan.capacities.plant)), "Custom"],
+    ["Users included", ...valuesFor((plan) => formatInteger(plan.capacities.seat)), "Custom"],
+    ["Handsets included", ...valuesFor((plan) => formatInteger(plan.capacities.handset)), "Custom"],
+    ["Included codes / month", ...valuesFor((plan) => formatInteger(plan.quotas.unit)), "Custom"],
+    ["Box quota", ...valuesFor((plan) => formatInteger(plan.quotas.box)), "Custom"],
+    ["Carton quota", ...valuesFor((plan) => formatInteger(plan.quotas.carton)), "Custom"],
+    ["Pallet quota", ...valuesFor((plan) => formatInteger(plan.quotas.pallet)), "Custom"],
+    ["Add-ons supported", ...valuesFor(() => (hasAddOns ? "Yes" : "No")), "Yes"],
+    ["API / ERP integration", ...valuesFor((plan) => (normalizePlanName(plan.name) === "scale" ? "Available" : "Add-on")), "Included by scope"],
+    ["Onboarding support", ...valuesFor((plan) => {
+      const normalizedName = normalizePlanName(plan.name);
+      if (normalizedName === "starter") return "Standard";
+      if (normalizedName === "growth") return "Guided";
+      if (normalizedName === "scale") return "Priority";
+      return "Standard";
+    }), "Dedicated"],
+  ];
+}
+
+function describeAddOn(addOn: ActiveAddOn): string {
+  if (addOn.addon_kind === "structural") {
+    const duration = addOn.duration_days ? ` / ${addOn.duration_days} days` : "";
+    return `${titleCaseMetric(addOn.entitlement_key)} capacity${duration}`;
+  }
+
+  return `${formatInteger(addOn.pricing_unit_size)} ${addOn.entitlement_key} codes`;
+}
+
+function formatAddOnPrice(addOn: ActiveAddOn): string {
+  const basePrice = formatInrFromPaise(Math.round(addOn.price * 100));
+  if (addOn.billing_mode === "recurring" && addOn.duration_days) {
+    return `${basePrice} / ${addOn.duration_days} days`;
+  }
+  if (addOn.billing_mode === "recurring") {
+    return `${basePrice} / month`;
+  }
+  return basePrice;
+}
+
+async function loadPricingData() {
+  try {
+    const supabase = getSupabaseAdmin();
+    const catalog = await loadCheckoutCatalog(supabase);
+    return {
+      planCards: buildPlanCards(catalog.plans),
+      comparisonRows: buildComparisonRows(buildPlanCards(catalog.plans), catalog.addOns.length > 0),
+      addOns: catalog.addOns,
+    };
+  } catch (error) {
+    console.error("Failed to load pricing catalog", error);
+    return {
+      planCards: [] as PricingCard[],
+      comparisonRows: [] as string[][],
+      addOns: [] as ActiveAddOn[],
+    };
+  }
+}
+
+export default async function PricingPage() {
+  const { planCards, comparisonRows, addOns } = await loadPricingData();
+
+  const addOnRows = addOns.map((addOn) => ({
+    name: addOn.name,
+    description: describeAddOn(addOn),
+    price: formatAddOnPrice(addOn),
+  }));
+
   return (
     <main className="bg-[#F8FAFC] text-[#0F172A]">
       <PublicHeader current="pricing" />
@@ -207,7 +298,7 @@ export default function PricingPage() {
           </div>
 
           <div className="mt-12 grid gap-6 xl:grid-cols-4">
-            {plans.map((plan) => (
+            {planCards.map((plan) => (
               <div
                 key={plan.name}
                 className={`rounded-3xl border p-7 shadow-sm ${
@@ -221,7 +312,6 @@ export default function PricingPage() {
                 </p>
                 <div className="mt-5">
                   <div className="text-3xl font-semibold tracking-tight">{plan.monthly}</div>
-                  <p className={`mt-2 text-sm ${plan.featured ? "text-[#D7EAEA]" : "text-[#5C7173]"}`}>{plan.yearly}</p>
                 </div>
                 <p className={`mt-5 text-sm leading-6 ${plan.featured ? "text-[#D7EAEA]" : "text-[#5C7173]"}`}>{plan.description}</p>
                 <div className="mt-6 space-y-3">
@@ -248,6 +338,36 @@ export default function PricingPage() {
                 </Link>
               </div>
             ))}
+
+            <div className="rounded-3xl border border-[#D7E3E4] bg-white p-7 text-[#0F172A] shadow-sm">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#0F5D5E]">Custom</p>
+              <div className="mt-5">
+                <div className="text-3xl font-semibold tracking-tight">Custom pricing</div>
+              </div>
+              <p className="mt-5 text-sm leading-6 text-[#5C7173]">
+                For large regulated deployments with custom workflows, integrations, and support expectations.
+              </p>
+              <div className="mt-6 space-y-3">
+                {[
+                  "Custom plants, users, and devices",
+                  "Custom code volumes",
+                  "API and ERP integration",
+                  "Dedicated onboarding",
+                  "SLA-backed support",
+                  "Commercial scoping by requirement",
+                ].map((item) => (
+                  <div key={item} className="rounded-2xl bg-[#F7FAFA] px-4 py-3 text-sm text-[#365456]">
+                    {item}
+                  </div>
+                ))}
+              </div>
+              <Link
+                href="/#book-demo"
+                className="mt-7 inline-flex w-full items-center justify-center rounded-xl bg-[#0F5D5E] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0B4849]"
+              >
+                Book a Demo
+              </Link>
+            </div>
           </div>
         </div>
       </section>
@@ -266,10 +386,12 @@ export default function PricingPage() {
               <thead className="bg-[#083B3C] text-white">
                 <tr>
                   <th className="px-6 py-4 font-semibold">Feature</th>
-                  <th className="px-6 py-4 font-semibold">Starter</th>
-                  <th className="px-6 py-4 font-semibold">Growth</th>
-                  <th className="px-6 py-4 font-semibold">Scale</th>
-                  <th className="px-6 py-4 font-semibold">Enterprise</th>
+                  {planCards.map((plan) => (
+                    <th key={plan.name} className="px-6 py-4 font-semibold">
+                      {plan.name}
+                    </th>
+                  ))}
+                  <th className="px-6 py-4 font-semibold">Custom</th>
                 </tr>
               </thead>
               <tbody>
@@ -294,10 +416,13 @@ export default function PricingPage() {
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Add-Ons</p>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C]">Extend capacity as you grow</h2>
             <div className="mt-8 space-y-3">
-              {addOnRows.map(([name, price]) => (
-                <div key={name} className="flex items-center justify-between rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] px-4 py-4 text-sm">
-                  <span className="font-medium text-[#083B3C]">{name}</span>
-                  <span className="text-[#365456]">{price}</span>
+              {addOnRows.map((addOn) => (
+                <div key={addOn.name} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] px-4 py-4 text-sm">
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="font-medium text-[#083B3C]">{addOn.name}</span>
+                    <span className="text-[#365456]">{addOn.price}</span>
+                  </div>
+                  <p className="mt-2 text-[#5C7173]">{addOn.description}</p>
                 </div>
               ))}
             </div>
