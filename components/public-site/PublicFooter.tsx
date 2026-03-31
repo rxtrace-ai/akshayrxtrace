@@ -6,6 +6,7 @@ const companyLinks = [
   { href: "/services", label: "Services" },
   { href: "/compliance", label: "Compliance" },
   { href: "/contact", label: "Contact" },
+  { href: "/investors", label: "Investors" },
 ];
 
 const legalLinks = [
