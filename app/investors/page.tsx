@@ -2,141 +2,114 @@ import Link from "next/link";
 import PublicFooter from "@/components/public-site/PublicFooter";
 import PublicHeader from "@/components/public-site/PublicHeader";
 
-const indiaThesisPoints = [
-  "India is a large product economy, but trust infrastructure for physical goods remains uneven across industries.",
-  "Counterfeit, illicit, and untracked goods create direct revenue leakage for brands in pharma, FMCG, food, beverages, cosmetics, healthcare, and consumer products.",
-  "Regulatory direction is moving toward stronger labeling, identification, traceability, and auditability in critical sectors.",
-  "Rxtrace is building India-first product trust infrastructure with a commercial model designed for recurring revenue and operational expansion.",
-];
-
-const regulatoryPoints = [
-  "In Indian pharma exports, barcode-based track-and-trace workflows have already become part of real operational compliance expectations.",
-  "GS1 standards are already central in many Indian retail, logistics, healthcare, and export workflows where interoperability matters.",
-  "The opportunity is not to claim one universal mandate across all sectors. It is to build software for a market that is clearly moving toward standardized product identification and traceability.",
-];
-
-const economicSignals = [
-  "FICCI CASCADE estimated illicit market size across five key Indian industries at Rs 2,60,094 crore for 2019-20.",
-  "The same FICCI analysis estimated tax losses of Rs 58,521 crore across those sectors.",
-  "The issue is not limited to pharma. It spans packaged foods, personal goods, alcoholic beverages, consumer products, and other trust-sensitive categories.",
-];
-
-const marketBreakdown = [
-  { industry: "FMCG packaged foods", value: "Rs 1,42,284 crore" },
-  { industry: "FMCG household and personal goods", value: "Rs 55,530 crore" },
-  { industry: "Alcoholic beverages", value: "Rs 23,466 crore" },
-  { industry: "Tobacco", value: "Rs 22,930 crore" },
-  { industry: "Mobile phones", value: "Rs 15,884 crore" },
-];
-
-const buildPoints = [
-  "Assign secure product identity using GTIN or PIC-based workflows.",
-  "Manage packaging hierarchy from unit to box, carton, and pallet.",
-  "Support originality verification and operational traceability records.",
-  "Monetize through subscriptions, capacity add-ons, and code top-ups.",
-];
-
-const comparisonRows = [
+const painPointCards = [
   {
-    category: "Generic QR Platforms",
-    players: "Uniqode, Scanova",
-    strength: "Easy QR creation, landing pages, and lightweight campaign workflows.",
-    economics: "Low-cost and easy to adopt, but less aligned to recurring operational traceability depth.",
-    rxtrace: "Rxtrace is built around product identity, packaging hierarchy, verification, and repeatable operational usage.",
+    title: "Revenue Loss",
+    text: "Counterfeit and untraceable goods create direct revenue leakage for brands, distributors, and legitimate channel partners.",
   },
   {
-    category: "Enterprise Traceability and Anti-Counterfeit Platforms",
-    players: "Scantrust and similar enterprise platforms",
-    strength: "Strong anti-counterfeit positioning and serious enterprise feature depth.",
-    economics: "Higher contract value potential, but often longer sales cycles and heavier rollout requirements.",
-    rxtrace: "Rxtrace aims to win with India-first accessibility, simpler adoption, and a cleaner recurring expansion model.",
+    title: "Brand Trust Dilution",
+    text: "When fake or uncontrolled products enter the market, customer confidence weakens and long-term brand value erodes.",
   },
   {
-    category: "Broad Supply-Chain Traceability Platforms",
-    players: "TrusTrace and broader enterprise systems",
-    strength: "Strong visibility across enterprise compliance and supply-chain workflows.",
-    economics: "Broad scope creates value, but can also slow adoption and increase implementation complexity.",
-    rxtrace: "Rxtrace stays focused on product trust, authenticity, and traceability that brands can operationalize faster.",
+    title: "Consumer Safety Risk",
+    text: "In pharma, OTC, medical devices, cosmetics, dairy, and food, poor product authenticity can become a public health issue, not just a commercial issue.",
+  },
+  {
+    title: "Supply Chain Opacity",
+    text: "Many businesses still lack reliable unit-level visibility across packaging levels, warehouses, dispatch points, and downstream movement.",
+  },
+  {
+    title: "Compliance Pressure",
+    text: "Traceability, barcode and QR verification, audit readiness, and documentation expectations are rising across Indian and export-linked supply chains.",
+  },
+  {
+    title: "Operational Fragmentation",
+    text: "Companies often rely on disconnected systems for code generation, reporting, ERP exports, and packaging records, making traceability harder to operationalize.",
   },
 ];
 
-const costStructurePoints = [
-  "QR-first platforms generally charge for dynamic code management, scan analytics, landing pages, and campaign tooling.",
-  "Enterprise-heavy traceability platforms often deliver deeper capability, but usually through larger contracts, longer sales cycles, and heavier implementation models.",
-  "Rxtrace is designed to give companies a clearer commercial path: monthly subscription entry, operational add-ons, and code top-ups as usage expands.",
+const industries = [
+  "Pharma",
+  "Dairy",
+  "Food and beverages",
+  "Consumer health and OTC",
+  "Medical devices",
+  "Cosmetics",
 ];
 
-const valueCoveragePoints = [
-  "Companies are not only paying for code generation. They are paying for trust, traceability, verification, and revenue protection.",
-  "Low-cost QR tools can be easy to adopt, but they are not naturally optimized for packaging hierarchy, anti-counterfeit workflows, or operational traceability depth.",
-  "Rxtrace is positioned to cover a broader set of pain points in one system: product identity, verification, hierarchy, operational history, and recurring growth.",
+const rxtraceCapabilities = [
+  "Every unit authenticated",
+  "Every unit traceable",
+  "GS1-aligned traceability workflows",
+  "Support for non-GS1 and PIC-based workflows",
+  "Serialization and packaging hierarchy support",
+  "Auditable reporting",
+  "ERP ingestion",
+  "Software-first deployment for Indian businesses",
 ];
 
-const publicPricingRows = [
-  {
-    platform: "Rxtrace Starter",
-    price: "INR 4,900 / month",
-    offering: "Product traceability operations, packaging hierarchy, verification workflow, recurring expansion model",
-  },
-  {
-    platform: "Rxtrace Growth",
-    price: "INR 12,900 / month",
-    offering: "Higher operational capacity with more usage and team support",
-  },
-  {
-    platform: "Rxtrace Scale",
-    price: "INR 29,900 / month",
-    offering: "Larger rollout capacity without moving into enterprise-only procurement",
-  },
-  {
-    platform: "Uniqode",
-    price: "From USD 9 / 49 / 99 / 399 per month",
-    offering: "Dynamic QR codes, landing pages, scan limits, analytics, QR management",
-  },
-  {
-    platform: "Scanova",
-    price: "From USD 5 / 15 / 50 / 100 per month",
-    offering: "Dynamic QR codes, campaign pages, analytics, QR generation",
-  },
-  {
-    platform: "Scantrust Pro",
-    price: "From USD 250 / 650 per month",
-    offering: "Secure QR, connected packaging, anti-counterfeit workflows, higher-tier enterprise scope",
-  },
-  {
-    platform: "SAP ATTP / enterprise suites",
-    price: "Custom / contact sales",
-    offering: "Serialization repository, reporting, ERP and warehouse integration, enterprise rollout",
-  },
+const marketOpportunityPoints = [
+  "India is a large, fast-growing manufacturing and branded-products market where traceability demand is rising across regulated and trust-sensitive industries.",
+  "SMEs and mid-sized manufacturers remain underserved because many traditional solutions are priced and delivered for large enterprise procurement cycles.",
+  "The commercial need is broad: authenticity, compliance readiness, auditability, product trust, and channel control all drive adoption.",
+  "The market gap is clear between low-cost QR tools and enterprise-heavy traceability deployments.",
 ];
 
-const commercialComparison = [
+const gapPoints = [
+  "Many existing vendors are enterprise-led, implementation-heavy, quotation-based, and expensive to deploy.",
+  "For Indian SMEs and mid-market manufacturers, onboarding speed, transparency, and affordability are often as important as feature depth.",
+  "Rxtrace is designed to close this gap with transparent monthly pricing, modular add-ons, and practical deployment without enterprise complexity.",
+];
+
+const pricingRows = [
   {
-    category: "QR-first tools",
-    detail: "Customers mainly pay for code management, landing pages, and scan analytics.",
+    offering: "Rxtrace Starter",
+    pricing: "Rs 4,900 / month",
+    whatYouGet: "Traceability entry plan with product identity, hierarchy, verification workflows, and operational reporting.",
   },
   {
-    category: "Enterprise traceability suites",
-    detail: "Customers often pay through larger contracts, implementation scope, integration effort, and longer sales cycles.",
+    offering: "Rxtrace Growth",
+    pricing: "Rs 12,900 / month",
+    whatYouGet: "Higher capacity for growing operations with stronger team and product throughput support.",
   },
   {
-    category: "Rxtrace",
-    detail: "Customers can start with a monthly subscription, then expand through seats, plants, handsets, and code top-ups as operations grow.",
+    offering: "Rxtrace Scale",
+    pricing: "Rs 29,000 / month",
+    whatYouGet: "Larger operational capacity without forcing companies into enterprise-only procurement models.",
   },
 ];
 
-const whyRxtrace = [
-  "We are solving a direct commercial problem: revenue leakage and trust erosion from fake or uncontrolled products.",
-  "The business model expands naturally through more companies, more plants, more users, and more code usage.",
-  "The platform sits between cheap QR tooling and enterprise-heavy traceability suites.",
-  "India provides a strong entry market with cross-industry demand and global relevance over time.",
+const competitorRows = [
+  {
+    category: "QR-first platforms",
+    pricingModel: "Usually self-serve, lower entry cost, feature-led around code creation and scan analytics.",
+    onboarding: "Fast to start, but less naturally aligned to deep operational traceability.",
+    customerPaysFor: "Dynamic QR codes, landing pages, analytics, and engagement workflows.",
+    rxtraceValue: "Rxtrace adds traceability operations, verification, hierarchy, auditable reporting, ERP ingestion, and recurring expansion.",
+  },
+  {
+    category: "Anti-counterfeit and connected packaging vendors",
+    pricingModel: "Often moves into custom quotation or higher-tier commercial plans as scope expands.",
+    onboarding: "Stronger anti-counterfeit depth, but can become heavier and more expensive for mid-market adoption.",
+    customerPaysFor: "Secure-code systems, packaging workflows, and implementation scope.",
+    rxtraceValue: "Rxtrace offers a lower-friction, more transparent SaaS path for Indian businesses that still need serious traceability capabilities.",
+  },
+  {
+    category: "Enterprise traceability suites and ERP-led systems",
+    pricingModel: "Quotation-based, implementation-heavy, and typically tied to larger contracts and integration scope.",
+    onboarding: "Slower to deploy and less accessible to SMEs or mid-sized manufacturers.",
+    customerPaysFor: "Large-scale implementation, serialization programs, integration effort, reporting, and enterprise change management.",
+    rxtraceValue: "Rxtrace gives Indian companies a software-first model with no enterprise-style setup barrier as the default entry path.",
+  },
 ];
 
-const businessModel = [
-  "Monthly subscription plans",
-  "Capacity expansion for seats, plants, and handsets",
-  "Code top-ups tied to operational growth",
-  "Custom enterprise deployment for larger accounts",
+const investablePoints = [
+  "Rxtrace solves a real and growing problem at the intersection of compliance, trust, product safety, and digitization.",
+  "The business can scale across multiple industries, not just one vertical.",
+  "The revenue model is recurring by design: subscriptions, add-ons, and code top-ups.",
+  "India’s SME and mid-market manufacturing base offers a large underserved segment for software-first adoption.",
+  "The platform sits between cheap utility tooling and enterprise-heavy implementations, which is a strong commercial position.",
 ];
 
 export default function InvestorsPage() {
@@ -148,90 +121,25 @@ export default function InvestorsPage() {
         <div className="mx-auto max-w-7xl px-6 py-20">
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">Investors</p>
           <h1 className="mt-4 max-w-5xl text-4xl font-semibold tracking-tight md:text-6xl">
-            India needs stronger trust infrastructure for physical products
+            Back the future of trusted supply chains.
           </h1>
           <p className="mt-6 max-w-3xl text-lg leading-8 text-[#D7EAEA]">
-            Rxtrace is building product traceability and anti-counterfeit infrastructure for an India-first market
-            where counterfeit risk, fragmented supply chains, and regulatory pressure are rising together.
+            Rxtrace is building India-first trust and traceability infrastructure for industries where counterfeit
+            risk, compliance pressure, and product authenticity are becoming economically essential.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <Link
-              href="/contact"
+              href="mailto:investors@rxtrace.in?subject=Request%20Investor%20Brief"
               className="inline-flex items-center justify-center rounded-xl bg-[#F59E0B] px-6 py-3 text-sm font-semibold text-[#083B3C] transition hover:bg-[#F7B733]"
-            >
-              Speak With The Founders
-            </Link>
-            <Link
-              href="mailto:investors@rxtrace.in?subject=Investor%20Interest%20in%20Rxtrace"
-              className="inline-flex items-center justify-center rounded-xl border border-white/20 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
             >
               Request Investor Brief
             </Link>
-          </div>
-        </div>
-      </section>
-
-      <section className="bg-white py-20">
-        <div className="mx-auto grid max-w-7xl gap-8 px-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-3xl border border-[#D7E3E4] bg-[#FCFEFE] p-8 shadow-sm">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">India-First Thesis</p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C]">Why this market matters now</h2>
-            <div className="mt-8 space-y-4">
-              {indiaThesisPoints.map((item) => (
-                <div key={item} className="rounded-2xl border border-[#E2ECEC] bg-white p-5 text-sm leading-6 text-[#365456] shadow-sm">
-                  {item}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-[#D7E3E4] bg-[#083B3C] p-8 text-white shadow-[0_20px_60px_rgba(8,59,60,0.18)]">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">Regulatory Direction</p>
-            <h2 className="mt-3 text-3xl font-semibold">Standards and traceability are becoming harder to ignore</h2>
-            <div className="mt-8 space-y-4">
-              {regulatoryPoints.map((item) => (
-                <div key={item} className="rounded-2xl border border-white/10 bg-white/5 p-5 text-sm leading-6 text-[#D7EAEA]">
-                  {item}
-                </div>
-              ))}
-            </div>
-            <div className="mt-8 rounded-2xl border border-[#F7C35F]/30 bg-[#F7C35F]/10 p-5">
-              <p className="text-sm leading-6 text-[#F9E7B1]">
-                The opportunity is not to overclaim one universal mandate. It is to serve a market where standardized product identity is becoming commercially and operationally essential.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="bg-[#F3F8F8] py-20">
-        <div className="mx-auto grid max-w-7xl gap-8 px-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Economic Perspective</p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C]">Counterfeit and illicit trade are revenue problems</h2>
-            <div className="mt-8 space-y-4">
-              {economicSignals.map((item) => (
-                <div key={item} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-5 text-sm leading-6 text-[#365456] shadow-sm">
-                  {item}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Illustrative Indian Losses</p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C]">This is not just a pharma issue</h2>
-            <div className="mt-8 grid gap-4 sm:grid-cols-2">
-              {marketBreakdown.map((item) => (
-                <div key={item.industry} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-5 shadow-sm">
-                  <div className="text-sm font-semibold text-[#083B3C]">{item.industry}</div>
-                  <p className="mt-2 text-sm leading-6 text-[#5C7173]">{item.value}</p>
-                </div>
-              ))}
-            </div>
-            <p className="mt-6 text-sm leading-6 text-[#5C7173]">
-              The market pain spans food, beverages, household goods, cosmetics, healthcare, and other trust-sensitive categories where authenticity affects both revenue and reputation.
-            </p>
+            <Link
+              href="/contact"
+              className="inline-flex items-center justify-center rounded-xl border border-white/20 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
+            >
+              Speak With The Founders
+            </Link>
           </div>
         </div>
       </section>
@@ -239,14 +147,68 @@ export default function InvestorsPage() {
       <section className="bg-white py-20">
         <div className="mx-auto max-w-7xl px-6">
           <div className="max-w-3xl">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">What We Build</p>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Industry Pain In India</p>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C] md:text-4xl">
-              Product identity, traceability, and operational trust
+              Counterfeit is not only a loss problem. It is a trust, safety, and compliance problem.
+            </h2>
+            <p className="mt-4 text-base leading-7 text-[#5C7173]">
+              Indian industries such as pharma, dairy, food and beverages, consumer health and OTC, medical devices,
+              and cosmetics face a common structural issue: products move through complex supply chains without enough
+              trust infrastructure at the unit level.
+            </p>
+          </div>
+
+          <div className="mt-8 flex flex-wrap gap-3">
+            {industries.map((industry) => (
+              <div key={industry} className="rounded-full border border-[#C8D9DA] bg-[#F3F8F8] px-4 py-2 text-sm font-medium text-[#0F5D5E]">
+                {industry}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-12 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+            {painPointCards.map((card) => (
+              <div key={card.title} className="rounded-3xl border border-[#D7E3E4] bg-[#FCFEFE] p-6 shadow-sm">
+                <h3 className="text-lg font-semibold text-[#083B3C]">{card.title}</h3>
+                <p className="mt-3 text-sm leading-6 text-[#365456]">{card.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-[#F3F8F8] py-20">
+        <div className="mx-auto grid max-w-7xl gap-8 px-6 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-3xl border border-[#D7E3E4] bg-[#083B3C] p-8 text-white shadow-[0_20px_60px_rgba(8,59,60,0.18)]">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">What Rxtrace Provides</p>
+            <h2 className="mt-3 text-3xl font-semibold">A software-first trust and traceability layer</h2>
+            <p className="mt-4 text-sm leading-7 text-[#D7EAEA]">
+              Rxtrace gives Indian businesses a practical path to product trust infrastructure without forcing them
+              into enterprise-heavy deployment as the default starting point.
+            </p>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            {rxtraceCapabilities.map((item) => (
+              <div key={item} className="rounded-2xl border border-[#D7E3E4] bg-white p-5 shadow-sm">
+                <p className="text-sm leading-6 text-[#365456]">{item}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white py-20">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="max-w-3xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Market Opportunity</p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C] md:text-4xl">
+              A large market, growing pressure, and an underserved adoption segment
             </h2>
           </div>
 
-          <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-            {buildPoints.map((item) => (
+          <div className="mt-12 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+            {marketOpportunityPoints.map((item) => (
               <div key={item} className="rounded-3xl border border-[#D7E3E4] bg-[#FCFEFE] p-6 shadow-sm">
                 <p className="text-sm leading-7 text-[#365456]">{item}</p>
               </div>
@@ -258,144 +220,110 @@ export default function InvestorsPage() {
       <section className="bg-[#F3F8F8] py-20">
         <div className="mx-auto max-w-7xl px-6">
           <div className="max-w-3xl">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Competitive Position</p>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Gap In Current Market</p>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C] md:text-4xl">
-              Positioned for India-scale adoption with global relevance
+              A clear opening between enterprise complexity and practical SaaS adoption
             </h2>
+          </div>
+
+          <div className="mt-12 grid gap-5 md:grid-cols-3">
+            {gapPoints.map((item) => (
+              <div key={item} className="rounded-3xl border border-[#D7E3E4] bg-white p-6 shadow-sm">
+                <p className="text-sm leading-7 text-[#365456]">{item}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white py-20">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="max-w-3xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Pricing Positioning</p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C] md:text-4xl">
+              Transparent monthly pricing with room to scale
+            </h2>
+            <p className="mt-4 text-base leading-7 text-[#5C7173]">
+              Rxtrace is designed as a transparent SaaS model: monthly subscriptions, add-ons, auditable reporting,
+              ERP ingestion, and scalable expansion without enterprise-style setup cost as the default entry barrier.
+            </p>
           </div>
 
           <div className="mt-10 overflow-x-auto rounded-3xl border border-[#D7E3E4] bg-white shadow-sm">
             <table className="min-w-full text-left text-sm">
               <thead className="bg-[#083B3C] text-white">
                 <tr>
-                  <th className="px-6 py-4 font-semibold">Category</th>
-                  <th className="px-6 py-4 font-semibold">Existing Players</th>
-                  <th className="px-6 py-4 font-semibold">What They Do Well</th>
-                  <th className="px-6 py-4 font-semibold">Economic Perspective</th>
-                  <th className="px-6 py-4 font-semibold">Why Rxtrace</th>
+                  <th className="px-6 py-4 font-semibold">Plan</th>
+                  <th className="px-6 py-4 font-semibold">Pricing</th>
+                  <th className="px-6 py-4 font-semibold">Positioning</th>
                 </tr>
               </thead>
               <tbody>
-                {comparisonRows.map((row, index) => (
-                  <tr key={row.category} className={index % 2 === 0 ? "bg-[#FCFEFE]" : "bg-white"}>
-                    <td className="border-t border-[#E5EFEF] px-6 py-4 font-semibold text-[#083B3C]">{row.category}</td>
-                    <td className="border-t border-[#E5EFEF] px-6 py-4 text-[#365456]">{row.players}</td>
-                    <td className="border-t border-[#E5EFEF] px-6 py-4 text-[#365456]">{row.strength}</td>
-                    <td className="border-t border-[#E5EFEF] px-6 py-4 text-[#365456]">{row.economics}</td>
-                    <td className="border-t border-[#E5EFEF] px-6 py-4 text-[#365456]">{row.rxtrace}</td>
+                {pricingRows.map((row, index) => (
+                  <tr key={row.offering} className={index % 2 === 0 ? "bg-[#FCFEFE]" : "bg-white"}>
+                    <td className="border-t border-[#E5EFEF] px-6 py-4 font-semibold text-[#083B3C]">{row.offering}</td>
+                    <td className="border-t border-[#E5EFEF] px-6 py-4 text-[#365456]">{row.pricing}</td>
+                    <td className="border-t border-[#E5EFEF] px-6 py-4 text-[#365456]">{row.whatYouGet}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          <div className="mt-10 grid gap-8 lg:grid-cols-2">
-            <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm">
-              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Cost Structure</p>
-              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#083B3C]">
-                What companies pay for today
-              </h3>
-              <div className="mt-6 space-y-4">
-                {costStructurePoints.map((item) => (
-                  <div key={item} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-5 text-sm leading-6 text-[#365456] shadow-sm">
-                    {item}
-                  </div>
+          <div className="mt-10 overflow-x-auto rounded-3xl border border-[#D7E3E4] bg-white shadow-sm">
+            <table className="min-w-full text-left text-sm">
+              <thead className="bg-[#083B3C] text-white">
+                <tr>
+                  <th className="px-6 py-4 font-semibold">Competitor Category</th>
+                  <th className="px-6 py-4 font-semibold">Pricing Model</th>
+                  <th className="px-6 py-4 font-semibold">Onboarding and Accessibility</th>
+                  <th className="px-6 py-4 font-semibold">What Customer Pays For</th>
+                  <th className="px-6 py-4 font-semibold">Where Rxtrace Adds Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {competitorRows.map((row, index) => (
+                  <tr key={row.category} className={index % 2 === 0 ? "bg-[#FCFEFE]" : "bg-white"}>
+                    <td className="border-t border-[#E5EFEF] px-6 py-4 font-semibold text-[#083B3C]">{row.category}</td>
+                    <td className="border-t border-[#E5EFEF] px-6 py-4 text-[#365456]">{row.pricingModel}</td>
+                    <td className="border-t border-[#E5EFEF] px-6 py-4 text-[#365456]">{row.onboarding}</td>
+                    <td className="border-t border-[#E5EFEF] px-6 py-4 text-[#365456]">{row.customerPaysFor}</td>
+                    <td className="border-t border-[#E5EFEF] px-6 py-4 text-[#365456]">{row.rxtraceValue}</td>
+                  </tr>
                 ))}
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm">
-              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Value Coverage</p>
-              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#083B3C]">
-                Where Rxtrace adds more operational value
-              </h3>
-              <div className="mt-6 space-y-4">
-                {valueCoveragePoints.map((item) => (
-                  <div key={item} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-5 text-sm leading-6 text-[#365456] shadow-sm">
-                    {item}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm lg:col-span-2">
-              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Public Pricing Comparison</p>
-              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#083B3C]">
-                Sourced pricing shows where Rxtrace sits in the market
-              </h3>
-              <div className="mt-8 overflow-x-auto rounded-2xl border border-[#E2ECEC]">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="bg-[#083B3C] text-white">
-                    <tr>
-                      <th className="px-5 py-4 font-semibold">Platform</th>
-                      <th className="px-5 py-4 font-semibold">Public price</th>
-                      <th className="px-5 py-4 font-semibold">What customer is paying for</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {publicPricingRows.map((row, index) => (
-                      <tr key={row.platform} className={index % 2 === 0 ? "bg-[#FCFEFE]" : "bg-white"}>
-                        <td className="border-t border-[#E5EFEF] px-5 py-4 font-medium text-[#083B3C]">{row.platform}</td>
-                        <td className="border-t border-[#E5EFEF] px-5 py-4 text-[#365456]">{row.price}</td>
-                        <td className="border-t border-[#E5EFEF] px-5 py-4 text-[#365456]">{row.offering}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="mt-4 text-xs leading-6 text-[#5C7173]">
-                Public pricing is used where vendors publish it. Enterprise platforms often move key commercial terms into custom quotation and implementation scope.
-              </p>
-            </div>
-
-            <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm lg:col-span-2">
-              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Commercial Model Comparison</p>
-              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#083B3C]">
-                The gap between QR tooling and enterprise-heavy rollout
-              </h3>
-              <div className="mt-6 grid gap-4 md:grid-cols-3">
-                {commercialComparison.map((item) => (
-                  <div key={item.category} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-5 shadow-sm">
-                    <div className="text-sm font-semibold text-[#083B3C]">{item.category}</div>
-                    <p className="mt-3 text-sm leading-6 text-[#365456]">{item.detail}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
 
-      <section className="bg-white py-20">
+      <section className="bg-[#F3F8F8] py-20">
         <div className="mx-auto grid max-w-7xl gap-8 px-6 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-3xl border border-[#D7E3E4] bg-[#FCFEFE] p-8 shadow-sm">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Why Rxtrace</p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C]">Why we believe this business can win</h2>
-            <div className="mt-8 space-y-3">
-              {whyRxtrace.map((item) => (
-                <div key={item} className="rounded-2xl border border-[#E2ECEC] bg-white p-5 text-sm leading-6 text-[#365456] shadow-sm">
-                  {item}
-                </div>
-              ))}
-            </div>
-          </div>
-
           <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Business Model</p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C]">Recurring, expandable, and operationally aligned</h2>
-            <div className="mt-8 grid gap-4">
-              {businessModel.map((item) => (
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Why Rxtrace Is Investable</p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C]">
+              A recurring software business aligned to a real market problem
+            </h2>
+            <div className="mt-8 space-y-3">
+              {investablePoints.map((item) => (
                 <div key={item} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-5 text-sm leading-6 text-[#365456] shadow-sm">
                   {item}
                 </div>
               ))}
             </div>
-            <div className="mt-8 rounded-2xl bg-[#083B3C] p-6 text-white">
-              <h3 className="text-lg font-semibold">The investment logic</h3>
-              <p className="mt-3 text-sm leading-7 text-[#D7EAEA]">
-                Rxtrace is building a business that can scale by customer count and by operational depth inside each customer. Every successful deployment creates room for more capacity, more usage, and more recurring expansion.
-              </p>
-            </div>
+          </div>
+
+          <div className="rounded-3xl border border-[#D7E3E4] bg-[#083B3C] p-8 text-white shadow-[0_20px_60px_rgba(8,59,60,0.18)]">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">Investment Case</p>
+            <h2 className="mt-3 text-3xl font-semibold">Trust, compliance, and product safety are not temporary themes</h2>
+            <p className="mt-4 text-sm leading-7 text-[#D7EAEA]">
+              Rxtrace is positioned where regulation, digitization, brand protection, and product authenticity meet.
+              That makes it both a software opportunity and a trust infrastructure opportunity.
+            </p>
+            <p className="mt-4 text-sm leading-7 text-[#D7EAEA]">
+              The business can scale across industries, expand within each customer through operational usage, and
+              grow on a recurring SaaS foundation rather than one-time project revenue alone.
+            </p>
           </div>
         </div>
       </section>
@@ -403,23 +331,24 @@ export default function InvestorsPage() {
       <section className="bg-[#083B3C] py-16 text-white">
         <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 md:flex-row md:items-center md:justify-between">
           <div className="max-w-2xl">
-            <h2 className="text-2xl font-semibold">Interested in an India-first product trust infrastructure story?</h2>
+            <h2 className="text-2xl font-semibold">Back the future of trusted supply chains.</h2>
             <p className="mt-3 text-sm leading-6 text-[#D7EAEA]">
-              We are building traceability infrastructure for markets where authenticity, product identity, and trust are becoming economically essential.
+              If you believe India needs stronger product trust infrastructure across regulated and brand-sensitive
+              industries, we would be glad to share the Rxtrace investment story.
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row">
             <Link
-              href="mailto:investors@rxtrace.in?subject=Request%20Investor%20Deck"
+              href="mailto:investors@rxtrace.in?subject=Request%20Investor%20Brief"
               className="inline-flex items-center justify-center rounded-xl bg-[#F59E0B] px-6 py-3 text-sm font-semibold text-[#083B3C] transition hover:bg-[#F7B733]"
             >
-              Request Investor Deck
+              Request Investor Brief
             </Link>
             <Link
               href="/contact"
               className="inline-flex items-center justify-center rounded-xl border border-white/20 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
             >
-              Connect With Founders
+              Speak With The Founders
             </Link>
           </div>
         </div>
@@ -428,7 +357,8 @@ export default function InvestorsPage() {
       <section className="bg-[#F8FAFC] py-10">
         <div className="mx-auto max-w-7xl px-6">
           <p className="text-xs leading-6 text-[#5C7173]">
-            Rxtrace does not make public investment offers on this website. Any investor discussions are private, informational, and subject to applicable law.
+            Rxtrace does not make public investment offers on this website. Any investor discussions are private,
+            informational, and subject to applicable law.
           </p>
         </div>
       </section>
