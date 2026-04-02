@@ -285,6 +285,7 @@ export async function POST(req: Request) {
       unitSkuMasterId: unit_sku_master_id.trim(),
       skuId: legacySkuId,
       skuCodeSnapshot: resolvedSkuCode,
+      gtinSnapshot: codeMode === 'GS1' ? gtinForStorage : null,
       productBatchSnapshot: resolvedBatch,
       codeMode,
       symbolType,

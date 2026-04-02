@@ -323,6 +323,7 @@ export async function POST(req: Request) {
       unitSkuMasterId: unit_sku_master_id.trim(),
       skuId: sku.legacySkuId,
       skuCodeSnapshot: sku.skuCode,
+      gtinSnapshot: sku.gtin,
       productBatchSnapshot: sku.batch || null,
       codeMode: 'GS1',
       symbolType,

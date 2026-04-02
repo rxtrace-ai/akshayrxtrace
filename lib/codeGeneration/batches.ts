@@ -14,6 +14,7 @@ export type CreateCodeGenerationBatchParams = {
   unitSkuMasterId?: string | null;
   skuId?: string | null;
   skuCodeSnapshot: string;
+  gtinSnapshot?: string | null;
   productBatchSnapshot?: string | null;
   codeMode?: BatchCodeMode;
   symbolType?: BatchSymbolType;
@@ -53,6 +54,7 @@ export async function createCodeGenerationBatch(params: CreateCodeGenerationBatc
     unit_sku_master_id: params.unitSkuMasterId ?? null,
     sku_id: params.skuId ?? null,
     sku_code_snapshot: params.skuCodeSnapshot,
+    gtin_snapshot: params.gtinSnapshot ?? null,
     product_batch_snapshot: params.productBatchSnapshot ?? null,
     code_mode: params.codeMode ?? null,
     symbol_type: params.symbolType ?? null,

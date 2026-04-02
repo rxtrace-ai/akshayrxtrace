@@ -35,8 +35,8 @@ export async function GET(req: Request) {
   const status = String(searchParams.get("status") || "").trim();
   const source = String(searchParams.get("source") || "").trim();
   const skuCode = String(searchParams.get("sku_code") || "").trim();
+  const gtin = String(searchParams.get("gtin") || "").trim();
   const productBatch = String(searchParams.get("product_batch") || "").trim();
-  const batchNo = String(searchParams.get("batch_no") || "").trim();
   const from = String(searchParams.get("from") || "").trim();
   const to = String(searchParams.get("to") || "").trim();
 
@@ -44,8 +44,8 @@ export async function GET(req: Request) {
   if (status) query = query.eq("status", status);
   if (source) query = query.eq("source", source);
   if (skuCode) query = query.ilike("sku_code_snapshot", `%${skuCode}%`);
+  if (gtin) query = query.ilike("gtin_snapshot", `%${gtin}%`);
   if (productBatch) query = query.ilike("product_batch_snapshot", `%${productBatch}%`);
-  if (batchNo) query = query.ilike("batch_no", `%${batchNo}%`);
   if (from) query = query.gte("created_at", from);
   if (to) query = query.lte("created_at", to);
 

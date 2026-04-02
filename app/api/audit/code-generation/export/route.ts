@@ -65,12 +65,13 @@ export async function GET(req: Request) {
       }
 
       const csv = [
-        "Batch No,Generated At,SKU Code,Product Batch,Code Family,Code Mode,Symbol Type,Serial,Payload,GTIN,Expiry",
+        "Batch No,Generated At,SKU Code,GTIN,Product Batch,Code Family,Code Mode,Symbol Type,Serial,Payload,GTIN From Code,Expiry",
         ...(items || []).map((item) =>
           [
             escapeCsvValue(batch.batch_no),
             escapeCsvValue(item.created_at),
             escapeCsvValue(batch.sku_code_snapshot),
+            escapeCsvValue(batch.gtin_snapshot),
             escapeCsvValue(batch.product_batch_snapshot),
             escapeCsvValue(batch.generation_family),
             escapeCsvValue(item.code_mode),
@@ -126,12 +127,13 @@ export async function GET(req: Request) {
     ];
 
     const csv = [
-      "Batch No,Generated At,SKU Code,Product Batch,Code Family,Code Mode,Symbol Type,Level,SSCC,SSCC With AI",
+      "Batch No,Generated At,SKU Code,GTIN,Product Batch,Code Family,Code Mode,Symbol Type,Level,SSCC,SSCC With AI",
       ...rows.map((item) =>
         [
           escapeCsvValue(batch.batch_no),
           escapeCsvValue(item.created_at),
           escapeCsvValue(batch.sku_code_snapshot),
+          escapeCsvValue(batch.gtin_snapshot),
           escapeCsvValue(batch.product_batch_snapshot),
           escapeCsvValue(batch.generation_family),
           escapeCsvValue(batch.code_mode),
@@ -161,8 +163,8 @@ export async function GET(req: Request) {
   const status = String(searchParams.get("status") || "").trim();
   const source = String(searchParams.get("source") || "").trim();
   const skuCode = String(searchParams.get("sku_code") || "").trim();
+  const gtin = String(searchParams.get("gtin") || "").trim();
   const productBatch = String(searchParams.get("product_batch") || "").trim();
-  const batchNo = String(searchParams.get("batch_no") || "").trim();
   const from = String(searchParams.get("from") || "").trim();
   const to = String(searchParams.get("to") || "").trim();
 
@@ -170,8 +172,8 @@ export async function GET(req: Request) {
   if (status) query = query.eq("status", status);
   if (source) query = query.eq("source", source);
   if (skuCode) query = query.ilike("sku_code_snapshot", `%${skuCode}%`);
+  if (gtin) query = query.ilike("gtin_snapshot", `%${gtin}%`);
   if (productBatch) query = query.ilike("product_batch_snapshot", `%${productBatch}%`);
-  if (batchNo) query = query.ilike("batch_no", `%${batchNo}%`);
   if (from) query = query.gte("created_at", from);
   if (to) query = query.lte("created_at", to);
 
@@ -181,13 +183,14 @@ export async function GET(req: Request) {
   }
 
   const csv = [
-    "Batch No,Date,Source,SKU Code,Product Batch,Code Family,Code Mode,Symbol Type,Requested Qty,Generated Qty,Failed Qty,Status",
+    "Batch No,Date,Source,SKU Code,GTIN,Product Batch,Code Family,Code Mode,Symbol Type,Requested Qty,Generated Qty,Failed Qty,Status",
     ...(data || []).map((row) =>
       [
         escapeCsvValue(row.batch_no),
         escapeCsvValue(row.created_at),
         escapeCsvValue(row.source),
         escapeCsvValue(row.sku_code_snapshot),
+        escapeCsvValue(row.gtin_snapshot),
         escapeCsvValue(row.product_batch_snapshot),
         escapeCsvValue(row.generation_family),
         escapeCsvValue(row.code_mode),

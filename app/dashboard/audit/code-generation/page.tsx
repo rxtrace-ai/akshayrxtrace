@@ -10,6 +10,7 @@ type BatchRow = {
   source: string;
   status: "PENDING" | "SUCCESS" | "PARTIAL_FAILED" | "FAILED";
   sku_code_snapshot: string;
+  gtin_snapshot: string | null;
   product_batch_snapshot: string | null;
   code_mode: "GS1" | "PIC" | null;
   symbol_type: "QR" | "DATAMATRIX" | null;
@@ -39,8 +40,8 @@ export default function CodeGenerationAuditPage() {
   const [status, setStatus] = useState("");
   const [source, setSource] = useState("");
   const [skuCode, setSkuCode] = useState("");
+  const [gtin, setGtin] = useState("");
   const [productBatch, setProductBatch] = useState("");
-  const [batchNo, setBatchNo] = useState("");
 
   const logsHref = useMemo(() => {
     const params = new URLSearchParams();
@@ -50,11 +51,11 @@ export default function CodeGenerationAuditPage() {
     if (status) params.set("status", status);
     if (source) params.set("source", source);
     if (skuCode) params.set("sku_code", skuCode);
+    if (gtin) params.set("gtin", gtin);
     if (productBatch) params.set("product_batch", productBatch);
-    if (batchNo) params.set("batch_no", batchNo);
     const qs = params.toString();
     return qs ? `/api/audit/code-generation?${qs}` : "/api/audit/code-generation";
-  }, [from, to, generationFamily, status, source, skuCode, productBatch, batchNo]);
+  }, [from, to, generationFamily, status, source, skuCode, gtin, productBatch]);
 
   const exportHref = useMemo(() => {
     const params = new URLSearchParams();
@@ -64,10 +65,10 @@ export default function CodeGenerationAuditPage() {
     if (status) params.set("status", status);
     if (source) params.set("source", source);
     if (skuCode) params.set("sku_code", skuCode);
+    if (gtin) params.set("gtin", gtin);
     if (productBatch) params.set("product_batch", productBatch);
-    if (batchNo) params.set("batch_no", batchNo);
     return `/api/audit/code-generation/export?${params.toString()}`;
-  }, [from, to, generationFamily, status, source, skuCode, productBatch, batchNo]);
+  }, [from, to, generationFamily, status, source, skuCode, gtin, productBatch]);
 
   async function fetchRows() {
     setLoading(true);
@@ -148,12 +149,12 @@ export default function CodeGenerationAuditPage() {
           <input className="input" value={skuCode} onChange={(e) => setSkuCode(e.target.value)} placeholder="Search SKU" />
         </div>
         <div>
-          <label className="label">Product Batch</label>
-          <input className="input" value={productBatch} onChange={(e) => setProductBatch(e.target.value)} placeholder="Search batch" />
+          <label className="label">GTIN</label>
+          <input className="input" value={gtin} onChange={(e) => setGtin(e.target.value)} placeholder="Search GTIN" />
         </div>
         <div>
-          <label className="label">Batch No</label>
-          <input className="input" value={batchNo} onChange={(e) => setBatchNo(e.target.value)} placeholder="Search batch no" />
+          <label className="label">Product Batch</label>
+          <input className="input" value={productBatch} onChange={(e) => setProductBatch(e.target.value)} placeholder="Search batch" />
         </div>
       </div>
 
@@ -200,7 +201,7 @@ export default function CodeGenerationAuditPage() {
                   </div>
                   <div className="col-span-2">
                     <div>{row.sku_code_snapshot}</div>
-                    <div className="text-xs text-gray-500">{row.product_batch_snapshot || "-"}</div>
+                    <div className="text-xs text-gray-500">{row.gtin_snapshot || row.product_batch_snapshot || "-"}</div>
                   </div>
                   <div className="col-span-1">{row.generation_family}</div>
                   <div className="col-span-1">
@@ -225,6 +226,10 @@ export default function CodeGenerationAuditPage() {
                       <div>
                         <div className="text-gray-500">Source</div>
                         <div className="font-semibold">{row.source}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">GTIN</div>
+                        <div className="font-semibold">{row.gtin_snapshot || "-"}</div>
                       </div>
                       <div>
                         <div className="text-gray-500">Requested</div>
