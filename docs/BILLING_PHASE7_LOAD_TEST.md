@@ -23,7 +23,6 @@
    - Expect: independent counters update and no deadlocks.
 
 ## Limits (current)
-- Units: `MAX_UNITS_PER_REQUEST = 10000` (`/api/unit/create`)
-- Unit generation via `/api/issues`: `MAX_CODES_PER_REQUEST = 10000`
-- SSCC unified generation: `MAX_CODES_PER_REQUEST = 10000`, `MAX_CODES_PER_ROW = 1000`
-
+- Units: `MAX_UNITS_PER_REQUEST = 1000` (`/api/unit/create`)
+- Unit generation via `/api/issues`: `MAX_CODES_PER_REQUEST = 1000`
+- SSCC unified generation: `MAX_CODES_PER_REQUEST = 1000`, `MAX_CODES_PER_ROW = 1000`

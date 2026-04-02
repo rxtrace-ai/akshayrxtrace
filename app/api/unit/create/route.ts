@@ -9,8 +9,9 @@ import { enforceEntitlement, refundEntitlement } from '@/lib/entitlement/enforce
 import { UsageType } from '@/lib/entitlement/usageTypes';
 import { generateUnitSerial } from '@/lib/serial/unitSerial';
 import { checkUserIdempotency, hashRequestBody, storeUserIdempotencyResponse } from '@/lib/user/idempotency';
+import { createCodeGenerationBatch, updateCodeGenerationBatch } from '@/lib/codeGeneration/batches';
 
-const MAX_UNITS_PER_REQUEST = 10000;
+const MAX_UNITS_PER_REQUEST = 1000;
 const DB_INSERT_BATCH_SIZE = 1000;
 const MAX_SERIAL_RETRY_ATTEMPTS = 5;
 const IDEMPOTENCY_ENDPOINT = 'unit_create';
@@ -29,6 +30,7 @@ type UnitLabelRow = {
   company_id: string;
   sku_id: string | null;
   unit_sku_master_id: string;
+  generation_batch_id: string;
   gtin: string | null;
   batch: string;
   mfd: string;
@@ -99,6 +101,7 @@ async function maybeStoreSuccessfulReplay(params: {
 }
 
 export async function POST(req: Request) {
+  let batchLog: { id: string; batchNo: string } | null = null;
   try {
     const supabase = getSupabaseAdmin();
     const server = await supabaseServer();
@@ -146,6 +149,7 @@ export async function POST(req: Request) {
       unit_sku_master_id,
       company_id: requestedCompanyId,
       quantity,
+      code_type,
       compliance_ack,
     } = body;
 
@@ -258,6 +262,7 @@ export async function POST(req: Request) {
     }
 
     const legacySkuId = sku?.id ?? null;
+    const symbolType = code_type === 'QR' || code_type === 'DATAMATRIX' ? code_type : null;
     const expiryYYMMDD = (() => {
       const dt = new Date(String(resolvedExpiry));
       const yy = String(dt.getFullYear()).slice(-2);
@@ -272,6 +277,27 @@ export async function POST(req: Request) {
       const dd = String(dt.getDate()).padStart(2, '0');
       return `${yy}${mm}${dd}`;
     })();
+
+    batchLog = await createCodeGenerationBatch({
+      companyId: authCompanyId,
+      generationFamily: 'UNIT',
+      source: 'MANUAL',
+      unitSkuMasterId: unit_sku_master_id.trim(),
+      skuId: legacySkuId,
+      skuCodeSnapshot: resolvedSkuCode,
+      productBatchSnapshot: resolvedBatch,
+      codeMode,
+      symbolType,
+      requestedQty: qty,
+      requestId: idempotency.kind === 'ok' ? idempotency.key : idempotencyKey,
+      createdBy: user.id,
+      meta: {
+        source: 'unit_create',
+        unit_sku_master_id: unit_sku_master_id.trim(),
+      },
+    });
+    const batchLogId = batchLog.id;
+    const batchNo = batchLog.batchNo;
 
     const buildPayloadForSerial = (serial: string) =>
       codeMode === 'GS1'
@@ -305,6 +331,7 @@ export async function POST(req: Request) {
         company_id: authCompanyId,
         sku_id: legacySkuId,
         unit_sku_master_id: unit_sku_master_id.trim(),
+        generation_batch_id: batchLogId,
         gtin: codeMode === 'GS1' ? gtinForStorage : null,
         batch: resolvedBatch,
         mfd: resolvedMfd,
@@ -354,6 +381,16 @@ export async function POST(req: Request) {
       });
 
       if (!decision.allow) {
+          await updateCodeGenerationBatch({
+          batchId: batchLogId,
+          status: 'FAILED',
+          generatedQty: 0,
+          failedQty: qty,
+          meta: {
+            source: 'unit_create',
+            reason_code: String(decision.reason_code || 'QUOTA_EXCEEDED'),
+          },
+        });
         if (insertedUnitIds.length > 0) {
           await supabase.from('labels_units').delete().in('id', insertedUnitIds);
         }
@@ -386,6 +423,16 @@ export async function POST(req: Request) {
         }
 
         if (!isUniqueViolation(error)) {
+          await updateCodeGenerationBatch({
+            batchId: batchLogId,
+            status: 'FAILED',
+            generatedQty: 0,
+            failedQty: qty,
+            meta: {
+              source: 'unit_create',
+              error: String(error?.message || error),
+            },
+          });
           if (insertedUnitIds.length > 0) {
             await supabase.from('labels_units').delete().in('id', insertedUnitIds);
           }
@@ -401,6 +448,16 @@ export async function POST(req: Request) {
 
         attempts += 1;
         if (attempts >= MAX_SERIAL_RETRY_ATTEMPTS) {
+          await updateCodeGenerationBatch({
+            batchId: batchLogId,
+            status: 'FAILED',
+            generatedQty: 0,
+            failedQty: qty,
+            meta: {
+              source: 'unit_create',
+              error: 'Duplicate serial detected after retries',
+            },
+          });
           if (insertedUnitIds.length > 0) {
             await supabase.from('labels_units').delete().in('id', insertedUnitIds);
           }
@@ -419,7 +476,20 @@ export async function POST(req: Request) {
       }
     }
 
+    await updateCodeGenerationBatch({
+      batchId: batchLogId,
+      status: 'SUCCESS',
+      generatedQty: rows.length,
+      failedQty: 0,
+      meta: {
+        source: 'unit_create',
+        generated: rows.length,
+      },
+    });
+
     const response = successResponse({
+      batch_no: batchNo,
+      status: 'SUCCESS',
       generated: rows.length,
       items: rows.map((row) => ({
         serial: row.serial,
@@ -442,6 +512,18 @@ export async function POST(req: Request) {
 
     return NextResponse.json(response.payload, { status: response.status });
   } catch (err: any) {
+    if (batchLog) {
+      try {
+        await updateCodeGenerationBatch({
+          batchId: batchLog.id,
+          status: 'FAILED',
+          meta: {
+            source: 'unit_create',
+            error: String(err?.message || err),
+          },
+        });
+      } catch {}
+    }
     const status =
       err?.code === 'PAST_DUE' || err?.code === 'SUBSCRIPTION_INACTIVE'
         ? 402

@@ -52,7 +52,7 @@ type SSCCFormState = {
   complianceAck: boolean;
 };
 
-const MAX_CODES_PER_REQUEST = 10000;
+const MAX_CODES_PER_REQUEST = 1000;
 const MAX_CODES_PER_ROW = 1000;
 
 function getApiErrorMessage(payload: any, fallback: string) {
@@ -292,6 +292,7 @@ export default function SSCCCodeGenerationPage() {
           generate_box: form.generateBox,
           generate_carton: form.generateCarton,
           generate_pallet: form.generatePallet,
+          code_type: form.codeType,
           compliance_ack: true,
         }),
       });
@@ -323,7 +324,7 @@ export default function SSCCCodeGenerationPage() {
         form.generateCarton ? `${Array.isArray(data?.cartons) ? data.cartons.length : 0} Carton` : null,
         form.generatePallet ? `${Array.isArray(data?.pallets) ? data.pallets.length : 0} Pallet` : null,
       ].filter(Boolean).join(', ');
-      setSuccess(`Generated ${nextLabels.length} SSCC code(s) successfully${levelBreakdown ? ` (${levelBreakdown})` : ''}.`);
+      setSuccess(`Generated ${nextLabels.length} SSCC code(s) successfully${out?.data?.batch_no ? ` in batch ${out.data.batch_no}` : ''}${levelBreakdown ? ` (${levelBreakdown})` : ''}.`);
     } catch (err: any) {
       setError(err?.message || 'Unable to generate SSCC codes right now. Please retry.');
     } finally {

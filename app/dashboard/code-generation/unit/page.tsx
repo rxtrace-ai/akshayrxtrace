@@ -38,7 +38,7 @@ type GeneratedUnit = {
   expiry: string;
 };
 
-const MAX_CODES_PER_REQUEST = 10000;
+const MAX_CODES_PER_REQUEST = 1000;
 const MAX_CODES_PER_ROW = 1000;
 
 function getApiErrorMessage(payload: any, fallback: string) {
@@ -174,6 +174,7 @@ export default function UnitCodeGenerationPage() {
         body: JSON.stringify({
           unit_sku_master_id: selected.id,
           quantity,
+          code_type: codeType,
           compliance_ack: true,
         }),
       });
@@ -210,7 +211,7 @@ export default function UnitCodeGenerationPage() {
 
       setGenerated((prev) => [...prev, ...nextItems]);
       setSuccess(
-        `Generated ${nextItems.length} unit code(s) successfully using ${selected.gtin ? 'GS1' : 'PIC'} mode from SKU Master.`
+        `Generated ${nextItems.length} unit code(s) successfully${out?.data?.batch_no ? ` in batch ${out.data.batch_no}` : ''} using ${selected.gtin ? 'GS1' : 'PIC'} mode from SKU Master.`
       );
     } catch (err: any) {
       setError(err?.message || 'Unable to generate unit codes right now. Please retry.');

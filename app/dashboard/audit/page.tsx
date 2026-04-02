@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 
 function formatIssueContext(issue: any) {
   const parts = [
@@ -104,6 +105,11 @@ export default function Page() {
     <div className="max-w-6xl mx-auto px-8 py-10">
       <h1 className="text-3xl font-semibold mb-4">Audit Logs</h1>
       <p className="text-gray-500 mb-6">View and export your company&apos;s audit trail.</p>
+      <div className="mb-6">
+        <Link href="/dashboard/audit/code-generation" className="btn-primary">
+          Open Code Generation Log
+        </Link>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <div>
