@@ -6,6 +6,10 @@ import { resolveCompanyForUser } from "@/lib/company/resolve";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function normalizeDigits(input: string) {
+  return input.replace(/[^0-9]/g, "");
+}
+
 function escapeCsvValue(value: unknown) {
   const normalized =
     value === null || value === undefined
@@ -174,7 +178,7 @@ export async function GET(req: Request) {
   const status = String(searchParams.get("status") || "").trim();
   const source = String(searchParams.get("source") || "").trim();
   const skuCode = String(searchParams.get("sku_code") || "").trim();
-  const gtin = String(searchParams.get("gtin") || "").trim();
+  const gtin = normalizeDigits(String(searchParams.get("gtin") || "").trim());
   const productBatch = String(searchParams.get("product_batch") || "").trim();
   const from = String(searchParams.get("from") || "").trim();
   const to = String(searchParams.get("to") || "").trim();
@@ -183,7 +187,28 @@ export async function GET(req: Request) {
   if (status) query = query.eq("status", status);
   if (source) query = query.eq("source", source);
   if (skuCode) query = query.ilike("sku_code_snapshot", `%${skuCode}%`);
-  if (gtin) query = query.ilike("gtin_snapshot", `%${gtin}%`);
+  if (gtin) {
+    const { data: matchingUnitMasters, error: unitMasterError } = await supabase
+      .from("unit_sku_master")
+      .select("id")
+      .eq("company_id", companyId)
+      .ilike("gtin", `%${gtin}%`)
+      .is("deleted_at", null);
+
+    if (unitMasterError) {
+      return NextResponse.json({ error: unitMasterError.message }, { status: 500 });
+    }
+
+    const unitMasterIds = (matchingUnitMasters || [])
+      .map((row) => String(row.id || "").trim())
+      .filter(Boolean);
+
+    if (unitMasterIds.length > 0) {
+      query = query.or(`gtin_snapshot.ilike.%${gtin}%,unit_sku_master_id.in.(${unitMasterIds.join(",")})`);
+    } else {
+      query = query.ilike("gtin_snapshot", `%${gtin}%`);
+    }
+  }
   if (productBatch) query = query.ilike("product_batch_snapshot", `%${productBatch}%`);
   if (from) query = query.gte("created_at", from);
   if (to) query = query.lte("created_at", to);
