@@ -128,8 +128,9 @@ function buildSscc(opts: {
   const ext = String(opts.extDigit);
   const prefix = normalizeDigits(opts.companyPrefixDigits);
   const serialRef = normalizeDigits(opts.serialRefDigits);
-
-  const body16 = (prefix + serialRef).padStart(16, '0').slice(0, 16);
+  const serialLength = Math.max(1, 16 - prefix.length);
+  const serialBody = serialRef.padStart(serialLength, '0').slice(-serialLength);
+  const body16 = (prefix + serialBody).padStart(16, '0').slice(-16);
   const number17 = (ext + body16).slice(0, 17);
   const check = computeGs1CheckDigit(number17);
 

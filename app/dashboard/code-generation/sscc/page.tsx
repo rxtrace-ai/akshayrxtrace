@@ -109,6 +109,15 @@ function toLabelData(items: SSCCLabel[]): LabelData[] {
 }
 
 function exportGeneratedSsccCsv(labels: SSCCLabel[]) {
+  const csvCell = (value: unknown, options?: { preserveText?: boolean }) => {
+    const normalized = value === null || value === undefined ? '' : String(value);
+    const escaped = normalized.replace(/"/g, '""');
+    if (options?.preserveText) {
+      return `="${escaped}"`;
+    }
+    return `"${escaped}"`;
+  };
+
   const rows = [
     ['SKU Code', 'Level', 'SSCC', 'SSCC with AI', 'Code Type'],
     ...labels.map((label) => [
@@ -120,7 +129,17 @@ function exportGeneratedSsccCsv(labels: SSCCLabel[]) {
     ]),
   ];
 
-  const csv = rows.map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const csv = rows
+    .map((row, rowIndex) =>
+      row
+        .map((value, colIndex) =>
+          csvCell(value, {
+            preserveText: rowIndex > 0 && (colIndex === 2 || colIndex === 3),
+          })
+        )
+        .join(',')
+    )
+    .join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   saveAs(blob, `sscc_generated_${new Date().toISOString().split('T')[0].replace(/-/g, '')}.csv`);
 }

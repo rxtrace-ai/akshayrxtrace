@@ -17,6 +17,17 @@ function escapeCsvValue(value: unknown) {
   return `"${normalized.replace(/"/g, '""')}"`;
 }
 
+function escapeSpreadsheetText(value: unknown) {
+  const normalized =
+    value === null || value === undefined
+      ? ""
+      : typeof value === "string"
+        ? value
+        : JSON.stringify(value);
+
+  return `="${normalized.replace(/"/g, '""')}"`;
+}
+
 export async function GET(req: Request) {
   const supabase = getSupabaseAdmin();
   const {
@@ -139,8 +150,8 @@ export async function GET(req: Request) {
           escapeCsvValue(batch.code_mode),
           escapeCsvValue(batch.symbol_type),
           escapeCsvValue(item.level),
-          escapeCsvValue(item.sscc),
-          escapeCsvValue(item.sscc_with_ai),
+          escapeSpreadsheetText(item.sscc),
+          escapeSpreadsheetText(item.sscc_with_ai),
         ].join(",")
       ),
     ].join("\n");
