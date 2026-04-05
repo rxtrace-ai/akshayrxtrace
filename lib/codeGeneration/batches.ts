@@ -45,6 +45,28 @@ export function createGenerationBatchNo(family: BatchFamily) {
 
 export async function createCodeGenerationBatch(params: CreateCodeGenerationBatchParams) {
   const supabase = getSupabaseAdmin();
+  const requestId = typeof params.requestId === "string" && params.requestId.trim() ? params.requestId.trim() : null;
+
+  if (requestId) {
+    const { data: existing, error: existingError } = await supabase
+      .from("code_generation_batches")
+      .select("id, batch_no")
+      .eq("company_id", params.companyId)
+      .eq("request_id", requestId)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new Error(existingError.message);
+    }
+
+    if (existing) {
+      return {
+        id: String(existing.id),
+        batchNo: String(existing.batch_no),
+      };
+    }
+  }
+
   const payload = {
     company_id: params.companyId,
     batch_no: createGenerationBatchNo(params.generationFamily),
@@ -61,7 +83,7 @@ export async function createCodeGenerationBatch(params: CreateCodeGenerationBatc
     requested_qty: params.requestedQty,
     generated_qty: 0,
     failed_qty: 0,
-    request_id: params.requestId ?? null,
+    request_id: requestId,
     created_by: params.createdBy ?? null,
     meta: params.meta ?? {},
   };
@@ -73,6 +95,27 @@ export async function createCodeGenerationBatch(params: CreateCodeGenerationBatc
     .single();
 
   if (error) {
+    const isUniqueViolation =
+      error.code === "23505" || String(error.message || "").toLowerCase().includes("unique");
+    if (isUniqueViolation && requestId) {
+      const { data: existing, error: existingError } = await supabase
+        .from("code_generation_batches")
+        .select("id, batch_no")
+        .eq("company_id", params.companyId)
+        .eq("request_id", requestId)
+        .maybeSingle();
+
+      if (existingError) {
+        throw new Error(existingError.message);
+      }
+
+      if (existing) {
+        return {
+          id: String(existing.id),
+          batchNo: String(existing.batch_no),
+        };
+      }
+    }
     throw new Error(error.message);
   }
 
@@ -84,8 +127,36 @@ export async function createCodeGenerationBatch(params: CreateCodeGenerationBatc
 
 export async function updateCodeGenerationBatch(params: UpdateCodeGenerationBatchParams) {
   const supabase = getSupabaseAdmin();
+  const { data: existing, error: existingError } = await supabase
+    .from("code_generation_batches")
+    .select("status, meta")
+    .eq("id", params.batchId)
+    .maybeSingle();
+
+  if (existingError) {
+    throw new Error(existingError.message);
+  }
+
+  if (!existing) {
+    throw new Error("Code generation batch not found");
+  }
+
+  const currentStatus = String(existing.status || "");
+  const nextStatus =
+    currentStatus === "SUCCESS" && params.status === "FAILED"
+      ? currentStatus
+      : params.status;
+  const mergedMeta =
+    params.meta
+      ? {
+          ...((existing.meta as Record<string, unknown> | null) || {}),
+          ...params.meta,
+        }
+      : existing.meta;
+
   const patch: Record<string, unknown> = {
-    status: params.status,
+    status: nextStatus,
+    meta: mergedMeta,
   };
 
   if (typeof params.generatedQty === "number") {
@@ -94,10 +165,6 @@ export async function updateCodeGenerationBatch(params: UpdateCodeGenerationBatc
   if (typeof params.failedQty === "number") {
     patch.failed_qty = params.failedQty;
   }
-  if (params.meta) {
-    patch.meta = params.meta;
-  }
-
   const { error } = await supabase
     .from("code_generation_batches")
     .update(patch)

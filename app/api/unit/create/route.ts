@@ -501,14 +501,18 @@ export async function POST(req: Request) {
     });
 
     if (idempotency.kind === 'ok') {
-      await maybeStoreSuccessfulReplay({
-        supabase,
-        userId: user.id,
-        idempotencyKey: idempotency.key,
-        requestHash: idempotency.requestHash,
-        payload: response.payload,
-        status: response.status,
-      });
+      try {
+        await maybeStoreSuccessfulReplay({
+          supabase,
+          userId: user.id,
+          idempotencyKey: idempotency.key,
+          requestHash: idempotency.requestHash,
+          payload: response.payload,
+          status: response.status,
+        });
+      } catch (replayError) {
+        console.error('[unit/create] failed to persist idempotency replay response', replayError);
+      }
     }
 
     return NextResponse.json(response.payload, { status: response.status });

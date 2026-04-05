@@ -8,7 +8,6 @@ CREATE TABLE IF NOT EXISTS public.code_generation_batches (
   unit_sku_master_id UUID REFERENCES public.unit_sku_master(id) ON DELETE SET NULL,
   sku_id UUID REFERENCES public.skus(id) ON DELETE SET NULL,
   sku_code_snapshot TEXT NOT NULL,
-  gtin_snapshot TEXT,
   product_batch_snapshot TEXT,
   code_mode public.code_mode_enum,
   symbol_type TEXT CHECK (symbol_type IN ('QR', 'DATAMATRIX')),
@@ -33,9 +32,6 @@ CREATE INDEX IF NOT EXISTS idx_code_generation_batches_company_family_created_at
 
 CREATE INDEX IF NOT EXISTS idx_code_generation_batches_company_sku_created_at
   ON public.code_generation_batches (company_id, sku_code_snapshot, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_code_generation_batches_company_gtin_created_at
-  ON public.code_generation_batches (company_id, gtin_snapshot, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_code_generation_batches_company_batch_created_at
   ON public.code_generation_batches (company_id, product_batch_snapshot, created_at DESC);

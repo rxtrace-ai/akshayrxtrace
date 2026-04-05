@@ -21,6 +21,13 @@ type BatchRow = {
   meta?: Record<string, unknown>;
 };
 
+type BatchListResponse = {
+  rows: BatchRow[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
 function formatDate(value: string) {
   try {
     return new Date(value).toLocaleString("en-IN");
@@ -31,9 +38,11 @@ function formatDate(value: string) {
 
 export default function CodeGenerationAuditPage() {
   const [rows, setRows] = useState<BatchRow[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [generationFamily, setGenerationFamily] = useState("");
@@ -42,9 +51,12 @@ export default function CodeGenerationAuditPage() {
   const [skuCode, setSkuCode] = useState("");
   const [gtin, setGtin] = useState("");
   const [productBatch, setProductBatch] = useState("");
+  const pageSize = 25;
 
   const logsHref = useMemo(() => {
     const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
     if (from) params.set("from", from);
     if (to) params.set("to", to);
     if (generationFamily) params.set("generation_family", generationFamily);
@@ -55,7 +67,7 @@ export default function CodeGenerationAuditPage() {
     if (productBatch) params.set("product_batch", productBatch);
     const qs = params.toString();
     return qs ? `/api/audit/code-generation?${qs}` : "/api/audit/code-generation";
-  }, [from, to, generationFamily, status, source, skuCode, gtin, productBatch]);
+  }, [page, pageSize, from, to, generationFamily, status, source, skuCode, gtin, productBatch]);
 
   const exportHref = useMemo(() => {
     const params = new URLSearchParams();
@@ -78,13 +90,17 @@ export default function CodeGenerationAuditPage() {
       const body = await res.json().catch(() => null);
       if (!res.ok) {
         setRows([]);
+        setTotal(0);
         setError(body?.error || "Failed to load code generation batches");
         return;
       }
-      setRows(Array.isArray(body) ? body : []);
+      const payload = body as BatchListResponse | null;
+      setRows(Array.isArray(payload?.rows) ? payload.rows : []);
+      setTotal(typeof payload?.total === "number" ? payload.total : 0);
       setExpandedId(null);
     } catch (err: any) {
       setRows([]);
+      setTotal(0);
       setError(err?.message || "Failed to load code generation batches");
     } finally {
       setLoading(false);
@@ -93,7 +109,15 @@ export default function CodeGenerationAuditPage() {
 
   useEffect(() => {
     fetchRows();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   return (
     <div className="max-w-7xl mx-auto px-8 py-10">
@@ -110,15 +134,15 @@ export default function CodeGenerationAuditPage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <div>
           <label className="label">From</label>
-          <input type="date" className="input" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <input type="date" className="input" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }} />
         </div>
         <div>
           <label className="label">To</label>
-          <input type="date" className="input" value={to} onChange={(e) => setTo(e.target.value)} />
+          <input type="date" className="input" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} />
         </div>
         <div>
           <label className="label">Family</label>
-          <select className="input" value={generationFamily} onChange={(e) => setGenerationFamily(e.target.value)}>
+          <select className="input" value={generationFamily} onChange={(e) => { setGenerationFamily(e.target.value); setPage(1); }}>
             <option value="">All</option>
             <option value="UNIT">Unit</option>
             <option value="SSCC">SSCC</option>
@@ -126,7 +150,7 @@ export default function CodeGenerationAuditPage() {
         </div>
         <div>
           <label className="label">Status</label>
-          <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <select className="input" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
             <option value="">All</option>
             <option value="PENDING">Pending</option>
             <option value="SUCCESS">Success</option>
@@ -136,7 +160,7 @@ export default function CodeGenerationAuditPage() {
         </div>
         <div>
           <label className="label">Source</label>
-          <select className="input" value={source} onChange={(e) => setSource(e.target.value)}>
+          <select className="input" value={source} onChange={(e) => { setSource(e.target.value); setPage(1); }}>
             <option value="">All</option>
             <option value="MANUAL">Manual</option>
             <option value="CSV">CSV</option>
@@ -146,15 +170,15 @@ export default function CodeGenerationAuditPage() {
         </div>
         <div>
           <label className="label">SKU Code</label>
-          <input className="input" value={skuCode} onChange={(e) => setSkuCode(e.target.value)} placeholder="Search SKU" />
+          <input className="input" value={skuCode} onChange={(e) => { setSkuCode(e.target.value); setPage(1); }} placeholder="Search SKU" />
         </div>
         <div>
           <label className="label">GTIN</label>
-          <input className="input" value={gtin} onChange={(e) => setGtin(e.target.value)} placeholder="Search GTIN" />
+          <input className="input" value={gtin} onChange={(e) => { setGtin(e.target.value); setPage(1); }} placeholder="Search GTIN" />
         </div>
         <div>
           <label className="label">Product Batch</label>
-          <input className="input" value={productBatch} onChange={(e) => setProductBatch(e.target.value)} placeholder="Search batch" />
+          <input className="input" value={productBatch} onChange={(e) => { setProductBatch(e.target.value); setPage(1); }} placeholder="Search batch" />
         </div>
       </div>
 
@@ -168,6 +192,34 @@ export default function CodeGenerationAuditPage() {
       </div>
 
       {error ? <div className="mb-4 text-sm text-red-600">{error}</div> : null}
+
+      <div className="mb-4 flex items-center justify-between text-sm text-gray-500">
+        <div>
+          Showing {rows.length === 0 ? 0 : (page - 1) * pageSize + 1}-
+          {Math.min(page * pageSize, total)} of {total}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn-primary disabled:opacity-50"
+            disabled={loading || page <= 1}
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+          >
+            Previous
+          </button>
+          <span>
+            Page {page} of {totalPages}
+          </span>
+          <button
+            type="button"
+            className="btn-primary disabled:opacity-50"
+            disabled={loading || page >= totalPages}
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+          >
+            Next
+          </button>
+        </div>
+      </div>
 
       <div className="border rounded-lg overflow-hidden">
         <div className="grid grid-cols-12 gap-2 p-3 border-b text-xs font-medium text-gray-500">

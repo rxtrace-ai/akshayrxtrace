@@ -629,14 +629,18 @@ export async function POST(req: Request) {
     });
 
     if (idempotency.kind === 'ok') {
-      await storeReplay({
-        supabase,
-        userId: user.id,
-        idempotencyKey: idempotency.key,
-        requestHash: idempotency.requestHash,
-        payload: response.payload,
-        status: response.status,
-      });
+      try {
+        await storeReplay({
+          supabase,
+          userId: user.id,
+          idempotencyKey: idempotency.key,
+          requestHash: idempotency.requestHash,
+          payload: response.payload,
+          status: response.status,
+        });
+      } catch (replayError) {
+        console.error('[sscc/generate] failed to persist idempotency replay response', replayError);
+      }
     }
 
     return NextResponse.json(response.payload, { status: response.status });

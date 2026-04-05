@@ -24,12 +24,17 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const companyId = resolved.companyId;
+  const page = Math.max(1, Number.parseInt(String(searchParams.get("page") || "1"), 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(String(searchParams.get("page_size") || "25"), 10) || 25));
+  const fromIndex = (page - 1) * pageSize;
+  const toIndex = fromIndex + pageSize - 1;
 
   let query = supabase
     .from("code_generation_batches")
-    .select("*")
+    .select("*", { count: "exact" })
     .eq("company_id", companyId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .range(fromIndex, toIndex);
 
   const generationFamily = String(searchParams.get("generation_family") || "").trim();
   const status = String(searchParams.get("status") || "").trim();
@@ -49,10 +54,15 @@ export async function GET(req: Request) {
   if (from) query = query.gte("created_at", from);
   if (to) query = query.lte("created_at", to);
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json(data || []);
+  return NextResponse.json({
+    rows: data || [],
+    total: count || 0,
+    page,
+    page_size: pageSize,
+  });
 }
