@@ -24,7 +24,6 @@
         "name": "next"
       }
     ],
-    "baseUrl": ".",
     "types": [
       "vitest/globals",
       "node"
