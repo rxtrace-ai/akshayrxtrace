@@ -31,7 +31,7 @@ export default function SignUp() {
         password,
         options: {
           data: { full_name: fullName },
-          emailRedirectTo: `${getAppUrl()}/dashboard/setup-company`,
+          emailRedirectTo: `${getAppUrl()}/auth/callback?next=/onboarding/company-setup`,
         },
       });
 
@@ -52,16 +52,6 @@ export default function SignUp() {
         setLoading(false);
         return;
       }
-
-      await fetch("/api/auth/create-user-profile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          fullName,
-          user_id: authResponse.user.id,
-        }),
-      }).catch((err) => console.warn("Profile save failed:", err));
 
       fetch("/api/auth/send-welcome", {
         method: "POST",

@@ -3,10 +3,12 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { resolveCompanyForUser } from '@/lib/company/resolve';
+import { getUnifiedSubscriptionStatus } from '@/lib/billing/subscriptionStatus';
 
 export const dynamic = 'force-dynamic';
 
 const COMPANY_SETUP_ROUTE = '/onboarding/company-setup';
+const TRIAL_ACTIVATION_ROUTE = '/dashboard/settings?onboarding=trial_activation';
 
 function getSafeNextPath(nextPath: string | null): string | null {
   if (!nextPath || !nextPath.startsWith('/')) return null;
@@ -107,8 +109,23 @@ export async function GET(request: Request) {
       if (!nextPath || nextPath.startsWith('/dashboard')) {
         redirectTo = COMPANY_SETUP_ROUTE;
       }
-    } else if (nextPath && (nextPath === COMPANY_SETUP_ROUTE || nextPath.startsWith(`${COMPANY_SETUP_ROUTE}/`))) {
-      redirectTo = '/dashboard';
+    } else {
+      if (resolved?.isOwner) {
+        const status = await getUnifiedSubscriptionStatus({
+          supabase: admin as any,
+          companyId: resolved.companyId,
+        });
+        const hasOperationalAccess =
+          status.status === 'active' || status.status === 'pending';
+
+        if (!hasOperationalAccess) {
+          redirectTo = TRIAL_ACTIVATION_ROUTE;
+        } else if (nextPath && (nextPath === COMPANY_SETUP_ROUTE || nextPath.startsWith(`${COMPANY_SETUP_ROUTE}/`))) {
+          redirectTo = '/dashboard';
+        }
+      } else if (nextPath && (nextPath === COMPANY_SETUP_ROUTE || nextPath.startsWith(`${COMPANY_SETUP_ROUTE}/`))) {
+        redirectTo = '/dashboard';
+      }
     }
   }
 

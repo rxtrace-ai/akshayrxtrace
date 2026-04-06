@@ -2,9 +2,25 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { resolveCompanyForUser } from '@/lib/company/resolve';
+import { getUnifiedSubscriptionStatus } from '@/lib/billing/subscriptionStatus';
 import { isTrustedOrigin, shouldEnforceCsrfForApi } from '@/lib/security/csrf';
 
 const COMPANY_SETUP_ROUTE = '/onboarding/company-setup';
+const TRIAL_ACTIVATION_PATH = '/dashboard/settings';
+
+function withTrialActivationReason(request: NextRequest) {
+  const url = new URL(TRIAL_ACTIVATION_PATH, request.url);
+  url.searchParams.set('onboarding', 'trial_activation');
+  return url;
+}
+
+function isOwnerActivationAllowedRoute(pathname: string) {
+  return (
+    pathname === TRIAL_ACTIVATION_PATH ||
+    pathname.startsWith('/dashboard/subscription') ||
+    pathname.startsWith('/dashboard/checkout')
+  );
+}
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -141,6 +157,27 @@ export async function middleware(request: NextRequest) {
       const companySetupUrl = new URL(COMPANY_SETUP_ROUTE, request.url);
       companySetupUrl.searchParams.set('reason', 'complete_profile');
       return NextResponse.redirect(companySetupUrl);
+    }
+
+    if (resolved.isOwner) {
+      const status = await getUnifiedSubscriptionStatus({
+        supabase: supabase as any,
+        companyId: resolved.companyId,
+      });
+      const hasOperationalAccess =
+        status.status === 'active' || status.status === 'pending';
+
+      if (!hasOperationalAccess) {
+        if (isOnboardingCompanySetupRoute) {
+          return NextResponse.redirect(withTrialActivationReason(request));
+        }
+
+        if (!isOwnerActivationAllowedRoute(pathname)) {
+          return NextResponse.redirect(withTrialActivationReason(request));
+        }
+      } else if (pathname === TRIAL_ACTIVATION_PATH && request.nextUrl.searchParams.get('onboarding') === 'trial_activation') {
+        return NextResponse.redirect(new URL('/dashboard', request.url));
+      }
     }
 
     if (isOnboardingCompanySetupRoute) {

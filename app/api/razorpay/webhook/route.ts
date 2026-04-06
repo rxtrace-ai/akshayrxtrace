@@ -51,7 +51,7 @@ function extractTrialCompanyIdFromPurpose(purpose: string): string | null {
 async function activateTrialFromPaidOrder(params: {
   supabase: ReturnType<typeof getSupabaseAdmin>;
   orderId: string;
-  paymentId: string;
+  paymentId: string | null;
   amountPaise: number;
   correlationId: string;
   paymentNotes: any;
@@ -101,7 +101,7 @@ async function activateTrialFromPaidOrder(params: {
     .update({
       status: "paid",
       paid_at: nowIso,
-      payment_id: paymentId,
+      ...(paymentId ? { payment_id: paymentId } : {}),
     })
     .eq("order_id", orderId);
 
@@ -158,7 +158,7 @@ async function activateTrialFromPaidOrder(params: {
       expires_at: trialEndIso,
       metadata: {
         activated_via: "razorpay_webhook",
-        activated_event: "payment.captured",
+        activated_event: paymentId ? "payment.captured" : "order.paid",
         order_id: orderId,
         payment_id: paymentId,
         correlation_id: correlationId,
@@ -239,7 +239,6 @@ function extractPaymentId(event: any): string | null {
   return (
     String(event?.payload?.payment?.entity?.id || "").trim() ||
     String(event?.payload?.invoice?.entity?.payment_id || "").trim() ||
-    String(event?.payload?.subscription?.entity?.charge_at || "").trim() ||
     null
   );
 }
@@ -500,7 +499,7 @@ export async function POST(req: Request) {
       const paymentId = extractPaymentId(event);
       const amountPaise = extractAmountPaise(event);
 
-      if (eventType === "payment.captured" && orderId && paymentId && amountPaise) {
+      if (orderId && amountPaise) {
         try {
           await activateTrialFromPaidOrder({
             supabase,

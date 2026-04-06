@@ -93,7 +93,7 @@ export async function getUnifiedSubscriptionStatus(params: {
   const trialExpiresAtIso = (trialRow as any)?.trial_end ?? null;
   const trialExpiresAt = trialExpiresAtIso ? new Date(trialExpiresAtIso) : null;
   if (trialExpiresAt && !Number.isNaN(trialExpiresAt.getTime()) && trialExpiresAt.getTime() > now.getTime()) {
-    return { status: "pending", trialExpiresAt };
+    return { status: "active", trialExpiresAt };
   }
 
   return { status: "expired" };

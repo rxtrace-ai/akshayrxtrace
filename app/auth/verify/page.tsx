@@ -141,6 +141,8 @@ function VerifyOTPContent() {
         }
       }
 
+      await fetch('/api/auth/ensure-profile', { method: 'POST' }).catch(() => undefined);
+
       // 3. Resolve authenticated user and route by owner company presence.
       const { data: userData, error: userError } = await supabaseClient().auth.getUser();
       if (userError || !userData?.user?.id) {

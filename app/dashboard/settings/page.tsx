@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSubscriptionSummary } from "@/lib/hooks/useSubscriptionSummary";
+import { useQueryParams } from "@/lib/hooks/useQueryParams";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -28,6 +29,7 @@ function SkeletonRow() {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const query = useQueryParams();
   const {
     data: entitlementSummary,
     loading: summaryLoading,
@@ -53,6 +55,7 @@ export default function SettingsPage() {
   });
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const showTrialOnboarding = query.get("onboarding") === "trial_activation";
 
   useEffect(() => {
     const profile = entitlementSummary?.company_profile;
@@ -251,6 +254,12 @@ export default function SettingsPage() {
         <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
         <p className="text-gray-500 mt-2">Pilot configuration and system setup.</p>
       </div>
+
+      {showTrialOnboarding ? (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+          Account created and company setup is complete. Activate the trial below to finish onboarding.
+        </div>
+      ) : null}
 
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
         <div className="flex items-center justify-between">

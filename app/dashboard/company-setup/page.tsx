@@ -51,6 +51,13 @@ function CompanySetupContent() {
         return;
       }
 
+      const fallbackContactPerson = String(
+        user.user_metadata?.full_name || user.email || ''
+      ).trim();
+      if (fallbackContactPerson) {
+        setContactPerson((current) => current || fallbackContactPerson);
+      }
+
       // Check if company exists (always allow editing, even if profile_completed === true)
       const { data: existingCompany } = await supabase
         .from('companies')
@@ -150,7 +157,7 @@ function CompanySetupContent() {
 
     setSuccess(true);
     setTimeout(() => {
-      router.push('/dashboard');
+      router.push('/dashboard/settings?onboarding=trial_activation');
     }, 1500);
   };
 
@@ -224,7 +231,7 @@ function CompanySetupContent() {
         <Alert className="bg-green-50 border-green-200">
           <CheckCircle className="h-4 w-4 text-green-600" />
           <AlertDescription className="text-green-800">
-            Company setup completed successfully. Redirecting...
+            Company setup completed successfully. Redirecting to trial activation...
           </AlertDescription>
         </Alert>
       )}
@@ -456,7 +463,7 @@ function CompanySetupContent() {
                 disabled={submitting || !companyName.trim() || !contactPerson.trim() || !phone.trim() || !address.trim() || !industry || !businessType}
                 className="bg-blue-600 hover:bg-blue-700"
               >
-                {submitting ? 'Saving...' : 'Complete Setup'}
+                {submitting ? 'Saving...' : 'Complete Setup & Continue'}
               </Button>
             </div>
           </form>
