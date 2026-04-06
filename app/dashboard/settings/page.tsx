@@ -232,6 +232,7 @@ export default function SettingsPage() {
     entitlementSummary?.subscription?.status === "active";
   const subscriptionCancelled = entitlementSummary?.subscriptionStatus?.status === "cancelled";
   const trialActive = Boolean(entitlementSummary?.entitlement?.trial_active) && !hasActiveSubscription;
+  const trialWasAlreadyUsed = Boolean(entitlementSummary?.trial?.expires_at);
   const generationEnabled = !subscriptionCancelled && (hasActiveSubscription || trialActive);
 
   const accessMessage = useMemo(
@@ -576,10 +577,14 @@ export default function SettingsPage() {
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-gray-600">
-                {subscriptionCancelled ? "Subscription cancelled." : "Trial expired or inactive."}
+                {subscriptionCancelled
+                  ? "Subscription cancelled."
+                  : trialWasAlreadyUsed
+                    ? "Trial expired or cancelled. Reactivation is not available."
+                    : "Trial inactive."}
               </p>
               <div className="flex items-center gap-3">
-                {!subscriptionCancelled && (
+                {!subscriptionCancelled && !trialWasAlreadyUsed && (
                   <Button
                     type="button"
                     onClick={handleActivateTrial}
@@ -590,7 +595,9 @@ export default function SettingsPage() {
                   </Button>
                 )}
                 <Button asChild className="bg-blue-600 hover:bg-blue-700">
-                  <Link href="/dashboard/subscription">{subscriptionCancelled ? "Renew Plan" : "Upgrade Plan"}</Link>
+                  <Link href="/dashboard/subscription">
+                    {subscriptionCancelled ? "Renew Plan" : "Upgrade Plan"}
+                  </Link>
                 </Button>
               </div>
             </div>
