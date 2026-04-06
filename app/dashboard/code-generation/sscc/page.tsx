@@ -380,7 +380,7 @@ export default function SSCCCodeGenerationPage() {
           <AlertDescription>
             <strong>Company Setup Required:</strong> Please complete your company setup before generating codes.
             <Button asChild variant="link" className="p-0 ml-2 h-auto">
-              <Link href="/dashboard/company-setup">Go to Company Setup</Link>
+              <Link href="/onboarding/company-setup">Go to Company Setup</Link>
             </Button>
           </AlertDescription>
         </Alert>

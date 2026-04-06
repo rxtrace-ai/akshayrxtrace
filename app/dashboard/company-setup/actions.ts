@@ -209,7 +209,7 @@ export async function createOrUpdateCompanyProfile(
 
     // 9. Revalidate dashboard paths
     revalidatePath('/dashboard');
-    revalidatePath('/dashboard/company-setup');
+    revalidatePath('/onboarding/company-setup');
 
     return {
       success: true,
