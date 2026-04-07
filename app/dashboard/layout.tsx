@@ -4,7 +4,6 @@ import { redirect } from "next/navigation";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
-import { getUnifiedSubscriptionStatus } from "@/lib/billing/subscriptionStatus";
 
 export default async function DashboardLayout({
   children,
@@ -31,19 +30,6 @@ export default async function DashboardLayout({
   if (resolved.isOwner && company.profile_completed === false) {
     redirect("/onboarding/company-setup?reason=complete_profile");
   }
-  if (resolved.isOwner) {
-    const status = await getUnifiedSubscriptionStatus({
-      supabase: admin as any,
-      companyId: resolved.companyId,
-    });
-    const hasOperationalAccess =
-      status.status === "active" || status.status === "pending";
-
-    if (!hasOperationalAccess) {
-      redirect("/dashboard/settings?onboarding=trial_activation");
-    }
-  }
-
   return (
     <div className="flex h-screen bg-[linear-gradient(180deg,#062C2D_0%,#083B3C_100%)]">
       <Sidebar />
