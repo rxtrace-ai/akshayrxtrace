@@ -58,31 +58,65 @@ export async function markOTPVerified(id: string, supabase: SupabaseClient) {
     .eq('id', id);
 }
 
-export async function sendOTPEmail(email: string, otp: string) {
+async function sendViaResend(params: { from: string; to: string; subject: string; html: string }) {
   const resendApiKey = process.env.RESEND_API_KEY;
-  const resendFrom = process.env.RESEND_FROM || 'RxTrace India <onboarding@resend.dev>';
+  if (!resendApiKey) {
+    throw new Error('RESEND_API_KEY_MISSING');
+  }
 
-  if (resendApiKey) {
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${resendApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: resendFrom,
-        to: [email],
-        subject: 'Your RxTrace Email Verification Code',
-        html: getEmailHtml(otp),
-      }),
-    });
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${resendApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: params.from,
+      to: [params.to],
+      subject: params.subject,
+      html: params.html,
+    }),
+  });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({} as any));
-      throw new Error(`Resend API error (${response.status}): ${errorData.message || response.statusText}`);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({} as any));
+    throw new Error(`Resend API error (${response.status}): ${errorData.message || response.statusText}`);
+  }
+}
+
+async function sendViaResendWithRetry(params: { from: string; to: string; subject: string; html: string }) {
+  const attempts = 2;
+  let lastError: unknown = null;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      await sendViaResend(params);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
     }
+  }
+  throw lastError ?? new Error('RESEND_SEND_FAILED');
+}
 
+export async function sendOTPEmail(email: string, otp: string) {
+  const resendFrom = String(process.env.RESEND_FROM || 'RxTrace India <noreply@rxtrace.in>').trim();
+  const subject = 'Your RxTrace Email Verification Code';
+  const html = getEmailHtml(otp);
+
+  try {
+    await sendViaResendWithRetry({ from: resendFrom, to: email, subject, html });
     return;
+  } catch (resendError) {
+    const hasSmtp = Boolean(process.env.SMTP_USER && process.env.SMTP_PASSWORD);
+    if (!hasSmtp && String(resendError).includes('RESEND_API_KEY_MISSING')) {
+      throw new Error('Email not configured. Set RESEND_API_KEY (recommended) or SMTP_USER/SMTP_PASSWORD (SMTP fallback).');
+    }
+    if (!hasSmtp) {
+      throw resendError;
+    }
   }
 
   if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
@@ -103,10 +137,10 @@ export async function sendOTPEmail(email: string, otp: string) {
   });
 
   await transporter.sendMail({
-    from: `"RxTrace India" <${process.env.SMTP_USER}>`,
+    from: process.env.EMAIL_FROM || `"RxTrace India" <${process.env.SMTP_USER}>`,
     to: email,
-    subject: 'Your RxTrace Email Verification Code',
-    html: getEmailHtml(otp),
+    subject,
+    html,
   });
 }
 
