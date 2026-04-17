@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse  } from 'next/server';
 import { apiJson } from '@/lib/api/response';
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
-import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
+import { getCompanyEntitlementSnapshot, type EntitlementSnapshot } from "@/lib/entitlement/canonical";
 import { getUnifiedSubscriptionStatus } from "@/lib/billing/subscriptionStatus";
+import { TRIAL_LIMITS } from "@/lib/trial";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,6 +40,37 @@ function normalizeStatus(value: unknown): "active" | "pending" | "expired" | "ca
 function toSafeInt(value: unknown): number {
   const parsed = Math.trunc(Number(value ?? 0));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function applyTrialLimitFallback(
+  entitlement: EntitlementSnapshot,
+  hasPaidSubscription: boolean
+): EntitlementSnapshot {
+  if (!entitlement.trial_active || hasPaidSubscription) {
+    return entitlement;
+  }
+
+  const metricKeys = Object.keys(TRIAL_LIMITS) as Array<keyof typeof TRIAL_LIMITS>;
+  const limits = { ...entitlement.limits };
+  const remaining = { ...entitlement.remaining };
+
+  for (const key of metricKeys) {
+    const fallbackLimit = Math.max(0, Math.trunc(TRIAL_LIMITS[key] ?? 0));
+    const currentLimit = Math.max(0, Math.trunc(entitlement.limits[key] ?? 0));
+    const nextLimit = Math.max(currentLimit, fallbackLimit);
+    const currentUsage = Math.max(0, Math.trunc(entitlement.usage[key] ?? 0));
+    limits[key] = nextLimit;
+    remaining[key] = Math.max(
+      Math.max(0, Math.trunc(entitlement.remaining[key] ?? 0)),
+      Math.max(0, nextLimit - currentUsage)
+    );
+  }
+
+  return {
+    ...entitlement,
+    limits,
+    remaining,
+  };
 }
 
 function parseView(value: string | null): SummaryView {
@@ -92,6 +124,7 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
   ]);
 
   const currentSubscription = subscriptionStatus.subscription ?? null;
+  const effectiveEntitlement = applyTrialLimitFallback(entitlement, Boolean(currentSubscription));
   const subTemplate = (currentSubscription as any)?.subscription_plan_templates || null;
   const nowTs = Date.now();
 
@@ -141,11 +174,11 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
 
   const codeTypes = ["unit", "box", "carton", "pallet"] as const;
   const quotaTable = codeTypes.map((metric) => {
-    const allocated = Math.max(0, Math.trunc(entitlement.limits?.[metric] ?? 0));
-    const addonAllocated = Math.max(0, Math.trunc(entitlement.topups?.[metric] ?? 0));
+    const allocated = Math.max(0, Math.trunc(effectiveEntitlement.limits?.[metric] ?? 0));
+    const addonAllocated = Math.max(0, Math.trunc(effectiveEntitlement.topups?.[metric] ?? 0));
     const subscriptionAllocated = Math.max(0, allocated - addonAllocated);
-    const consumed = Math.max(0, Math.trunc(entitlement.usage?.[metric] ?? 0));
-    const remaining = Math.max(0, Math.trunc(entitlement.remaining?.[metric] ?? 0));
+    const consumed = Math.max(0, Math.trunc(effectiveEntitlement.usage?.[metric] ?? 0));
+    const remaining = Math.max(0, Math.trunc(effectiveEntitlement.remaining?.[metric] ?? 0));
     return {
       metric,
       allocated,
@@ -198,10 +231,10 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
         const addonAllocated = addonCapacityByMetric[metric] || 0;
         const allocated = Math.max(
           subscriptionAllocated + addonAllocated,
-          Math.max(0, Math.trunc(entitlement.limits?.[metric] ?? 0))
+          Math.max(0, Math.trunc(effectiveEntitlement.limits?.[metric] ?? 0))
         );
-        const consumed = Math.max(0, Math.trunc(entitlement.usage?.[metric] ?? 0));
-        const remaining = Math.max(0, Math.trunc(entitlement.remaining?.[metric] ?? 0));
+        const consumed = Math.max(0, Math.trunc(effectiveEntitlement.usage?.[metric] ?? 0));
+        const remaining = Math.max(0, Math.trunc(effectiveEntitlement.remaining?.[metric] ?? 0));
         return {
           metric,
           allocated,
@@ -226,14 +259,14 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       if (["cancelled", "expired"].includes(subscriptionStatus.status)) {
         return { blocked: true, code: "NO_ACTIVE_SUBSCRIPTION" as const };
       }
-      if ((entitlement.remaining.seat ?? 0) <= 0) return { blocked: true, code: "QUOTA_EXHAUSTED" as const };
+      if ((effectiveEntitlement.remaining.seat ?? 0) <= 0) return { blocked: true, code: "QUOTA_EXHAUSTED" as const };
       return { blocked: false, code: null };
     })(),
     plants: (() => {
       if (["cancelled", "expired"].includes(subscriptionStatus.status)) {
         return { blocked: true, code: "NO_ACTIVE_SUBSCRIPTION" as const };
       }
-      if ((entitlement.remaining.plant ?? 0) <= 0) return { blocked: true, code: "QUOTA_EXHAUSTED" as const };
+      if ((effectiveEntitlement.remaining.plant ?? 0) <= 0) return { blocked: true, code: "QUOTA_EXHAUSTED" as const };
       return { blocked: false, code: null };
     })(),
   };
@@ -241,9 +274,9 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
   const responseBody: Record<string, unknown> = {
     success: true,
     trial: {
-      active: entitlement.trial_active,
-      expires_at: entitlement.trial_expires_at,
-      days_remaining: entitlement.trial_active ? daysRemaining(entitlement.trial_expires_at) : 0,
+      active: effectiveEntitlement.trial_active,
+      expires_at: effectiveEntitlement.trial_expires_at,
+      days_remaining: effectiveEntitlement.trial_active ? daysRemaining(effectiveEntitlement.trial_expires_at) : 0,
     },
     subscription: currentSubscription
       ? {
@@ -267,7 +300,7 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       source: subscriptionStatus.source,
       trialExpiresAt: subscriptionStatus.trialExpiresAt ? subscriptionStatus.trialExpiresAt.toISOString() : null,
     },
-    entitlement,
+    entitlement: effectiveEntitlement,
     decisions,
   };
 
@@ -297,10 +330,10 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       created_at: row.created_at,
     }));
     responseBody.company = { id: owner.companyId, name: owner.companyName };
-    responseBody.state = entitlement.state;
+    responseBody.state = effectiveEntitlement.state;
     responseBody.period = {
-      start: entitlement.period_start,
-      end: entitlement.period_end,
+      start: effectiveEntitlement.period_start,
+      end: effectiveEntitlement.period_end,
     };
     responseBody.total_quota = Math.max(0, Math.trunc(totalQuota));
     responseBody.quota_table = quotaTable;
@@ -316,10 +349,10 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       duration_days: row.add_ons?.duration_days ?? null,
     }));
     responseBody.add_on_balances = {
-      unit: entitlement.topups?.unit ?? 0,
-      box: entitlement.topups?.box ?? 0,
-      carton: entitlement.topups?.carton ?? 0,
-      pallet: entitlement.topups?.pallet ?? 0,
+      unit: effectiveEntitlement.topups?.unit ?? 0,
+      box: effectiveEntitlement.topups?.box ?? 0,
+      carton: effectiveEntitlement.topups?.carton ?? 0,
+      pallet: effectiveEntitlement.topups?.pallet ?? 0,
     };
     responseBody.invoices = invoices;
     responseBody.subscription_invoices = invoices.filter((row) => String((row as any).invoice_type || "").trim().toLowerCase() === "subscription");
