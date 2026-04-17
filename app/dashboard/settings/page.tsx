@@ -231,9 +231,9 @@ export default function SettingsPage() {
     entitlementSummary?.subscriptionStatus?.source === "subscription" ||
     entitlementSummary?.subscription?.status === "active";
   const subscriptionCancelled = entitlementSummary?.subscriptionStatus?.status === "cancelled";
-  const trialActive =
-    entitlementSummary?.subscriptionStatus?.source === "trial" &&
-    entitlementSummary?.subscriptionStatus?.status === "active";
+  const trialActive = Boolean(
+    entitlementSummary?.trial?.active ?? entitlementSummary?.entitlement?.trial_active
+  ) && !hasActiveSubscription;
   const trialWasAlreadyUsed = Boolean(entitlementSummary?.trial?.expires_at);
   const generationEnabled = !subscriptionCancelled && (hasActiveSubscription || trialActive);
   const trialBadgeLabel = trialActive
