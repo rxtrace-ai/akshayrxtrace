@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type UnifiedSubscriptionStatus = {
   status: "active" | "pending" | "expired" | "cancelled";
+  source: "trial" | "subscription" | null;
   trialExpiresAt?: Date;
   subscription?: Record<string, any>;
 };
@@ -77,6 +78,7 @@ export async function getUnifiedSubscriptionStatus(params: {
         .eq("id", (activeSub as any).id);
       return {
         status: "expired",
+        source: "subscription",
         subscription: {
           ...(activeSub as any),
           status: "expired",
@@ -86,6 +88,7 @@ export async function getUnifiedSubscriptionStatus(params: {
 
     return {
       status: normalized,
+      source: "subscription",
       subscription: activeSub as any,
     };
   }
@@ -93,8 +96,8 @@ export async function getUnifiedSubscriptionStatus(params: {
   const trialExpiresAtIso = (trialRow as any)?.trial_end ?? null;
   const trialExpiresAt = trialExpiresAtIso ? new Date(trialExpiresAtIso) : null;
   if (trialExpiresAt && !Number.isNaN(trialExpiresAt.getTime()) && trialExpiresAt.getTime() > now.getTime()) {
-    return { status: "active", trialExpiresAt };
+    return { status: "active", source: "trial", trialExpiresAt };
   }
 
-  return { status: "expired" };
+  return { status: "expired", source: trialExpiresAt ? "trial" : null };
 }

@@ -228,21 +228,28 @@ export default function SettingsPage() {
   }
 
   const hasActiveSubscription =
-    entitlementSummary?.subscriptionStatus?.status === "active" ||
+    entitlementSummary?.subscriptionStatus?.source === "subscription" ||
     entitlementSummary?.subscription?.status === "active";
   const subscriptionCancelled = entitlementSummary?.subscriptionStatus?.status === "cancelled";
-  const trialActive = Boolean(entitlementSummary?.entitlement?.trial_active) && !hasActiveSubscription;
+  const trialActive =
+    entitlementSummary?.subscriptionStatus?.source === "trial" &&
+    entitlementSummary?.subscriptionStatus?.status === "active";
   const trialWasAlreadyUsed = Boolean(entitlementSummary?.trial?.expires_at);
   const generationEnabled = !subscriptionCancelled && (hasActiveSubscription || trialActive);
+  const trialBadgeLabel = trialActive
+    ? "Trial Activated"
+    : trialWasAlreadyUsed
+      ? "Trial Expired"
+      : "Trial Inactive";
 
   const accessMessage = useMemo(
     () =>
       subscriptionCancelled
         ? "Subscription cancelled. Renew or subscribe to continue."
         : hasActiveSubscription
-          ? `Active plan: ${entitlementSummary?.subscription?.plan_name || "Subscription"}`
-          : trialActive
-            ? "Trial active (limits apply)"
+          ? `Subscription activated: ${entitlementSummary?.subscription?.plan_name || "Subscription"}`
+        : trialActive
+            ? "Trial activated (limits apply)"
             : "Trial expired. Upgrade to continue",
     [entitlementSummary?.subscription?.plan_name, hasActiveSubscription, subscriptionCancelled, trialActive]
   );
@@ -459,9 +466,9 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-medium">Subscription</h2>
-              <p className="text-sm text-gray-500">Subscription is active. Entitlement is now controlled by your plan and add-ons.</p>
+              <p className="text-sm text-gray-500">Subscription is activated. Entitlement is now controlled by your plan and add-ons.</p>
             </div>
-            <Badge className="bg-green-600 text-white">Active</Badge>
+            <Badge className="bg-green-600 text-white">Subscription Activated</Badge>
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3 text-sm">
@@ -523,7 +530,7 @@ export default function SettingsPage() {
               </p>
             </div>
             <Badge className={`px-3 py-1 text-sm ${trialActive ? "bg-green-600 text-white" : "bg-red-100 text-red-700"}`}>
-              {trialActive ? "Active" : "Expired"}
+              {trialBadgeLabel}
             </Badge>
           </div>
 

@@ -24,6 +24,7 @@ export type SubscriptionSummaryResponse = {
   } | null;
   subscriptionStatus?: {
     status: "active" | "pending" | "expired" | "cancelled";
+    source?: "trial" | "subscription" | null;
     trialExpiresAt: string | null;
   };
   trial?: {

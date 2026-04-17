@@ -264,6 +264,7 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       : null,
     subscriptionStatus: {
       status: subscriptionStatus.status,
+      source: subscriptionStatus.source,
       trialExpiresAt: subscriptionStatus.trialExpiresAt ? subscriptionStatus.trialExpiresAt.toISOString() : null,
     },
     entitlement,

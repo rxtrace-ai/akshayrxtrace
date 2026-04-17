@@ -54,6 +54,7 @@ export async function GET() {
       })),
       subscriptionStatus: {
         status: subscriptionStatus.status,
+        source: subscriptionStatus.source,
         trialExpiresAt: subscriptionStatus.trialExpiresAt ? subscriptionStatus.trialExpiresAt.toISOString() : null,
       },
       current_subscription: currentSubscription

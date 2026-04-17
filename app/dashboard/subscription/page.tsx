@@ -33,6 +33,7 @@ type CheckoutContextPayload = {
   plans: Plan[];
   subscriptionStatus?: {
     status: "active" | "pending" | "expired" | "cancelled";
+    source?: "trial" | "subscription" | null;
     trialExpiresAt: string | null;
   };
   current_subscription: null | {
@@ -71,6 +72,7 @@ type SubscriptionSummary = {
   success: boolean;
   subscriptionStatus?: {
     status: "active" | "pending" | "expired" | "cancelled";
+    source?: "trial" | "subscription" | null;
     trialExpiresAt: string | null;
   };
   subscription: null | {
