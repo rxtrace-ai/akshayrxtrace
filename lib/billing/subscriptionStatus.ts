@@ -24,7 +24,7 @@ export async function getUnifiedSubscriptionStatus(params: {
 
   const { data: trialRow, error: trialError } = await params.supabase
     .from("company_trials")
-    .select("trial_end")
+    .select("trial_end, status")
     .eq("company_id", params.companyId)
     .maybeSingle();
   if (trialError) throw new Error(trialError.message);
@@ -94,9 +94,19 @@ export async function getUnifiedSubscriptionStatus(params: {
   }
 
   const trialExpiresAtIso = (trialRow as any)?.trial_end ?? null;
+  const trialStatus = String((trialRow as any)?.status || "").trim().toLowerCase();
   const trialExpiresAt = trialExpiresAtIso ? new Date(trialExpiresAtIso) : null;
-  if (trialExpiresAt && !Number.isNaN(trialExpiresAt.getTime()) && trialExpiresAt.getTime() > now.getTime()) {
+  if (
+    trialStatus === "active" &&
+    trialExpiresAt &&
+    !Number.isNaN(trialExpiresAt.getTime()) &&
+    trialExpiresAt.getTime() > now.getTime()
+  ) {
     return { status: "active", source: "trial", trialExpiresAt };
+  }
+
+  if (trialStatus === "cancelled") {
+    return { status: "cancelled", source: "trial", trialExpiresAt: trialExpiresAt ?? undefined };
   }
 
   return { status: "expired", source: trialExpiresAt ? "trial" : null };

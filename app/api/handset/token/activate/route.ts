@@ -15,6 +15,7 @@ type ActivationErrorCode =
   | "TOKEN_EXPIRED"
   | "TOKEN_REVOKED"
   | "TOKEN_EXHAUSTED"
+  | "QUOTA_EXCEEDED"
   | "ACTIVATION_FAILED"
   | "SECRET_MISSING";
 
@@ -36,6 +37,8 @@ function activationMessage(code: ActivationErrorCode): string {
       return "Activation token has been revoked.";
     case "TOKEN_EXHAUSTED":
       return "Activation token has reached max activations.";
+    case "QUOTA_EXCEEDED":
+      return "Handset quota has been reached for this company.";
     case "SECRET_MISSING":
       return "Server configuration missing signing secret.";
     default:
@@ -47,6 +50,7 @@ function activationStatus(code: ActivationErrorCode): number {
   if (code === "RATE_LIMITED") return 429;
   if (code === "ACTIVATION_FAILED" || code === "SECRET_MISSING") return 500;
   if (code === "FEATURE_DISABLED") return 403;
+  if (code === "QUOTA_EXCEEDED") return 403;
   return 400;
 }
 
@@ -71,10 +75,17 @@ function inferActivationCode(input: unknown): ActivationErrorCode | null {
   if (text.includes("TOKEN_EXHAUSTED")) return "TOKEN_EXHAUSTED";
   if (text.includes("TOKEN_NOT_FOUND")) return "INVALID_TOKEN";
   if (text.includes("INVALID_TOKEN")) return "INVALID_TOKEN";
+  if (text.includes("HANDSET_QUOTA_EXCEEDED")) return "QUOTA_EXCEEDED";
+  if (text.includes("QUOTA_EXCEEDED")) return "QUOTA_EXCEEDED";
   if (text.includes("INVALID_DEVICE_ID")) return "INVALID_DEVICE_ID";
   if (text.includes("INVALID_PLATFORM")) return "INVALID_PLATFORM";
   if (text.includes("RATE_LIMITED")) return "RATE_LIMITED";
   return null;
+}
+
+function extractRemainingHandsets(snapshot: any): number {
+  const remaining = Number(snapshot?.remaining?.handset ?? 0);
+  return Number.isFinite(remaining) ? Math.max(0, Math.trunc(remaining)) : 0;
 }
 
 function logActivation(event: string, meta: Record<string, unknown>) {
@@ -104,6 +115,30 @@ async function activateHandsetFallback(params: {
   if (tokenRow.revoked_at) throw new Error("TOKEN_REVOKED");
   if (new Date(tokenRow.expires_at).getTime() <= Date.now()) throw new Error("TOKEN_EXPIRED");
 
+  const { data: existing, error: existingErr } = await supabase
+    .from("handsets")
+    .select("id, status, disabled_at")
+    .eq("company_id", tokenRow.company_id)
+    .eq("device_id", deviceId)
+    .maybeSingle();
+  if (existingErr) throw new Error(`FALLBACK_HANDSET_QUERY_FAILED:${String(existingErr.message || existingErr)}`);
+
+  const existingIsActive =
+    Boolean(existing?.id) &&
+    String(existing?.status || "").toUpperCase() === "ACTIVE" &&
+    !existing?.disabled_at;
+
+  if (!existingIsActive) {
+    const { data: snapshot, error: snapshotErr } = await supabase.rpc("get_company_entitlement_snapshot", {
+      p_company_id: tokenRow.company_id,
+      p_at: new Date().toISOString(),
+    });
+    if (snapshotErr) throw new Error(`FALLBACK_ENTITLEMENT_QUERY_FAILED:${String(snapshotErr.message || snapshotErr)}`);
+    if (extractRemainingHandsets(Array.isArray(snapshot) ? snapshot[0] : snapshot) <= 0) {
+      throw new Error("HANDSET_QUOTA_EXCEEDED");
+    }
+  }
+
   const activationCount = Number(tokenRow.activation_count || 0);
   const maxActivations = Number(tokenRow.max_activations || 0);
   if (activationCount >= maxActivations) throw new Error("TOKEN_EXHAUSTED");
@@ -120,14 +155,6 @@ async function activateHandsetFallback(params: {
   const normalizedDeviceFingerprint = deviceId;
 
   let handsetId = "";
-  const { data: existing, error: existingErr } = await supabase
-    .from("handsets")
-    .select("id")
-    .eq("company_id", tokenRow.company_id)
-    .eq("device_id", deviceId)
-    .maybeSingle();
-  if (existingErr) throw new Error(`FALLBACK_HANDSET_QUERY_FAILED:${String(existingErr.message || existingErr)}`);
-
   if (existing?.id) {
     const { data: updated, error: updErr } = await supabase
       .from("handsets")

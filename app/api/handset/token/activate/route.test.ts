@@ -6,6 +6,8 @@ const mockState = vi.hoisted(() => ({
   rateAllowed: true,
   rpcData: null as any,
   rpcError: null as any,
+  snapshotData: { remaining: { handset: 2 } } as any,
+  snapshotError: null as any,
   tokenRow: {
     id: "token-1",
     company_id: "company-1",
@@ -44,7 +46,12 @@ vi.mock("@/lib/handset-v2/auth", () => ({
 vi.mock("@/lib/supabase/admin", () => ({
   getSupabaseAdmin: () => {
     const supabase: any = {
-      rpc: async () => ({ data: mockState.rpcData, error: mockState.rpcError }),
+      rpc: async (fn: string) => {
+        if (fn === "get_company_entitlement_snapshot") {
+          return { data: mockState.snapshotData, error: mockState.snapshotError };
+        }
+        return { data: mockState.rpcData, error: mockState.rpcError };
+      },
       from: (table: string) => {
         if (table === "handset_activation_tokens") {
           return {
@@ -116,6 +123,8 @@ describe("POST /api/handset/token/activate", () => {
     mockState.secretMissing = false;
     mockState.rateAllowed = true;
     mockState.rpcError = null;
+    mockState.snapshotData = { remaining: { handset: 2 } };
+    mockState.snapshotError = null;
     mockState.rpcData = {
       handset_id: "handset-1",
       company_id: "company-1",
@@ -195,5 +204,35 @@ describe("POST /api/handset/token/activate", () => {
     expect(json.handset_id).toBe("handset-fallback-ok");
     expect(json.device_auth_token).toBe("device.jwt.token");
   });
-});
 
+  it("maps handset quota errors to structured API errors", async () => {
+    mockState.rpcData = null;
+    mockState.rpcError = { message: "HANDSET_QUOTA_EXCEEDED" };
+
+    const { res, json } = await callActivate({
+      token: "RX-ABC123-DEF456",
+      device_id: "00000000-0000-4000-8000-000000000001",
+      platform: "android",
+    });
+
+    expect(res.status).toBe(403);
+    expect(json.success).toBe(false);
+    expect(json.error.code).toBe("QUOTA_EXCEEDED");
+  });
+
+  it("enforces handset quota in fallback mode", async () => {
+    mockState.rpcData = null;
+    mockState.rpcError = { message: "function activate_handset_v2 does not exist", code: "42883" };
+    mockState.snapshotData = { remaining: { handset: 0 } };
+
+    const { res, json } = await callActivate({
+      token: "RX-ABC123-DEF456",
+      device_id: "00000000-0000-4000-8000-000000000001",
+      platform: "android",
+    });
+
+    expect(res.status).toBe(403);
+    expect(json.success).toBe(false);
+    expect(json.error.code).toBe("QUOTA_EXCEEDED");
+  });
+});
