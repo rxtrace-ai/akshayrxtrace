@@ -30,7 +30,7 @@ export const TRIAL_LIMITS: TrialLimits = {
   pallet: TRIAL_CONFIG.pallet_limit,
   seat: TRIAL_CONFIG.seat_limit,
   plant: TRIAL_CONFIG.plant_limit,
-  handset: 0,
+  handset: 2,
 };
 
 export type TrialUsageTotals = {

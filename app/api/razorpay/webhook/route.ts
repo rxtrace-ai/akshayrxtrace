@@ -23,7 +23,7 @@ const TRIAL_QUOTAS = {
   pallet: 25,
   seats: 5,
   plants: 2,
-  handsets: 0,
+  handsets: 2,
 } as const;
 
 const SUPPORTED_WEBHOOK_EVENTS = new Set([
