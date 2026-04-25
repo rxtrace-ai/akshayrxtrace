@@ -14,7 +14,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const TRIAL_AMOUNT_PAISE = 100;
-const TRIAL_DURATION_DAYS = 10;
+const TRIAL_DURATION_DAYS = 3;
 
 const TRIAL_QUOTAS = {
   unit: 5000,

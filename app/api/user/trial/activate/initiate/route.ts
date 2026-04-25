@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const TRIAL_AMOUNT_PAISE = 100; // ₹1
-const TRIAL_DURATION_DAYS = 10;
+const TRIAL_DURATION_DAYS = 3;
 
 function normalizeIdempotencyKey(value: unknown): string {
   return String(value || "").trim();
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
       currency: "INR",
       receipt,
       notes: {
-        plan: "10_day_trial",
+        plan: "3_day_trial",
         purpose,
         company_id: owner.companyId,
         owner_user_id: owner.userId,

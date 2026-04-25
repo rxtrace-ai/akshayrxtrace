@@ -22,7 +22,7 @@ export default function CancellationPolicyPage() {
           <section>
             <h2 className="text-2xl font-semibold text-[#083B3C]">Trial Cancellation</h2>
             <p className="mt-4 text-sm leading-7 text-[#4E6769]">
-              You can cancel your 10-day trial from the dashboard settings while it is active. Cancellation takes effect immediately and trial access ends at once.
+              You can cancel your 3-day trial from the dashboard settings while it is active. Cancellation takes effect immediately and trial access ends at once.
             </p>
             <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-7 text-[#4E6769]">
               <li>Cancel from Dashboard to Settings to Trial.</li>

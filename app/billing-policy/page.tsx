@@ -22,10 +22,10 @@ export default function BillingPolicyPage() {
           <section>
             <h2 className="text-2xl font-semibold text-[#083B3C]">Trial Activation</h2>
             <p className="mt-4 text-sm leading-7 text-[#4E6769]">
-              Rxtrace offers a 10-day trial that is activated through an INR 1 Razorpay payment. The trial starts only after payment confirmation and webhook processing.
+              Rxtrace offers a 3-day trial that is activated through an INR 1 Razorpay payment. The trial starts only after payment confirmation and webhook processing.
             </p>
             <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-7 text-[#4E6769]">
-              <li>Trial duration is 10 days.</li>
+              <li>Trial duration is 3 days.</li>
               <li>Trial activation amount is INR 1.</li>
               <li>Trial access starts after payment confirmation.</li>
               <li>Commercial subscription charges apply only if you choose a paid plan later.</li>

@@ -83,7 +83,7 @@ export default function SignUp() {
       <Card className="w-full max-w-md p-8 shadow-2xl">
         <CardHeader className="mb-6 text-center">
           <CardTitle className="text-3xl font-bold text-[#0052CC]">Create Account</CardTitle>
-          <p className="mt-2 text-gray-600">Start your 10-day trial. Activation is confirmed through an INR 1 payment.</p>
+          <p className="mt-2 text-gray-600">Start your 3-day trial. Activation is confirmed through an INR 1 payment.</p>
         </CardHeader>
 
         <CardContent>

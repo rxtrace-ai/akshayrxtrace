@@ -526,7 +526,7 @@ export default function SettingsPage() {
             <div>
               <h2 className="text-xl font-medium">Trial</h2>
               <p className="text-sm text-gray-500">
-                Activate your 10-day trial by completing a INR 1 Razorpay payment. Trial starts only after webhook confirmation.
+                Activate your 3-day trial by completing a INR 1 Razorpay payment. Trial starts only after webhook confirmation.
               </p>
             </div>
             <Badge className={`px-3 py-1 text-sm ${trialActive ? "bg-green-600 text-white" : "bg-red-100 text-red-700"}`}>

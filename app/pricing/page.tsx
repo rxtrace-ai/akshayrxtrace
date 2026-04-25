@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const planHighlights = [
-  "10-day guided trial activation for INR 1",
+  "3-day guided trial activation for INR 1",
   "GTIN or PIC-based product traceability",
   "Unit, box, carton, and pallet hierarchy",
   "Verification history and audit-ready records",
@@ -28,21 +28,21 @@ const planMarketingByName: Record<
 > = {
   starter: {
     featured: false,
-    cta: "Start 10-Day Trial",
+    cta: "Start 3-Day Trial",
     href: "/auth/signup",
     fallbackDescription: "For pilot teams starting product traceability with a focused rollout.",
     extraItems: ["GTIN and PIC workflows", "Reports and traceability history"],
   },
   growth: {
     featured: true,
-    cta: "Start 10-Day Trial",
+    cta: "Start 3-Day Trial",
     href: "/auth/signup",
     fallbackDescription: "For growing operations that need more team capacity and higher monthly volume.",
     extraItems: ["Everything in Starter", "Guided rollout support"],
   },
   scale: {
     featured: false,
-    cta: "Start 10-Day Trial",
+    cta: "Start 3-Day Trial",
     href: "/auth/signup",
     fallbackDescription: "For multi-site operations that need stronger throughput and rollout control.",
     extraItems: ["Priority onboarding support", "Advanced rollout planning"],
@@ -53,7 +53,7 @@ const faqItems = [
   {
     question: "How does the trial work?",
     answer:
-      "You sign up, complete company setup, and activate the 10-day trial through an INR 1 Razorpay payment. Trial access starts after payment confirmation.",
+      "You sign up, complete company setup, and activate the 3-day trial through an INR 1 Razorpay payment. Trial access starts after payment confirmation.",
   },
   {
     question: "Is the INR 1 trial refundable?",
@@ -149,7 +149,7 @@ function buildComparisonRows(planCards: PricingCard[], hasAddOns: boolean) {
   const valuesFor = (mapper: (plan: PricingCard) => string) => planCards.map(mapper);
 
   return [
-    ["10-day trial available", ...valuesFor(() => "Yes"), "Sales-led"],
+    ["3-day trial available", ...valuesFor(() => "Yes"), "Sales-led"],
     ["Trial activation", ...valuesFor(() => "INR 1"), "Custom"],
     ["GTIN workflow support", ...valuesFor(() => "Yes"), "Yes"],
     ["PIC workflow support", ...valuesFor(() => "Yes"), "Yes"],
@@ -229,7 +229,7 @@ export default async function PricingPage() {
         <div className="mx-auto max-w-7xl px-6 py-20">
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">Pricing</p>
           <h1 className="mt-4 max-w-4xl text-4xl font-semibold tracking-tight md:text-5xl">
-            Start with a 10-day trial, then scale with your operations
+            Start with a 3-day trial, then scale with your operations
           </h1>
           <p className="mt-6 max-w-3xl text-lg leading-8 text-[#D7EAEA]">
             Rxtrace pricing is built for teams that need real product traceability, anti-counterfeit protection,
@@ -240,7 +240,7 @@ export default async function PricingPage() {
               href="/auth/signup"
               className="inline-flex items-center justify-center rounded-xl bg-[#F59E0B] px-6 py-3 text-sm font-semibold text-[#083B3C] transition hover:bg-[#F7B733]"
             >
-              Start 10-Day Trial
+              Start 3-Day Trial
             </Link>
             <Link
               href="/#book-demo"
@@ -274,7 +274,7 @@ export default async function PricingPage() {
             </p>
             <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
               <div className="text-sm font-semibold text-[#F7C35F]">Trial details</div>
-              <p className="mt-3 text-sm leading-6 text-[#D7EAEA]">10-day access window</p>
+              <p className="mt-3 text-sm leading-6 text-[#D7EAEA]">3-day access window</p>
               <p className="mt-1 text-sm leading-6 text-[#D7EAEA]">INR 1 activation through Razorpay</p>
               <p className="mt-1 text-sm leading-6 text-[#D7EAEA]">Starts after payment confirmation</p>
             </div>
@@ -282,7 +282,7 @@ export default async function PricingPage() {
               href="/auth/signup"
               className="mt-8 inline-flex items-center justify-center rounded-xl bg-[#F59E0B] px-6 py-3 text-sm font-semibold text-[#083B3C] transition hover:bg-[#F7B733]"
             >
-              Start 10-Day Trial
+              Start 3-Day Trial
             </Link>
           </div>
         </div>
