@@ -396,7 +396,7 @@ async function syncQuoteBackedSubscriptionFromWebhook(params: {
   }
 
   const providerPaymentId = extractPaymentId(event);
-  const shouldFinalize = ["subscription.authenticated", "subscription.activated", "subscription.charged", "invoice.paid"].includes(eventType);
+  const shouldFinalize = eventType === "invoice.paid";
 
   if (eventType === "invoice.payment_failed") {
     const { error: intentFailureError } = await supabase
@@ -492,6 +492,25 @@ export async function POST(req: Request) {
     const eventId = extractWebhookEventId(headersList, event, eventType);
     const correlationId = extractWebhookCorrelationId(event, eventId);
     const supabase = getSupabaseAdmin();
+    const { data: webhookResult, error: webhookEventError } = await supabase.rpc("process_razorpay_webhook_event", {
+      p_event_id: eventId,
+      p_event_type: event.event,
+      p_payload: event,
+      p_correlation_id: correlationId,
+    });
+    if (webhookEventError) {
+      console.error("Webhook event RPC error:", webhookEventError);
+      return jsonResponse({ ok: false, error: "WEBHOOK_EVENT_RPC_FAILED", event_id: eventId }, 500);
+    }
+
+    if (Boolean((webhookResult as any)?.duplicate)) {
+      return jsonResponse({
+        ok: true,
+        event_id: eventId,
+        duplicate: true,
+        event_type: eventType,
+      });
+    }
 
     if (eventType === "payment.captured" || eventType === "order.paid") {
       const payment = event?.payload?.payment?.entity;
@@ -572,17 +591,6 @@ export async function POST(req: Request) {
         console.error("Webhook subscription sync error:", subscriptionSyncError);
         return jsonResponse({ ok: false, error: "SUBSCRIPTION_SYNC_FAILED", event_id: eventId }, 500);
       }
-    }
-
-    const { data: webhookResult, error: webhookEventError } = await supabase.rpc("process_razorpay_webhook_event", {
-      p_event_id: eventId,
-      p_event_type: event.event,
-      p_payload: event,
-      p_correlation_id: correlationId,
-    });
-    if (webhookEventError) {
-      console.error("Webhook event RPC error:", webhookEventError);
-      return jsonResponse({ ok: false, error: "WEBHOOK_EVENT_RPC_FAILED", event_id: eventId }, 500);
     }
 
     return jsonResponse({

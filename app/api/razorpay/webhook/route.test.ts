@@ -261,8 +261,120 @@ describe("POST /api/razorpay/webhook", () => {
     expect(res.status).toBe(200);
     expect(json.ok).toBe(true);
     expect(json.duplicate).toBe(true);
+    expect(mockState.finalizeCalls).toHaveLength(0);
+  });
+
+  it("syncs subscription.authenticated without activating the quote", async () => {
+    const event = {
+      event: "subscription.authenticated",
+      created_at: 1711497600,
+      payload: {
+        subscription: {
+          entity: {
+            id: "sub_123",
+            status: "authenticated",
+            customer_id: "cust_123",
+            current_start: 1711497600,
+            current_end: 1714089600,
+            charge_at: 1714089600,
+            notes: {
+              correlation_id: "corr_authenticated",
+            },
+          },
+        },
+      },
+    };
+    const payload = JSON.stringify(event);
+    mockState.headerStore = new Headers({
+      "x-razorpay-signature": signPayload(payload),
+      "x-razorpay-event-id": "evt_authenticated_1",
+    });
+
+    const { POST } = await import("@/app/api/razorpay/webhook/route");
+    const req = new Request("http://localhost/api/razorpay/webhook", {
+      method: "POST",
+      body: payload,
+    });
+
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(mockState.finalizeCalls).toHaveLength(0);
+    expect(mockState.paymentIntentUpdates).toHaveLength(0);
+    expect(mockState.subscriptionInserts).toHaveLength(1);
+    expect(mockState.subscriptionInserts[0]).toMatchObject({
+      company_id: "company-1",
+      status: "active",
+      provider_subscription_id: "sub_123",
+    });
+  });
+
+  it("finalizes the quote only after invoice.paid and keeps replay safe", async () => {
+    const event = {
+      event: "invoice.paid",
+      created_at: 1711497600,
+      payload: {
+        invoice: {
+          entity: {
+            id: "inv_paid_1",
+            subscription_id: "sub_123",
+            payment_id: "pay_paid_1",
+            amount: 99900,
+            period_start: 1711497600,
+            period_end: 1714089600,
+            notes: {
+              correlation_id: "corr_invoice_paid",
+            },
+          },
+        },
+      },
+    };
+    const payload = JSON.stringify(event);
+
+    mockState.headerStore = new Headers({
+      "x-razorpay-signature": signPayload(payload),
+      "x-razorpay-event-id": "evt_invoice_paid_1",
+    });
+
+    const { POST } = await import("@/app/api/razorpay/webhook/route");
+    const firstReq = new Request("http://localhost/api/razorpay/webhook", {
+      method: "POST",
+      body: payload,
+    });
+    const firstRes = await POST(firstReq);
+    const firstJson = await firstRes.json();
+
+    expect(firstRes.status).toBe(200);
+    expect(firstJson.ok).toBe(true);
     expect(mockState.finalizeCalls).toHaveLength(1);
     expect(mockState.finalizeCalls[0].quoteId).toBe("quote-1");
+    expect(mockState.paymentIntentUpdates).toHaveLength(1);
+    expect(mockState.paymentIntentUpdates[0]).toMatchObject({
+      status: "paid",
+      provider_subscription_id: "sub_123",
+      razorpay_payment_id: "pay_paid_1",
+    });
+
+    mockState.rpcDuplicate = true;
+    mockState.headerStore = new Headers({
+      "x-razorpay-signature": signPayload(payload),
+      "x-razorpay-event-id": "evt_invoice_paid_1",
+    });
+
+    const replayReq = new Request("http://localhost/api/razorpay/webhook", {
+      method: "POST",
+      body: payload,
+    });
+    const replayRes = await POST(replayReq);
+    const replayJson = await replayRes.json();
+
+    expect(replayRes.status).toBe(200);
+    expect(replayJson.ok).toBe(true);
+    expect(replayJson.duplicate).toBe(true);
+    expect(mockState.finalizeCalls).toHaveLength(1);
+    expect(mockState.paymentIntentUpdates).toHaveLength(1);
   });
 
   it("handles out-of-order invoice.payment_failed without finalizing the quote", async () => {

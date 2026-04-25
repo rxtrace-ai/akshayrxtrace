@@ -16,6 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { buildCancelSubscriptionRequest } from "@/lib/billing/cancelSubscriptionClient";
 
 type Plan = {
   template_id: string;
@@ -224,9 +225,9 @@ export default function SubscriptionPage() {
     setError(null);
     setMessage(null);
     try {
+      const request = buildCancelSubscriptionRequest();
       const res = await fetch("/api/user/subscription/cancel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        ...request.init,
       });
       const payload = await res.json();
       if (!res.ok || !payload.success) {

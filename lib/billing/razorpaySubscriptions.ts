@@ -24,6 +24,36 @@ export type RazorpaySubscriptionEntity = {
   notes?: Record<string, string> | null;
 };
 
+export type RazorpayOrderEntity = {
+  id: string;
+  status?: string | null;
+  amount_paid?: number | null;
+  amount_due?: number | null;
+  currency?: string | null;
+  notes?: Record<string, string> | null;
+};
+
+export type RazorpayPaymentEntity = {
+  id: string;
+  status?: string | null;
+  amount?: number | null;
+  order_id?: string | null;
+  invoice_id?: string | null;
+  subscription_id?: string | null;
+  notes?: Record<string, string> | null;
+};
+
+export type RazorpayInvoiceEntity = {
+  id: string;
+  status?: string | null;
+  payment_id?: string | null;
+  order_id?: string | null;
+  subscription_id?: string | null;
+  amount?: number | null;
+  paid_at?: number | null;
+  expired_at?: number | null;
+};
+
 type CreateRazorpaySubscriptionParams = {
   planId: string;
   quoteId: string;
@@ -37,6 +67,11 @@ type CreateRazorpaySubscriptionParams = {
 type CancelRazorpaySubscriptionParams = {
   subscriptionId: string;
   cancelAtCycleEnd?: boolean;
+};
+
+type RazorpayListResponse<T> = {
+  items?: T[] | null;
+  count?: number | null;
 };
 
 function getRazorpayAuthHeader() {
@@ -125,6 +160,31 @@ export async function fetchRazorpaySubscription(subscriptionId: string): Promise
     `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
     { method: "GET" }
   );
+}
+
+export async function fetchRazorpayOrder(orderId: string): Promise<RazorpayOrderEntity> {
+  return await razorpayRequest<RazorpayOrderEntity>(
+    `/v1/orders/${encodeURIComponent(orderId)}`,
+    { method: "GET" }
+  );
+}
+
+export async function fetchRazorpayPaymentsForOrder(orderId: string): Promise<RazorpayPaymentEntity[]> {
+  const response = await razorpayRequest<RazorpayListResponse<RazorpayPaymentEntity>>(
+    `/v1/orders/${encodeURIComponent(orderId)}/payments`,
+    { method: "GET" }
+  );
+  return Array.isArray(response.items) ? response.items : [];
+}
+
+export async function fetchRazorpayInvoicesForSubscription(
+  subscriptionId: string
+): Promise<RazorpayInvoiceEntity[]> {
+  const query = `/v1/invoices?subscription_id=${encodeURIComponent(subscriptionId)}&count=10`;
+  const response = await razorpayRequest<RazorpayListResponse<RazorpayInvoiceEntity>>(query, {
+    method: "GET",
+  });
+  return Array.isArray(response.items) ? response.items : [];
 }
 
 export async function cancelRazorpaySubscription(
