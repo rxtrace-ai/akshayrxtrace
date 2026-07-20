@@ -78,16 +78,20 @@ function formatDate(value: string | null | undefined) {
 
 export default function UnitCodeGenerationPage() {
   const { data: entitlementSummary } = useSubscriptionSummary();
-  const subscriptionState = entitlementSummary?.subscriptionStatus?.status ?? null;
-  const hasActiveSubscription =
-    entitlementSummary?.subscriptionStatus?.status === 'active' ||
-    entitlementSummary?.subscription?.status === 'active';
-  const trialActive = Boolean(entitlementSummary?.entitlement?.trial_active);
-  const subscriptionCancelled = subscriptionState === 'cancelled';
-  const canGenerate = !subscriptionCancelled && (hasActiveSubscription || trialActive);
-  const generationBlockMessage = subscriptionCancelled
-    ? 'Subscription is cancelled. Renew your plan to continue code generation.'
-    : 'Generation is disabled. Trial expired or no active subscription.';
+  const generationDecision = entitlementSummary?.decisions?.generation;
+  const subscriptionActive = entitlementSummary?.subscriptionStatus?.status === 'active';
+  const scheduledToEnd =
+    subscriptionActive &&
+    entitlementSummary?.subscriptionStatus?.source === 'subscription' &&
+    entitlementSummary?.subscriptionStatus?.rawStatus === 'cancelled' &&
+    entitlementSummary?.subscription?.cancel_at_period_end;
+  const canGenerate = generationDecision
+    ? !generationDecision.blocked
+    : subscriptionActive || Boolean(entitlementSummary?.entitlement?.trial_active);
+  const generationBlockMessage =
+    generationDecision?.code === 'QUOTA_EXHAUSTED'
+      ? 'Generation is disabled because your available code quota is exhausted.'
+      : 'Generation is disabled. Trial expired or no active subscription.';
 
   const [items, setItems] = useState<UnitSkuMaster[]>([]);
   const [selectedId, setSelectedId] = useState('');
@@ -245,6 +249,15 @@ export default function UnitCodeGenerationPage() {
           Fixed Unit payload fields now come from SKU Master. If any payload-related value changes, create a new SKU Master record instead of editing an old one.
         </AlertDescription>
       </Alert>
+
+      {scheduledToEnd && (
+        <Alert className="bg-amber-50 border-amber-200">
+          <AlertCircle className="h-4 w-4 text-amber-700" />
+          <AlertDescription className="text-amber-800">
+            Subscription access remains active until {formatDate(entitlementSummary?.subscription?.current_period_end)}.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {error && (
         <Alert variant="destructive">

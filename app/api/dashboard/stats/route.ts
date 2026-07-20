@@ -4,6 +4,8 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
 import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
+import { getOverviewGenerationMetrics } from "@/lib/dashboard/overviewMetrics";
+import { getUnifiedSubscriptionStatus } from "@/lib/billing/subscriptionStatus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,27 +16,29 @@ function toNumber(value: unknown): number {
 }
 
 function getStatusView(params: {
-  subscription: any | null;
+  subscriptionStatus: Awaited<ReturnType<typeof getUnifiedSubscriptionStatus>>;
   entitlement: Awaited<ReturnType<typeof getCompanyEntitlementSnapshot>>;
-  now: Date;
 }) {
-  const { subscription, entitlement, now } = params;
-  const raw = String(subscription?.status || "").trim().toLowerCase();
-  const periodEnd = subscription?.current_period_end ? new Date(subscription.current_period_end) : null;
-  const inAccessPeriod = Boolean(periodEnd && !Number.isNaN(periodEnd.getTime()) && periodEnd.getTime() > now.getTime());
+  const { subscriptionStatus, entitlement } = params;
 
-  const activeSet = new Set(["active", "authenticated", "activated", "charged"]);
-  const paymentDueSet = new Set(["past_due", "payment_due", "unpaid"]);
-  const cancelledSet = new Set(["cancelled", "canceled"]);
-
-  if (activeSet.has(raw)) {
+  if (
+    subscriptionStatus.source === "subscription" &&
+    subscriptionStatus.status === "active" &&
+    subscriptionStatus.rawStatus === "cancelled"
+  ) {
+    return { label: "Active Until End Date", code: "active_until_end_date" as const };
+  }
+  if (subscriptionStatus.source === "subscription" && subscriptionStatus.status === "active") {
     return { label: "Active Subscription", code: "active_subscription" as const };
   }
-  if (paymentDueSet.has(raw)) {
+  if (subscriptionStatus.source === "subscription" && subscriptionStatus.status === "pending") {
     return { label: "Payment Due", code: "payment_due" as const };
   }
-  if (cancelledSet.has(raw) && inAccessPeriod) {
-    return { label: "Active Until End Date", code: "active_until_end_date" as const };
+  if (subscriptionStatus.source === "subscription" && subscriptionStatus.status === "cancelled") {
+    return { label: "Plan Cancelled", code: "subscription_cancelled" as const };
+  }
+  if (subscriptionStatus.source === "subscription" && subscriptionStatus.status === "expired") {
+    return { label: "Plan Expired", code: "subscription_expired" as const };
   }
   if (entitlement.trial_active) {
     return { label: "Trial Active", code: "trial_active" as const };
@@ -64,11 +68,10 @@ async function getOverviewStats(params: {
   debug: boolean;
 }) {
   const { supabase, companyId, companyName, includeActivity, debug } = params;
-  const now = new Date();
 
   const [
     entitlement,
-    subscriptionResult,
+    subscriptionStatus,
     skuMasterResult,
     scansResult,
     seatsResult,
@@ -80,15 +83,7 @@ async function getOverviewStats(params: {
     recentActivity,
   ] = await Promise.all([
     getCompanyEntitlementSnapshot(supabase, companyId),
-    supabase
-      .from("company_subscriptions")
-      .select(
-        "id, status, current_period_start, current_period_end, next_billing_at, start_date, renewal_date, cancel_at_period_end, billing_cycle, subscription_plan_templates(name)"
-      )
-      .eq("company_id", companyId)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+    getUnifiedSubscriptionStatus({ supabase: supabase as any, companyId }),
     supabase
       .from("unit_sku_master")
       .select("id", { count: "exact", head: true })
@@ -109,7 +104,6 @@ async function getOverviewStats(params: {
     includeActivity ? getRecentActivity(supabase, companyId) : Promise.resolve([]),
   ]);
 
-  if (subscriptionResult.error) throw new Error(subscriptionResult.error.message);
   if (skuMasterResult.error) throw new Error(skuMasterResult.error.message);
   if (scansResult.error) throw new Error(scansResult.error.message);
   if (seatsResult.error) throw new Error(seatsResult.error.message);
@@ -119,28 +113,38 @@ async function getOverviewStats(params: {
   if (cartonsResult.error) throw new Error(cartonsResult.error.message);
   if (palletsResult.error) throw new Error(palletsResult.error.message);
 
-  const subscription = subscriptionResult.data || null;
-  const statusView = getStatusView({ subscription, entitlement, now });
+  const subscription = subscriptionStatus.subscription || null;
+  const statusView = getStatusView({ subscriptionStatus, entitlement });
+  const showSubscriptionDetails =
+    subscriptionStatus.source === "subscription" && subscriptionStatus.status === "active";
 
   const units = toNumber(unitsResult.count);
   const boxes = toNumber(boxesResult.count);
   const cartons = toNumber(cartonsResult.count);
   const pallets = toNumber(palletsResult.count);
-  const totalLabelsGenerated = units + boxes + cartons + pallets;
-  const totalSsccGenerated = pallets;
+  const { totalLabelsGenerated, totalSsccGenerated } = getOverviewGenerationMetrics({
+    units,
+    boxes,
+    cartons,
+    pallets,
+  });
 
   const result = {
     company_id: companyId,
     company_name: companyName,
     subscription: {
-      plan_name: String((subscription as any)?.subscription_plan_templates?.name || "No active plan"),
+      plan_name: showSubscriptionDetails
+        ? String((subscription as any)?.subscription_plan_templates?.name || "Active plan")
+        : "No active plan",
       status: statusView.label,
       status_code: statusView.code,
       is_trial: Boolean(entitlement.trial_active),
       trial_ends_at: entitlement.trial_expires_at,
-      subscription_starts_at: (subscription as any)?.start_date || (subscription as any)?.current_period_start || null,
-      subscription_ends_at: (subscription as any)?.current_period_end || null,
-      renewal_at: (subscription as any)?.renewal_date || (subscription as any)?.next_billing_at || null,
+      subscription_starts_at: showSubscriptionDetails
+        ? (subscription as any)?.start_date || (subscription as any)?.current_period_start || null
+        : null,
+      subscription_ends_at: showSubscriptionDetails ? (subscription as any)?.current_period_end || null : null,
+      renewal_at: showSubscriptionDetails ? (subscription as any)?.renewal_date || (subscription as any)?.next_billing_at || null : null,
     },
     entitlement: {
       scanner_usage_policy: "SCANS_DO_NOT_CONSUME_GENERATION_QUOTA",

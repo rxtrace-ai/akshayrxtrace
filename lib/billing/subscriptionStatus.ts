@@ -1,19 +1,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  getEffectivePaidSubscriptionAccess,
+  normalizeLocalSubscriptionStatus,
+  type LocalSubscriptionStatus,
+} from "@/lib/billing/subscriptionAccess";
 
 export type UnifiedSubscriptionStatus = {
-  status: "active" | "pending" | "expired" | "cancelled";
+  status: LocalSubscriptionStatus;
   source: "trial" | "subscription" | null;
   trialExpiresAt?: Date;
   subscription?: Record<string, any>;
+  rawStatus?: LocalSubscriptionStatus | null;
+  paidThroughPeriodEnd?: boolean;
+  accessEndsAt?: string | null;
 };
-
-function normalizeSubscriptionStatus(value: unknown): UnifiedSubscriptionStatus["status"] {
-  const parsed = String(value || "").trim().toLowerCase();
-  if (["active", "authenticated", "activated", "charged"].includes(parsed)) return "active";
-  if (["cancelled", "canceled"].includes(parsed)) return "cancelled";
-  if (["pending", "pending_payment", "trial", "trialing"].includes(parsed)) return "pending";
-  return "expired";
-}
 
 export async function getUnifiedSubscriptionStatus(params: {
   supabase: SupabaseClient;
@@ -66,12 +66,12 @@ export async function getUnifiedSubscriptionStatus(params: {
   if (subError) throw new Error(subError.message);
 
   if (activeSub) {
-    const normalized = normalizeSubscriptionStatus((activeSub as any).status);
-    const periodEndIso = String((activeSub as any).current_period_end || "").trim();
-    const periodEndTs = periodEndIso ? new Date(periodEndIso).getTime() : NaN;
-    const isPastPeriodEnd = Number.isFinite(periodEndTs) && periodEndTs > 0 && periodEndTs < now.getTime();
+    const paidAccess = getEffectivePaidSubscriptionAccess({
+      subscription: activeSub as any,
+      now,
+    });
 
-    if (normalized === "active" && isPastPeriodEnd) {
+    if (paidAccess.rawStatus === "active" && paidAccess.effectiveStatus === "expired") {
       await params.supabase
         .from("company_subscriptions")
         .update({ status: "expired", updated_at: now.toISOString() })
@@ -79,6 +79,9 @@ export async function getUnifiedSubscriptionStatus(params: {
       return {
         status: "expired",
         source: "subscription",
+        rawStatus: "active",
+        paidThroughPeriodEnd: false,
+        accessEndsAt: paidAccess.accessEndsAt?.toISOString() ?? null,
         subscription: {
           ...(activeSub as any),
           status: "expired",
@@ -86,10 +89,40 @@ export async function getUnifiedSubscriptionStatus(params: {
       };
     }
 
-    return {
-      status: normalized,
+    if (paidAccess.hasPaidAccess) {
+      return {
+        status: "active",
+        source: "subscription",
+        rawStatus: paidAccess.rawStatus,
+        paidThroughPeriodEnd: paidAccess.paidThroughPeriodEnd,
+        accessEndsAt: paidAccess.accessEndsAt?.toISOString() ?? null,
+        subscription: activeSub as any,
+      };
+    }
+
+    const subscriptionFallback: UnifiedSubscriptionStatus = {
+      status: paidAccess.effectiveStatus,
       source: "subscription",
+      rawStatus: paidAccess.rawStatus,
+      paidThroughPeriodEnd: false,
+      accessEndsAt: paidAccess.accessEndsAt?.toISOString() ?? null,
       subscription: activeSub as any,
+    };
+
+    const trialExpiresAtIso = (trialRow as any)?.trial_end ?? null;
+    const trialStatus = String((trialRow as any)?.status || "").trim().toLowerCase();
+    const trialExpiresAt = trialExpiresAtIso ? new Date(trialExpiresAtIso) : null;
+    if (
+      trialStatus === "active" &&
+      trialExpiresAt &&
+      !Number.isNaN(trialExpiresAt.getTime()) &&
+      trialExpiresAt.getTime() > now.getTime()
+    ) {
+      return { status: "active", source: "trial", trialExpiresAt };
+    }
+
+    return {
+      ...subscriptionFallback,
     };
   }
 

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, Boxes, QrCode, Smartphone, Users } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { TOTAL_SSCC_KPI_LABEL } from '@/lib/dashboard/overviewMetrics';
 
 type OverviewResponse = {
   company_id: string;
@@ -15,6 +16,8 @@ type OverviewResponse = {
       | 'active_subscription'
       | 'payment_due'
       | 'active_until_end_date'
+      | 'subscription_cancelled'
+      | 'subscription_expired'
       | 'trial_active'
       | 'trial_expired'
       | 'no_active_plan';
@@ -102,6 +105,8 @@ function getStatusBadgeClass(code: OverviewResponse['subscription']['status_code
   if (code === 'active_subscription') return 'bg-emerald-100 text-emerald-800';
   if (code === 'payment_due') return 'bg-amber-100 text-amber-800';
   if (code === 'active_until_end_date') return 'bg-blue-100 text-blue-800';
+  if (code === 'subscription_cancelled') return 'bg-rose-100 text-rose-700';
+  if (code === 'subscription_expired') return 'bg-rose-100 text-rose-700';
   if (code === 'trial_active') return 'bg-emerald-100 text-emerald-800';
   if (code === 'trial_expired') return 'bg-rose-100 text-rose-700';
   return 'bg-gray-100 text-gray-700';
@@ -197,6 +202,20 @@ export default function DashboardPage() {
     );
   }, [overview]);
 
+  const planAction = useMemo(() => {
+    const code = overview?.subscription.status_code;
+    if (code === 'active_subscription' || code === 'active_until_end_date') {
+      return { label: 'Manage Plan', tone: 'secondary' as const };
+    }
+    if (code === 'trial_active') {
+      return { label: 'Upgrade Plan', tone: 'primary' as const };
+    }
+    if (code === 'subscription_expired' || code === 'subscription_cancelled' || code === 'trial_expired') {
+      return { label: 'Reactivate Plan', tone: 'primary' as const };
+    }
+    return { label: 'Activate Plan', tone: 'primary' as const };
+  }, [overview?.subscription.status_code]);
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
@@ -231,9 +250,21 @@ export default function DashboardPage() {
                 <p className="text-sm uppercase tracking-wide text-gray-500">Current Plan</p>
                 <h2 className="text-xl font-semibold text-gray-900">{overview.subscription.plan_name}</h2>
               </div>
-              <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getStatusBadgeClass(overview.subscription.status_code)}`}>
-                {overview.subscription.status}
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getStatusBadgeClass(overview.subscription.status_code)}`}>
+                  {overview.subscription.status}
+                </span>
+                <Link
+                  href="/dashboard/subscription"
+                  className={`inline-flex items-center rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                    planAction.tone === 'primary'
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  {planAction.label}
+                </Link>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
@@ -268,7 +299,7 @@ export default function DashboardPage() {
         <KpiCard title="Total Scans" value={fmtNum(overview?.kpis.total_scans)} icon={Activity} href="/dashboard/scans" loading={loading} />
         <KpiCard title="Total Seats" value={fmtNum(overview?.kpis.total_seats)} icon={Users} href="/dashboard/seats" loading={loading} />
         <KpiCard title="Total Labels Generated" value={fmtNum(overview?.kpis.total_labels_generated)} icon={QrCode} loading={loading} />
-        <KpiCard title="Total SSCC Generated" value={fmtNum(overview?.kpis.total_sscc_generated)} icon={Boxes} loading={loading} />
+        <KpiCard title={TOTAL_SSCC_KPI_LABEL} value={fmtNum(overview?.kpis.total_sscc_generated)} icon={Boxes} loading={loading} />
       </div>
 
       <div className="rounded-lg border bg-white p-6">

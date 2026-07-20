@@ -9,6 +9,7 @@ import { beginScannerIdempotency, completeScannerIdempotency, waitForScannerRepl
 import { insertScanLogSafe, recordSerialScanAtomic } from "@/lib/scanner/logging";
 import { extractVerifyRawInput, verifyRequestBodySchema } from "@/lib/scanner/schemas";
 import { logError } from "@/lib/observability/logging";
+import { enforceVerifyRateLimit } from "@/lib/scanner/requestRateLimit";
 
 const GS = String.fromCharCode(29);
 
@@ -112,6 +113,17 @@ export async function POST(req: Request) {
     }
 
     const rawInput = extractVerifyRawInput(body);
+    const rateLimit = await enforceVerifyRateLimit({
+      req,
+      rawInput,
+      companyId: body.company_id ?? authCompanyId ?? null,
+    });
+    if (!rateLimit.allowed) {
+      const response = json(429, failPayload("RATE_LIMITED", "Too many verify requests. Please try again shortly."));
+      response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+      return response;
+    }
+
     const parsedAny = parsePayload(rawInput);
 
     const mode = parsedAny.mode === "INVALID" ? "INVALID" : parsedAny.mode;

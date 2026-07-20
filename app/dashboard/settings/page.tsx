@@ -27,6 +27,17 @@ function SkeletonRow() {
   return <div className="h-4 w-full animate-pulse rounded bg-gray-100" />;
 }
 
+function formatDate(value: string | null | undefined) {
+  if (!value) return "N/A";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 export default function SettingsPage() {
   const router = useRouter();
   const query = useQueryParams();
@@ -228,30 +239,70 @@ export default function SettingsPage() {
   }
 
   const hasActiveSubscription =
-    entitlementSummary?.subscriptionStatus?.source === "subscription" ||
-    entitlementSummary?.subscription?.status === "active";
-  const subscriptionCancelled = entitlementSummary?.subscriptionStatus?.status === "cancelled";
+    entitlementSummary?.subscriptionStatus?.source === "subscription" &&
+    entitlementSummary?.subscriptionStatus?.status === "active";
+  const scheduledToEnd =
+    hasActiveSubscription &&
+    entitlementSummary?.subscriptionStatus?.rawStatus === "cancelled" &&
+    entitlementSummary?.subscription?.cancel_at_period_end;
+  const subscriptionInactive = entitlementSummary?.subscriptionStatus?.source === "subscription" && !hasActiveSubscription;
+  const inactiveSubscriptionStatus = subscriptionInactive
+    ? entitlementSummary?.subscriptionStatus?.status ?? entitlementSummary?.subscription?.status ?? "expired"
+    : null;
   const trialActive = Boolean(
     entitlementSummary?.trial?.active ?? entitlementSummary?.entitlement?.trial_active
   ) && !hasActiveSubscription;
   const trialWasAlreadyUsed = Boolean(entitlementSummary?.trial?.expires_at);
-  const generationEnabled = !subscriptionCancelled && (hasActiveSubscription || trialActive);
+  const generationEnabled = entitlementSummary?.decisions?.generation
+    ? !entitlementSummary.decisions.generation.blocked
+    : hasActiveSubscription || trialActive;
   const trialBadgeLabel = trialActive
     ? "Trial Activated"
     : trialWasAlreadyUsed
       ? "Trial Expired"
       : "Trial Inactive";
+  const planRecoveryLabel =
+    inactiveSubscriptionStatus === "cancelled"
+      ? "Reactivate Plan"
+      : inactiveSubscriptionStatus === "expired"
+        ? "Renew Plan"
+        : "Activate Plan";
+  const accessBadgeLabel = hasActiveSubscription
+    ? scheduledToEnd
+      ? "Active Until End Date"
+      : "Subscription Activated"
+    : subscriptionInactive
+      ? inactiveSubscriptionStatus === "cancelled"
+        ? "Plan Cancelled"
+        : inactiveSubscriptionStatus === "pending"
+          ? "Payment Pending"
+          : "Plan Expired"
+      : trialBadgeLabel;
 
   const accessMessage = useMemo(
     () =>
-      subscriptionCancelled
-        ? "Subscription cancelled. Renew or subscribe to continue."
+      scheduledToEnd
+        ? `Subscription remains active until ${formatDate(entitlementSummary?.subscription?.current_period_end)}.`
         : hasActiveSubscription
           ? `Subscription activated: ${entitlementSummary?.subscription?.plan_name || "Subscription"}`
-        : trialActive
+          : subscriptionInactive
+            ? inactiveSubscriptionStatus === "cancelled"
+              ? "Plan cancelled. Reactivate or choose a new plan to restore paid access."
+              : inactiveSubscriptionStatus === "pending"
+                ? "Payment is pending. Complete checkout or choose a plan to activate access."
+                : "Plan expired. Renew or upgrade to restore paid access."
+            : trialActive
             ? "Trial activated (limits apply)"
             : "Trial expired. Upgrade to continue",
-    [entitlementSummary?.subscription?.plan_name, hasActiveSubscription, subscriptionCancelled, trialActive]
+    [
+      entitlementSummary?.subscription?.current_period_end,
+      entitlementSummary?.subscription?.plan_name,
+      hasActiveSubscription,
+      inactiveSubscriptionStatus,
+      scheduledToEnd,
+      subscriptionInactive,
+      trialActive,
+    ]
   );
 
   const profileLoading = summaryLoading && !companyProfile;
@@ -446,7 +497,16 @@ export default function SettingsPage() {
         ) : (
           <>
             <p className="font-medium">Generation Eligibility</p>
-            <p className="mt-1">{accessMessage}</p>
+            <div className="mt-1 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <p>{accessMessage}</p>
+              {!hasActiveSubscription ? (
+                <Button asChild size="sm" className="w-fit bg-blue-600 hover:bg-blue-700">
+                  <Link href="/dashboard/subscription">
+                    {subscriptionInactive ? planRecoveryLabel : trialActive ? "Upgrade Plan" : "Activate Plan"}
+                  </Link>
+                </Button>
+              ) : null}
+            </div>
           </>
         )}
       </div>
@@ -468,7 +528,7 @@ export default function SettingsPage() {
               <h2 className="text-xl font-medium">Subscription</h2>
               <p className="text-sm text-gray-500">Subscription is activated. Entitlement is now controlled by your plan and add-ons.</p>
             </div>
-            <Badge className="bg-green-600 text-white">Subscription Activated</Badge>
+            <Badge className="bg-green-600 text-white">{accessBadgeLabel}</Badge>
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3 text-sm">
@@ -526,11 +586,11 @@ export default function SettingsPage() {
             <div>
               <h2 className="text-xl font-medium">Trial</h2>
               <p className="text-sm text-gray-500">
-                Activate your 3-day trial by completing a INR 1 Razorpay payment. Trial starts only after webhook confirmation.
+                Activate a trial or choose a subscription plan to restore generation access.
               </p>
             </div>
             <Badge className={`px-3 py-1 text-sm ${trialActive ? "bg-green-600 text-white" : "bg-red-100 text-red-700"}`}>
-              {trialBadgeLabel}
+              {accessBadgeLabel}
             </Badge>
           </div>
 
@@ -584,14 +644,18 @@ export default function SettingsPage() {
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-gray-600">
-                {subscriptionCancelled
-                  ? "Subscription cancelled."
+                {subscriptionInactive
+                  ? inactiveSubscriptionStatus === "cancelled"
+                    ? "Plan cancelled. Previous plan details are hidden because paid access is no longer active."
+                    : inactiveSubscriptionStatus === "pending"
+                      ? "Plan payment is pending. Complete checkout or choose a plan to activate access."
+                      : "Plan expired. Previous plan details are hidden because paid access is no longer active."
                   : trialWasAlreadyUsed
                     ? "Trial expired or cancelled. Reactivation is not available."
                     : "Trial inactive."}
               </p>
               <div className="flex items-center gap-3">
-                {!subscriptionCancelled && !trialWasAlreadyUsed && (
+                {!subscriptionInactive && !trialWasAlreadyUsed && (
                   <Button
                     type="button"
                     onClick={handleActivateTrial}
@@ -603,7 +667,7 @@ export default function SettingsPage() {
                 )}
                 <Button asChild className="bg-blue-600 hover:bg-blue-700">
                   <Link href="/dashboard/subscription">
-                    {subscriptionCancelled ? "Renew Plan" : "Upgrade Plan"}
+                    {subscriptionInactive ? planRecoveryLabel : "Upgrade Plan"}
                   </Link>
                 </Button>
               </div>

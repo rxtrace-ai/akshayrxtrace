@@ -124,7 +124,9 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
   ]);
 
   const currentSubscription = subscriptionStatus.subscription ?? null;
-  const effectiveEntitlement = applyTrialLimitFallback(entitlement, Boolean(currentSubscription));
+  const hasEffectivePaidSubscription =
+    subscriptionStatus.source === "subscription" && subscriptionStatus.status === "active";
+  const effectiveEntitlement = applyTrialLimitFallback(entitlement, hasEffectivePaidSubscription);
   const subTemplate = (currentSubscription as any)?.subscription_plan_templates || null;
   const nowTs = Date.now();
 
@@ -248,22 +250,25 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
 
   const decisions = {
     generation: (() => {
-      const status = subscriptionStatus.status;
-      if (status === "cancelled") return { blocked: true, code: "NO_ACTIVE_SUBSCRIPTION" as const };
-      if (status === "expired") return { blocked: true, code: "NO_ACTIVE_SUBSCRIPTION" as const };
+      if (subscriptionStatus.status === "cancelled" || subscriptionStatus.status === "expired") {
+        return { blocked: true, code: "NO_ACTIVE_SUBSCRIPTION" as const };
+      }
+      if (!hasEffectivePaidSubscription && subscriptionStatus.source !== "trial") {
+        return { blocked: true, code: "NO_ACTIVE_SUBSCRIPTION" as const };
+      }
       const remaining = quotaTable.reduce((sum, row) => sum + row.remaining, 0);
       if (remaining <= 0) return { blocked: true, code: "QUOTA_EXHAUSTED" as const };
       return { blocked: false, code: null };
     })(),
     seats: (() => {
-      if (["cancelled", "expired"].includes(subscriptionStatus.status)) {
+      if (!hasEffectivePaidSubscription) {
         return { blocked: true, code: "NO_ACTIVE_SUBSCRIPTION" as const };
       }
       if ((effectiveEntitlement.remaining.seat ?? 0) <= 0) return { blocked: true, code: "QUOTA_EXHAUSTED" as const };
       return { blocked: false, code: null };
     })(),
     plants: (() => {
-      if (["cancelled", "expired"].includes(subscriptionStatus.status)) {
+      if (!hasEffectivePaidSubscription) {
         return { blocked: true, code: "NO_ACTIVE_SUBSCRIPTION" as const };
       }
       if ((effectiveEntitlement.remaining.plant ?? 0) <= 0) return { blocked: true, code: "QUOTA_EXHAUSTED" as const };
@@ -298,6 +303,9 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
     subscriptionStatus: {
       status: subscriptionStatus.status,
       source: subscriptionStatus.source,
+      rawStatus: subscriptionStatus.rawStatus ?? null,
+      paidThroughPeriodEnd: Boolean(subscriptionStatus.paidThroughPeriodEnd),
+      accessEndsAt: subscriptionStatus.accessEndsAt ?? null,
       trialExpiresAt: subscriptionStatus.trialExpiresAt ? subscriptionStatus.trialExpiresAt.toISOString() : null,
     },
     entitlement: effectiveEntitlement,

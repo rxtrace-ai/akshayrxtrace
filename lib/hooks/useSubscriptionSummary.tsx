@@ -25,6 +25,9 @@ export type SubscriptionSummaryResponse = {
   subscriptionStatus?: {
     status: "active" | "pending" | "expired" | "cancelled";
     source?: "trial" | "subscription" | null;
+    rawStatus?: "active" | "pending" | "expired" | "cancelled" | null;
+    paidThroughPeriodEnd?: boolean;
+    accessEndsAt?: string | null;
     trialExpiresAt: string | null;
   };
   trial?: {

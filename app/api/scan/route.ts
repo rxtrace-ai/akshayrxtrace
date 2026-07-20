@@ -9,6 +9,7 @@ import { beginScannerIdempotency, completeScannerIdempotency, waitForScannerRepl
 import { insertScanLogSafe, recordSerialScanAtomic } from "@/lib/scanner/logging";
 import { scanRequestBodySchema } from "@/lib/scanner/schemas";
 import { logError } from "@/lib/observability/logging";
+import { enforceScanRateLimit } from "@/lib/scanner/requestRateLimit";
 
 const GS = String.fromCharCode(29);
 
@@ -167,6 +168,18 @@ export async function POST(req: Request) {
   const body = parsedBody.data;
   if (body.company_id && body.company_id !== authCompanyId) {
     return json(403, failPayload("FORBIDDEN", "Forbidden"));
+  }
+
+  const rateLimit = await enforceScanRateLimit({
+    req,
+    companyId: authCompanyId,
+    rawInput: body.raw,
+    deviceContext: body.device_context,
+  });
+  if (!rateLimit.allowed) {
+    const response = json(429, failPayload("RATE_LIMITED", "Too many scan requests. Please try again shortly."));
+    response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+    return response;
   }
 
   const scopeKey = `company:${authCompanyId}`;
