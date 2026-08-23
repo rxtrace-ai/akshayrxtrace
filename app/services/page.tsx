@@ -22,7 +22,7 @@ export default function ServicesPage() {
             <Link href="/contact">Contact Us</Link>
           </nav>
           <div className="flex items-center gap-4">
-            <Link href="/auth/signin" className="text-sm">Log in</Link>
+            <Link href="/login" className="text-sm">Log in</Link>
             <Link href="/auth/signup" className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm shadow hover:bg-blue-700">
               Get Started
             </Link>

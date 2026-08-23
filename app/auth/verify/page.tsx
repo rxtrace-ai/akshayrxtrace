@@ -136,7 +136,7 @@ function VerifyOTPContent() {
 
         if (signInError) {
           // If sign-in fails, send user to signin page
-          router.replace('/auth/signin?verified=1');
+          router.replace('/login?verified=1');
           return;
         }
       }
@@ -146,7 +146,7 @@ function VerifyOTPContent() {
       // 3. Resolve authenticated user and route by owner company presence.
       const { data: userData, error: userError } = await supabaseClient().auth.getUser();
       if (userError || !userData?.user?.id) {
-        router.replace('/auth/signin?verified=1');
+        router.replace('/login?verified=1');
         return;
       }
 
@@ -331,7 +331,7 @@ function VerifyOTPContent() {
 
           <div className="text-center pt-4 border-t border-gray-200">
             <a
-              href="/auth/signin"
+              href="/login"
               className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-[#0052CC] hover:underline transition-colors"
             >
               <ArrowLeft className="h-4 w-4" />

@@ -78,7 +78,7 @@ export default function Header() {
 
   const handleSignOut = async () => {
     await supabaseClient().auth.signOut();
-    router.push("/auth/signin");
+    router.push("/login");
   };
 
   const handleMarkAsRead = () => {

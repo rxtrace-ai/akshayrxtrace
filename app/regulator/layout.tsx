@@ -24,7 +24,7 @@ export default function RegulatorLayout({
       } = await supabaseClient().auth.getUser();
 
       if (!user) {
-        router.push('/auth/signin');
+        router.push('/login');
         return;
       }
 
@@ -36,7 +36,7 @@ export default function RegulatorLayout({
 
   const handleSignOut = async () => {
     await supabaseClient().auth.signOut();
-    router.push('/auth/signin');
+    router.push('/login');
   };
 
   return (

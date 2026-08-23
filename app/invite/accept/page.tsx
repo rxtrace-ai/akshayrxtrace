@@ -201,7 +201,7 @@ function AcceptSeatInviteInner() {
                   </Button>
                   {existingAccount && (
                     <Link
-                      href={`/auth/signin?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`}
+                      href={`/login?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`}
                     >
                       <Button variant="outline" type="button">Sign In</Button>
                     </Link>
@@ -224,7 +224,7 @@ function AcceptSeatInviteInner() {
                   </Button>
                   {emailMismatch && (
                     <Link
-                      href={`/auth/signin?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`}
+                      href={`/login?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`}
                     >
                       <Button variant="outline" type="button">Use Different Account</Button>
                     </Link>

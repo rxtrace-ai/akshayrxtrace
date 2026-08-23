@@ -34,7 +34,7 @@ export default function AdminLayout({
       if (user) {
         setAdminEmail(user.email || '');
       } else {
-        router.push('/auth/signin?redirect=/admin');
+        router.push('/login?redirect=/admin');
       }
     }
     checkAdmin();
@@ -42,7 +42,7 @@ export default function AdminLayout({
 
   const handleSignOut = async () => {
     await supabaseClient().auth.signOut();
-    router.push('/auth/signin?redirect=/admin');
+    router.push('/login?redirect=/admin');
   };
 
   return (

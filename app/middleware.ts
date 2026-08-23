@@ -114,7 +114,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/onboarding');
 
   if (isProtectedArea && !session) {
-    return NextResponse.redirect(new URL('/auth/signin', request.url));
+      return NextResponse.redirect(new URL('/login', request.url));
   }
 
   const isDashboardRoute = pathname.startsWith('/dashboard');

@@ -59,7 +59,7 @@ export default function LandingAuthLinks({
   if (hasSession === null) {
     return (
       <>
-        <Link href="/auth/signin" className={loginClassName}>
+        <Link href="/login" className={loginClassName}>
           Log in
         </Link>
         <Link href="/auth/signup" className={registerClassName}>
@@ -72,7 +72,7 @@ export default function LandingAuthLinks({
   if (!hasSession) {
     return (
       <>
-        <Link href="/auth/signin" className={loginClassName}>
+        <Link href="/login" className={loginClassName}>
           Log in
         </Link>
         <Link href="/auth/signup" className={registerClassName}>

@@ -47,7 +47,7 @@ function CompanySetupContent() {
       const { data: { user } } = await supabase.auth.getUser();
 
       if (!user) {
-        router.replace('/auth/signin');
+        router.replace('/login');
         return;
       }
 

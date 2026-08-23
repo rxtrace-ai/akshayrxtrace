@@ -134,7 +134,7 @@ export default function ResetPassword() {
 
       // Redirect to signin after 3 seconds
       setTimeout(() => {
-        router.push('/auth/signin');
+        router.push('/login');
       }, 3000);
     } catch (err) {
       console.error('Unexpected error:', err);
@@ -207,7 +207,7 @@ export default function ResetPassword() {
       </form>
       
       <p className="text-center mt-6 text-gray-600">
-        Remember your password? <a href="/auth/signin" className="text-[#0052CC] font-semibold hover:underline">Sign In</a>
+        Remember your password? <a href="/login" className="text-[#0052CC] font-semibold hover:underline">Sign In</a>
       </p>
     </Card>
   );

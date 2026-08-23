@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   if (error) {
     console.error('OAuth callback error:', error, errorDescription);
     return NextResponse.redirect(
-      new URL(`/auth/signin?error=${encodeURIComponent(errorDescription || error)}`, request.url)
+      new URL(`/login?error=${encodeURIComponent(errorDescription || error)}`, request.url)
     );
   }
 
@@ -59,14 +59,14 @@ export async function GET(request: Request) {
     if (sessionError) {
       console.error('Session exchange error:', sessionError);
       return NextResponse.redirect(
-        new URL(`/auth/signin?error=${encodeURIComponent(sessionError.message)}`, request.url)
+        new URL(`/login?error=${encodeURIComponent(sessionError.message)}`, request.url)
       );
     }
 
     if (!data?.session) {
       console.error('No session returned after code exchange');
       return NextResponse.redirect(
-        new URL('/auth/signin?error=Authentication failed', request.url)
+        new URL('/login?error=Authentication%20failed', request.url)
       );
     }
 

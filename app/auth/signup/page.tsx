@@ -39,7 +39,7 @@ export default function SignUp() {
         if (signUpError.message.includes("already registered") || signUpError.message.includes("User already registered")) {
           setError("This email is already registered. Please sign in instead.");
           setLoading(false);
-          setTimeout(() => router.push("/auth/signin"), 2000);
+          setTimeout(() => router.push("/login"), 2000);
           return;
         }
         setError(signUpError.message);
@@ -118,7 +118,7 @@ export default function SignUp() {
 
           <p className="mt-8 text-center text-gray-600">
             Already have an account?{" "}
-            <a href="/auth/signin" className="font-semibold text-[#0052CC] hover:underline">
+            <a href="/login" className="font-semibold text-[#0052CC] hover:underline">
               Sign In
             </a>
           </p>
