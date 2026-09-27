@@ -1,26 +1,27 @@
-'use client';
+import { redirect } from "next/navigation";
 
+<<<<<<< ours
+type LegacyVerifyRedirectPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+=======
 import { useEffect, useState, useRef, Suspense } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Mail, CheckCircle, Loader2, ArrowLeft } from 'lucide-react';
+import Link from 'next/link';
+import { AuthPageShell } from '@/components/auth/AuthPageShell';
+import { Mail, CheckCircle, Loader2, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabase/client';
 import { useQueryParams } from '@/lib/hooks/useQueryParams';
+>>>>>>> theirs
 
-function VerifyOTPContent() {
-  const router = useRouter();
-  const query = useQueryParams();
-  
-  const [email, setEmail] = useState('');
-  const [otp, setOTP] = useState(['', '', '', '', '', '']);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [resendLoading, setResendLoading] = useState(false);
-  const [resendMessage, setResendMessage] = useState('');
-  const [countdown, setCountdown] = useState(60);
-  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+export default async function LegacyVerifyRedirectPage({ searchParams }: LegacyVerifyRedirectPageProps) {
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const email = resolvedSearchParams.email;
+  const emailValue = Array.isArray(email) ? email[0] : email;
 
+<<<<<<< ours
+  redirect(emailValue ? `/signup/verify?email=${encodeURIComponent(emailValue)}` : "/signup/verify");
+=======
   useEffect(() => {
     // Get email from URL params or localStorage
     const emailParam = query.get('email');
@@ -211,149 +212,58 @@ function VerifyOTPContent() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-orange-50 flex items-center justify-center p-4">
-      <Card className="max-w-md w-full p-8 shadow-2xl">
-        <CardHeader className="text-center">
-          <div className="mx-auto w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center mb-4">
-            <Mail className="h-10 w-10 text-orange-500" />
+    <AuthPageShell>
+      <section className="rounded-2xl border border-slate-100 bg-white p-6 shadow-[0_24px_70px_rgba(15,76,129,0.14)] sm:p-8">
+        <header className="mb-7 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#EAF4FF] text-[#0F4C81]">
+            <Mail className="h-7 w-7" aria-hidden="true" />
           </div>
-          <CardTitle className="text-3xl font-bold text-[#0052CC]">Verify Your Email</CardTitle>
-          <p className="text-gray-600 mt-2">
-            We&apos;ve sent a 6-digit code to
-          </p>
-          <p className="text-lg font-semibold text-[#0052CC] break-all mt-1">
-            {email || 'your email address'}
-          </p>
-        </CardHeader>
+          <h1 className="text-3xl font-bold text-slate-950">Verify Your Email</h1>
+          <p className="mt-2 text-sm text-slate-500">We sent a 6-digit verification code to</p>
+          <p className="mt-1 break-all text-sm font-semibold text-[#0F4C81]">{email || 'your email address'}</p>
+        </header>
 
-        <CardContent className="space-y-6">
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-              {error}
-            </div>
-          )}
+        {error ? <div role="alert" className="mb-5 rounded-[10px] border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">{error}</div> : null}
+        {resendMessage ? <div role="status" className="mb-5 rounded-[10px] border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-700">{resendMessage}</div> : null}
 
-          {resendMessage && (
-            <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
-              {resendMessage}
+        <form onSubmit={handleVerifyOTP} className="space-y-6">
+          <div>
+            <label className="mb-4 block text-center text-sm font-semibold text-slate-800">Enter verification code</label>
+            <div className="flex justify-center gap-2 sm:gap-3" onPaste={handlePaste}>
+              {otp.map((digit, index) => <input key={index} ref={(element) => { inputRefs.current[index] = element; }} type="text" inputMode="numeric" maxLength={1} value={digit} onChange={(event) => handleOTPChange(index, event.target.value)} onKeyDown={(event) => handleKeyDown(index, event)} className="h-12 w-10 rounded-[10px] border border-slate-200 text-center text-xl font-bold text-slate-950 outline-none transition focus:border-[#1E88E5] focus:ring-4 focus:ring-[#1E88E5]/15 sm:h-14 sm:w-12" disabled={loading} autoFocus={index === 0} aria-label={`Verification digit ${index + 1}`} />)}
             </div>
-          )}
-
-          <form onSubmit={handleVerifyOTP} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-4 text-center">
-                Enter 6-Digit Verification Code
-              </label>
-              <div className="flex justify-center gap-2 md:gap-3" onPaste={handlePaste}>
-                {otp.map((digit, index) => (
-                  <input
-                    key={index}
-                    ref={(el) => {
-                      inputRefs.current[index] = el;
-                    }}
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={1}
-                    value={digit}
-                    onChange={(e) => handleOTPChange(index, e.target.value)}
-                    onKeyDown={(e) => handleKeyDown(index, e)}
-                    className="w-12 h-14 md:w-14 md:h-16 text-center text-2xl font-bold border-2 rounded-lg focus:border-[#0052CC] focus:outline-none focus:ring-2 focus:ring-[#0052CC]/20 transition-all"
-                    disabled={loading}
-                    autoFocus={index === 0}
-                  />
-                ))}
-              </div>
-              <p className="text-xs text-gray-500 text-center mt-3">
-                Tip: You can paste the entire code
-              </p>
-            </div>
-
-            <Button
-              type="submit"
-              className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white py-6 text-lg font-semibold shadow-lg"
-              disabled={loading || otp.join('').length !== 6}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Verifying...
-                </>
-              ) : (
-                <>
-                  <CheckCircle className="mr-2 h-5 w-5" />
-                  Verify & Continue
-                </>
-              )}
-            </Button>
-          </form>
-
-          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-5 space-y-3">
-            <div className="flex items-start gap-3">
-              <div className="bg-green-100 rounded-full p-1">
-                <CheckCircle className="h-4 w-4 text-green-600" />
-              </div>
-              <p className="text-sm text-gray-700 leading-relaxed">
-                Check your email inbox <span className="font-semibold">and spam folder</span>
-              </p>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="bg-green-100 rounded-full p-1">
-                <CheckCircle className="h-4 w-4 text-green-600" />
-              </div>
-              <p className="text-sm text-gray-700 leading-relaxed">
-                Code expires in <span className="font-semibold text-orange-600">10 minutes</span>
-              </p>
-            </div>
+            <p className="mt-3 text-center text-xs text-slate-500">Tip: You can paste the entire code.</p>
           </div>
 
-          <div className="text-center space-y-3">
-            <p className="text-sm text-gray-600">
-              Didn&apos;t receive the code?
-            </p>
-            <Button
-              variant="outline"
-              onClick={handleResendOTP}
-              disabled={resendLoading || countdown > 0}
-              className="w-full text-[#0052CC] border-[#0052CC] hover:bg-blue-50"
-            >
-              {resendLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Sending...
-                </>
-              ) : countdown > 0 ? (
-                `Resend in ${countdown}s`
-              ) : (
-                'Resend Code'
-              )}
-            </Button>
-          </div>
+          <button type="submit" disabled={loading || otp.join('').length !== 6} className="flex h-12 w-full items-center justify-center gap-2 rounded-[10px] bg-[#0F4C81] px-5 text-sm font-bold text-white shadow-lg shadow-[#0F4C81]/20 transition hover:bg-[#0A3B63] focus:outline-none focus:ring-4 focus:ring-[#1E88E5]/20 disabled:cursor-not-allowed disabled:opacity-70">
+            {loading ? <><Loader2 className="h-4 w-4 animate-spin" />Verifying...</> : <><CheckCircle className="h-4 w-4" />Verify & Continue</>}
+          </button>
+        </form>
 
-          <div className="text-center pt-4 border-t border-gray-200">
-            <a
-              href="/login"
-              className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-[#0052CC] hover:underline transition-colors"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back to Sign In
-            </a>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+        <div className="mt-6 rounded-[10px] border border-[#1E88E5]/20 bg-[#EAF4FF] p-4 text-sm text-slate-700">
+          <p className="flex items-center gap-2 font-semibold text-[#0F4C81]"><ShieldCheck className="h-4 w-4" />Check your inbox and spam folder</p>
+          <p className="mt-1">Your verification code expires in 10 minutes.</p>
+        </div>
+
+        <div className="mt-6 text-center">
+          <p className="text-sm text-slate-600">Didn&apos;t receive the code?</p>
+          <button type="button" onClick={handleResendOTP} disabled={resendLoading || countdown > 0} className="mt-3 inline-flex h-10 items-center justify-center gap-2 rounded-[10px] border border-[#0F4C81] px-4 text-sm font-bold text-[#0F4C81] transition hover:bg-[#EAF4FF] focus:outline-none focus:ring-4 focus:ring-[#1E88E5]/15 disabled:cursor-not-allowed disabled:opacity-60">
+            {resendLoading ? <><Loader2 className="h-4 w-4 animate-spin" />Sending...</> : countdown > 0 ? `Resend in ${countdown}s` : 'Resend Code'}
+          </button>
+        </div>
+        <div className="mt-6 border-t border-slate-200 pt-5 text-center"><Link href="/login" className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 transition hover:text-[#0F4C81] hover:underline"><ArrowLeft className="h-4 w-4" />Back to Sign In</Link></div>
+      </section>
+    </AuthPageShell>
   );
 }
 
 export default function VerifyOTP() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-orange-50">
-        <div className="animate-pulse">
-          <Loader2 className="h-8 w-8 animate-spin text-[#0052CC]" />
-        </div>
-      </div>
+      <div className="flex min-h-screen items-center justify-center bg-white"><Loader2 className="h-8 w-8 animate-spin text-[#0F4C81]" /></div>
     }>
       <VerifyOTPContent />
     </Suspense>
   );
+>>>>>>> theirs
 }

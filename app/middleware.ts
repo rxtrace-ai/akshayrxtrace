@@ -69,6 +69,8 @@ export async function middleware(request: NextRequest) {
     '/auth/callback',
     '/auth/signin',
     '/auth/signup',
+    '/api/auth/check-email',
+    '/api/auth/complete-signup',
     '/api/auth/send-otp',
     '/api/auth/verify-otp',
     '/api/public/seat-invitations/preview',
