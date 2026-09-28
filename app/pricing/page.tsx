@@ -102,15 +102,19 @@ function normalizePlanName(value: string): string {
 }
 
 function planSortWeight(name: string): number {
+  if (name === "free") return 0;
   if (name === "starter") return 1;
   if (name === "growth") return 2;
   if (name === "enterprise") return 3;
-  return 99;
+  return Number.MAX_SAFE_INTEGER;
 }
 
 function buildPlanCards(plans: ActivePlan[]): PricingCard[] {
   return plans
-    .filter((plan) => plan.billing_cycle === "monthly")
+    .filter((plan) =>
+      plan.billing_cycle === "monthly" &&
+      ["free", "starter", "growth", "enterprise"].includes(normalizePlanName(plan.template_name)),
+    )
     .sort((a, b) => planSortWeight(normalizePlanName(a.template_name)) - planSortWeight(normalizePlanName(b.template_name)))
     .map((plan) => {
       const normalizedName = normalizePlanName(plan.template_name);
