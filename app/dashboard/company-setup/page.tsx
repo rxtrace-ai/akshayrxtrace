@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, CheckCircle } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle, ShieldCheck } from 'lucide-react';
 import { createOrUpdateCompanyProfile } from './actions';
 import { industries, IndustryOption, isIndustryOption } from '@/lib/companies/industry';
 import { useQueryParams } from '@/lib/hooks/useQueryParams';
@@ -192,65 +192,75 @@ function CompanySetupContent() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        <div className="text-sm text-gray-500">Loading company information...</div>
+      <div className="flex min-h-screen items-center justify-center bg-white px-6">
+        <div className="w-full max-w-[640px] rounded-2xl border border-slate-100 bg-white p-8 text-sm text-slate-500 shadow-[0_24px_70px_rgba(15,76,129,0.14)]">
+          Loading company information...
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-semibold text-gray-900 mb-1.5">
-          Company Setup
-        </h1>
-        <p className="text-sm text-gray-600">
-          Complete your company setup to continue
-        </p>
-      </div>
+    <main className="min-h-screen bg-white px-4 py-8 text-slate-950 sm:px-6 sm:py-12">
+      <div className="mx-auto w-full max-w-[640px]">
+        <div className="mb-6 flex items-center justify-center gap-3 sm:mb-8">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#0F4C81] text-white shadow-lg">
+            <ShieldCheck className="h-6 w-6" aria-hidden="true" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-[#0F4C81]">RxTrace</p>
+            <p className="text-xs font-bold tracking-[0.26em] text-[#1E88E5]">BE ORIGINAL</p>
+          </div>
+        </div>
 
-      {reasonCompleteProfile && (
-        <Alert className="bg-amber-50 border-amber-200 text-amber-900">
-          <AlertCircle className="h-4 w-4 text-amber-600" />
-          <AlertDescription>
-            Please complete your company profile to access the dashboard.
-          </AlertDescription>
-        </Alert>
-      )}
+        <Card className="rounded-2xl border border-slate-100 bg-white shadow-[0_24px_70px_rgba(15,76,129,0.14)]">
+          <CardHeader className="space-y-0 px-5 pb-4 pt-6 text-center sm:px-8 sm:pt-8">
+            <div className="mb-7">
+              <p className="mb-3 text-sm font-bold text-[#0F4C81]">Step 2 of 2</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <div className="h-2 rounded-full bg-[#0F4C81]" />
+                  <p className="flex items-center justify-center gap-1 text-xs font-semibold text-[#0F4C81]"><Check className="h-3.5 w-3.5" aria-hidden="true" />Account</p>
+                </div>
+                <div className="space-y-2">
+                  <div className="h-2 rounded-full bg-[#0F4C81]" />
+                  <p className="text-center text-xs font-semibold text-[#0F4C81]">Company</p>
+                </div>
+              </div>
+            </div>
+            <CardTitle className="text-3xl font-bold tracking-normal text-slate-950">Company Setup</CardTitle>
+            <CardDescription className="mt-2 text-sm text-slate-500">
+              Complete your company profile to continue
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-5 pb-6 sm:px-8 sm:pb-8">
+            {reasonCompleteProfile && (
+              <Alert className="mb-5 rounded-[10px] border-amber-200 bg-amber-50 text-amber-900">
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+                <AlertDescription>Please complete your company profile to access the dashboard.</AlertDescription>
+              </Alert>
+            )}
+            {error && (
+              <Alert variant="destructive" className="mb-5 rounded-[10px]">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            {success && (
+              <Alert className="mb-5 rounded-[10px] border-green-200 bg-green-50">
+                <CheckCircle className="h-4 w-4 text-green-600" />
+                <AlertDescription className="text-green-800">
+                  Company setup completed successfully. Redirecting to your subscription...
+                </AlertDescription>
+              </Alert>
+            )}
 
-      {/* Alerts */}
-      {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {success && (
-        <Alert className="bg-green-50 border-green-200">
-          <CheckCircle className="h-4 w-4 text-green-600" />
-          <AlertDescription className="text-green-800">
-            Company setup completed successfully. Redirecting to your subscription...
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {/* Form */}
-      <Card className="border-gray-200">
-        <CardHeader>
-          <CardTitle className="text-lg font-semibold text-gray-900">
-            Company Information
-          </CardTitle>
-          <CardDescription>
-            Required fields are marked with *
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <p className="text-xs font-medium text-slate-500">Required fields are marked with *</p>
+              <h3 className="border-b border-slate-100 pb-2 text-sm font-bold text-[#0F4C81]">Business Information</h3>
             {/* 1. Company Name */}
             <div>
-              <Label htmlFor="companyName" className="text-sm font-medium">
+                <Label htmlFor="companyName" className="text-sm font-semibold text-slate-800">
                 Company Name *
               </Label>
               <Input
@@ -260,13 +270,14 @@ function CompanySetupContent() {
                 placeholder="Enter your company name"
                 required
                 disabled={submitting}
-                className="mt-1.5"
+                className="mt-1.5 h-12 rounded-[10px] border-slate-200 shadow-sm focus-visible:border-[#1E88E5] focus-visible:ring-[#1E88E5]/20"
               />
             </div>
 
             {/* 2. Contact Person */}
+            <h3 className="border-b border-slate-100 pb-2 text-sm font-bold text-[#0F4C81]">Contact Information</h3>
             <div>
-              <Label htmlFor="contactPerson" className="text-sm font-medium">
+                <Label htmlFor="contactPerson" className="text-sm font-semibold text-slate-800">
                 Contact Person *
               </Label>
               <Input
@@ -276,13 +287,13 @@ function CompanySetupContent() {
                 placeholder="Full name of responsible person"
                 required
                 disabled={submitting}
-                className="mt-1.5"
+                className="mt-1.5 h-12 rounded-[10px] border-slate-200 shadow-sm focus-visible:border-[#1E88E5] focus-visible:ring-[#1E88E5]/20"
               />
             </div>
 
             {/* 3. Phone Number */}
             <div>
-              <Label htmlFor="phone" className="text-sm font-medium">
+                <Label htmlFor="phone" className="text-sm font-semibold text-slate-800">
                 Phone Number *
               </Label>
               <Input
@@ -293,13 +304,14 @@ function CompanySetupContent() {
                 placeholder="Enter contact phone number"
                 required
                 disabled={submitting}
-                className="mt-1.5"
+                className="mt-1.5 h-12 rounded-[10px] border-slate-200 shadow-sm focus-visible:border-[#1E88E5] focus-visible:ring-[#1E88E5]/20"
               />
             </div>
 
             {/* 4. Address */}
+            <h3 className="border-b border-slate-100 pb-2 text-sm font-bold text-[#0F4C81]">Address</h3>
             <div>
-              <Label htmlFor="address" className="text-sm font-medium">
+              <Label htmlFor="address" className="text-sm font-semibold text-slate-800">
                 Address *
               </Label>
               <textarea
@@ -310,13 +322,14 @@ function CompanySetupContent() {
                 required
                 rows={3}
                 disabled={submitting}
-                className="mt-1.5 w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="mt-1.5 w-full rounded-[10px] border border-slate-200 px-3 py-3 text-[15px] text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#1E88E5] focus:ring-4 focus:ring-[#1E88E5]/15"
               />
             </div>
 
             {/* 5. Industry */}
+            <h3 className="border-b border-slate-100 pb-2 text-sm font-bold text-[#0F4C81]">Business Category</h3>
             <div>
-              <Label htmlFor="industry" className="text-sm font-medium">
+              <Label htmlFor="industry" className="text-sm font-semibold text-slate-800">
                 Industry *
               </Label>
               <Select 
@@ -329,7 +342,7 @@ function CompanySetupContent() {
                 }}
                 disabled={submitting}
               >
-                <SelectTrigger id="industry" className="mt-1.5">
+                <SelectTrigger id="industry" className="mt-1.5 h-12 rounded-[10px] border-slate-200 shadow-sm focus:ring-[#1E88E5]/20">
                   <SelectValue placeholder="Select your industry" />
                 </SelectTrigger>
                 <SelectContent>
@@ -344,7 +357,7 @@ function CompanySetupContent() {
 
             {/* 6. Business Type */}
             <div>
-              <Label htmlFor="businessType" className="text-sm font-medium">
+              <Label htmlFor="businessType" className="text-sm font-semibold text-slate-800">
                 Type of Business *
               </Label>
               <Select 
@@ -357,7 +370,7 @@ function CompanySetupContent() {
                 }}
                 disabled={submitting}
               >
-                <SelectTrigger id="businessType" className="mt-1.5">
+                <SelectTrigger id="businessType" className="mt-1.5 h-12 rounded-[10px] border-slate-200 shadow-sm focus:ring-[#1E88E5]/20">
                   <SelectValue placeholder="Manufacturer / Distributor / Brand Owner / Wholesaler" />
                 </SelectTrigger>
                 <SelectContent>
@@ -374,7 +387,7 @@ function CompanySetupContent() {
 
             {/* 7. Firm Type (Optional) */}
             <div>
-              <Label htmlFor="legalStructure" className="text-sm font-medium">
+              <Label htmlFor="legalStructure" className="text-sm font-semibold text-slate-800">
                 Firm Type (Optional)
               </Label>
               <Select 
@@ -382,7 +395,7 @@ function CompanySetupContent() {
                 onValueChange={(v) => setLegalStructure(v as LegalStructure)}
                 disabled={submitting}
               >
-                <SelectTrigger id="legalStructure" className="mt-1.5">
+                <SelectTrigger id="legalStructure" className="mt-1.5 h-12 rounded-[10px] border-slate-200 shadow-sm focus:ring-[#1E88E5]/20">
                   <SelectValue placeholder="Private Limited / LLP / Proprietorship / Partnership" />
                 </SelectTrigger>
                 <SelectContent>
@@ -396,7 +409,7 @@ function CompanySetupContent() {
 
             {/* 8. Business Category (Optional) */}
             <div>
-              <Label htmlFor="businessCategory" className="text-sm font-medium">
+              <Label htmlFor="businessCategory" className="text-sm font-semibold text-slate-800">
                 Business Category (Optional)
               </Label>
               <Select
@@ -404,7 +417,7 @@ function CompanySetupContent() {
                 onValueChange={(v) => setBusinessCategory(v as BusinessCategory)}
                 disabled={submitting}
               >
-                <SelectTrigger id="businessCategory" className="mt-1.5">
+                <SelectTrigger id="businessCategory" className="mt-1.5 h-12 rounded-[10px] border-slate-200 shadow-sm focus:ring-[#1E88E5]/20">
                   <SelectValue placeholder="Select business category" />
                 </SelectTrigger>
                 <SelectContent>
@@ -418,8 +431,9 @@ function CompanySetupContent() {
             </div>
 
             {/* 9. GST Number (Optional) */}
+            <h3 className="border-b border-slate-100 pb-2 text-sm font-bold text-[#0F4C81]">Optional Information</h3>
             <div>
-              <Label htmlFor="gstNumber" className="text-sm font-medium">
+              <Label htmlFor="gstNumber" className="text-sm font-semibold text-slate-800">
                 GST Number (Optional)
               </Label>
               <Input
@@ -428,13 +442,13 @@ function CompanySetupContent() {
                 onChange={(e) => setGstNumber(e.target.value)}
                 placeholder="Enter GST number (optional)"
                 disabled={submitting}
-                className="mt-1.5"
+                className="mt-1.5 h-12 rounded-[10px] border-slate-200 shadow-sm focus-visible:border-[#1E88E5] focus-visible:ring-[#1E88E5]/20"
               />
             </div>
 
             {/* 10. PAN (Optional) */}
             <div>
-              <Label htmlFor="pan" className="text-sm font-medium">
+              <Label htmlFor="pan" className="text-sm font-semibold text-slate-800">
                 PAN (Optional)
               </Label>
               <Input
@@ -443,33 +457,35 @@ function CompanySetupContent() {
                 onChange={(e) => setPan(e.target.value)}
                 placeholder="Enter PAN (optional)"
                 disabled={submitting}
-                className="mt-1.5"
+                className="mt-1.5 h-12 rounded-[10px] border-slate-200 shadow-sm focus-visible:border-[#1E88E5] focus-visible:ring-[#1E88E5]/20"
               />
             </div>
 
             {/* Actions */}
-            <div className="flex gap-3 pt-4 border-t">
+            <div className="border-t border-slate-200 pt-5">
+              <Button
+                type="submit"
+                disabled={submitting || !companyName.trim() || !contactPerson.trim() || !phone.trim() || !address.trim() || !industry || !businessType}
+                className="h-12 w-full rounded-[10px] bg-[#0F4C81] text-sm font-bold text-white shadow-lg shadow-[#0F4C81]/20 transition hover:bg-[#0A3B63] focus-visible:ring-4 focus-visible:ring-[#1E88E5]/20"
+              >
+                {submitting ? 'Saving...' : 'Continue to Subscription'}
+              </Button>
+              <p className="mt-3 text-center text-sm text-slate-500">You can upgrade your subscription after setup.</p>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => router.push('/dashboard/subscription')}
                 disabled={submitting}
-                className="border-gray-300"
+                className="mt-4 h-10 w-full rounded-[10px] border-slate-300 font-semibold text-slate-700"
               >
                 Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={submitting || !companyName.trim() || !contactPerson.trim() || !phone.trim() || !address.trim() || !industry || !businessType}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                {submitting ? 'Saving...' : 'Complete Setup & Continue'}
               </Button>
             </div>
           </form>
         </CardContent>
-      </Card>
-    </div>
+        </Card>
+      </div>
+    </main>
   );
 }
 
