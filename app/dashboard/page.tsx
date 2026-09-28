@@ -11,6 +11,8 @@ type OverviewResponse = {
   company_name: string | null;
   subscription: {
     plan_name: string;
+    is_free?: boolean;
+    billing_cycle?: string | null;
     status: string;
     status_code:
       | 'active_subscription'
@@ -258,11 +260,17 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
               <div className="rounded-xl border border-dashed border-gray-200 px-4 py-3">
-                <p className="text-xs uppercase tracking-wide text-gray-500">Renews / Expires</p>
+                <p className="text-xs uppercase tracking-wide text-gray-500">{overview.subscription.is_free ? 'Access' : 'Renews / Expires'}</p>
                 <p className="text-sm font-semibold text-gray-900">
-                  {fmtDate(overview.subscription.renewal_at || overview.subscription.subscription_ends_at)}
+                  {overview.subscription.is_free ? 'Lifetime' : fmtDate(overview.subscription.renewal_at || overview.subscription.subscription_ends_at)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-dashed border-gray-200 px-4 py-3">
+                <p className="text-xs uppercase tracking-wide text-gray-500">Billing Cycle</p>
+                <p className="text-sm font-semibold capitalize text-gray-900">
+                  {overview.subscription.is_free ? 'Monthly quota' : overview.subscription.billing_cycle || '-'}
                 </p>
               </div>
               <div className="rounded-xl border border-dashed border-gray-200 px-4 py-3">

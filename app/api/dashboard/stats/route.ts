@@ -108,6 +108,8 @@ async function getOverviewStats(params: {
   if (palletsResult.error) throw new Error(palletsResult.error.message);
 
   const subscription = subscriptionStatus.subscription || null;
+  const planName = String((subscription as any)?.subscription_plan_templates?.name || "");
+  const isFreePlan = planName.trim().toUpperCase() === "FREE";
   const statusView = getStatusView({ subscriptionStatus, entitlement });
   const showSubscriptionDetails =
     subscriptionStatus.source === "subscription" && subscriptionStatus.status === "active";
@@ -128,8 +130,10 @@ async function getOverviewStats(params: {
     company_name: companyName,
     subscription: {
       plan_name: showSubscriptionDetails
-        ? String((subscription as any)?.subscription_plan_templates?.name || "Active plan")
+        ? (planName || "Active plan")
         : "No active plan",
+      is_free: isFreePlan,
+      billing_cycle: (subscription as any)?.billing_cycle || (subscription as any)?.subscription_plan_templates?.billing_cycle || null,
       status: statusView.label,
       status_code: statusView.code,
       subscription_starts_at: showSubscriptionDetails

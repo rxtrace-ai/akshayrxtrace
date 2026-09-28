@@ -47,6 +47,8 @@ type CheckoutContextPayload = {
     plan_name: string | null;
     billing_cycle: string | null;
     plan_price_paise: number;
+    is_free?: boolean;
+    lifetime?: boolean;
   };
 };
 
@@ -83,6 +85,8 @@ type SubscriptionSummary = {
     plan_name: string | null;
     billing_cycle: string | null;
     plan_price_paise: number;
+    is_free?: boolean;
+    lifetime?: boolean;
   };
   quota_table: Array<{
     metric: string;
@@ -90,6 +94,9 @@ type SubscriptionSummary = {
     consumed: number;
     remaining: number;
   }>;
+  quota_period_end?: string | null;
+  remaining_quota?: number;
+  total_quota?: number;
   subscription_invoices?: SummaryInvoice[];
 };
 
@@ -186,6 +193,8 @@ export default function SubscriptionPage() {
     return match?.template_id ?? null;
   }, [context?.current_subscription?.plan_name, plans]);
   const subscriptionInvoices = summary?.subscription_invoices || [];
+  const isFreePlan = Boolean(currentSubscription?.is_free) || currentSubscription?.plan_name?.toUpperCase() === "FREE";
+  const billingCycle = String(currentSubscription?.billing_cycle || "").toLowerCase();
 
   const startSubscriptionCheckout = useCallback(
     async (planTemplateId?: string) => {
@@ -296,22 +305,26 @@ export default function SubscriptionPage() {
                       <Badge variant="outline">{normalizeStatusLabel(subscriptionStatus)}</Badge>
                     </div>
                     <p className="text-slate-600">
-                      {currentSubscription.billing_cycle || "-"} | {formatINRFromPaise(currentSubscription.plan_price_paise || 0)}
+                      {isFreePlan ? "Lifetime access · Monthly quota" : `${currentSubscription.billing_cycle || "-"} · ${formatINRFromPaise(currentSubscription.plan_price_paise || 0)}`}
                     </p>
                     <p className="text-slate-500">
-                      {currentSubscription.cancel_at_period_end
-                        ? `Scheduled to end on ${formatDateLabel(currentSubscription.current_period_end)}`
-                        : `Active until ${formatDateLabel(currentSubscription.current_period_end)}`}
+                      {isFreePlan
+                        ? "Active indefinitely"
+                        : currentSubscription.cancel_at_period_end
+                          ? `Scheduled to end on ${formatDateLabel(currentSubscription.current_period_end)}`
+                          : `Active until ${formatDateLabel(currentSubscription.current_period_end)}`}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => startSubscriptionCheckout(currentPlanId || selectedPlanTemplateId)} disabled={submitting}>
-                      Renew
-                    </Button>
+                    {!isFreePlan ? (
+                      <Button onClick={() => startSubscriptionCheckout(currentPlanId || selectedPlanTemplateId)} disabled={submitting}>
+                        Renew
+                      </Button>
+                    ) : null}
                     <Button variant="outline" onClick={() => startSubscriptionCheckout()} disabled={submitting || !selectedPlanTemplateId}>
                       Upgrade or Downgrade
                     </Button>
-                    {subscriptionStatus === "active" ? (
+                    {subscriptionStatus === "active" && !isFreePlan ? (
                       <Button variant="destructive" onClick={() => setCancelDialogOpen(true)} disabled={submitting}>
                         Cancel
                       </Button>
@@ -320,9 +333,11 @@ export default function SubscriptionPage() {
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-4">
+                  <MetricCard label="Plan" value={currentSubscription.plan_name || "Subscription"} />
+                  <MetricCard label="Billing Cycle" value={isFreePlan ? "Monthly quota · Lifetime" : currentSubscription.billing_cycle || "-"} />
                   <MetricCard label="Start Date" value={formatDateLabel(currentSubscription.start_date)} />
-                  <MetricCard label="Current Period End" value={formatDateLabel(currentSubscription.current_period_end)} />
-                  <MetricCard label="Renewal Date" value={formatDateLabel(currentSubscription.renewal_date || currentSubscription.next_billing_at)} />
+                  <MetricCard label={isFreePlan ? "Monthly Quota" : billingCycle === "yearly" ? "Remaining Annual Quota" : "Next Renewal"} value={isFreePlan ? `${Number(summary?.total_quota || 0).toLocaleString()} codes` : billingCycle === "yearly" ? `${Number(summary?.remaining_quota || 0).toLocaleString()} codes` : formatDateLabel(currentSubscription.renewal_date || currentSubscription.next_billing_at)} />
+                  {!isFreePlan ? <MetricCard label="End Date" value={formatDateLabel(currentSubscription.current_period_end)} /> : null}
                   <MetricCard label="Status" value={normalizeStatusLabel(currentSubscription.status)} />
                 </div>
 

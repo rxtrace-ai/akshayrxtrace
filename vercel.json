@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/internal/cron/subscription-reset",
+      "schedule": "5 0 * * *"
+    }
+  ]
+}

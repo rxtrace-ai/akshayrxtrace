@@ -196,7 +196,7 @@ async function syncQuoteBackedSubscriptionFromWebhook(params: {
 
   const { data: existingSubscription, error: existingSubscriptionError } = await supabase
     .from("company_subscriptions")
-    .select("id, metadata")
+    .select("id, metadata, start_date")
     .eq("company_id", (quote as any).company_id)
     .order("updated_at", { ascending: false })
     .limit(1)
@@ -212,7 +212,7 @@ async function syncQuoteBackedSubscriptionFromWebhook(params: {
     current_period_end: currentPeriodEnd,
     next_billing_at: nextBillingAt,
     renewal_date: currentPeriodEnd,
-    start_date: currentPeriodStart,
+    start_date: (existingSubscription as any)?.start_date || currentPeriodStart,
     provider: "razorpay",
     provider_subscription_id: subscriptionId,
     razorpay_subscription_id: subscriptionId,
@@ -280,6 +280,28 @@ async function syncQuoteBackedSubscriptionFromWebhook(params: {
       quoteId: String((quote as any).id),
       correlationId,
     });
+  }
+
+  // The first paid period is allocated by quote finalization. This RPC is
+  // idempotent for that same period and allocates subsequent paid cycles from
+  // the original immutable plan snapshot. The scheduler never grants paid quota.
+  if ((eventType === "invoice.paid" || eventType === "subscription.charged") && currentPeriodStart && currentPeriodEnd) {
+    const { data: currentSubscription, error: currentSubscriptionError } = await supabase
+      .from("company_subscriptions")
+      .select("id")
+      .eq("company_id", (quote as any).company_id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (currentSubscriptionError) throw new Error(currentSubscriptionError.message);
+    if (currentSubscription?.id) {
+      const { error: allocationError } = await supabase.rpc("allocate_paid_subscription_period", {
+        p_subscription_id: currentSubscription.id,
+        p_period_start: currentPeriodStart,
+        p_period_end: currentPeriodEnd,
+      });
+      if (allocationError) throw new Error(allocationError.message);
+    }
   }
 
   return {

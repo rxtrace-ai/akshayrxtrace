@@ -87,6 +87,7 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
     subscriptionStatus.source === "subscription" && subscriptionStatus.status === "active";
   const effectiveEntitlement = entitlement;
   const subTemplate = (currentSubscription as any)?.subscription_plan_templates || null;
+  const isFreePlan = String(subTemplate?.name || "").trim().toUpperCase() === "FREE";
   const nowTs = Date.now();
 
   const structuralAddOnsPromise = includeCapacity
@@ -247,6 +248,8 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
           start_date: (currentSubscription as any).start_date ?? null,
           renewal_date: (currentSubscription as any).renewal_date ?? null,
           plan_name: subTemplate?.name ?? null,
+          is_free: isFreePlan,
+          lifetime: isFreePlan,
           billing_cycle:
             (currentSubscription as any).billing_cycle ??
             subTemplate?.billing_cycle ??
@@ -297,6 +300,8 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       end: effectiveEntitlement.period_end,
     };
     responseBody.total_quota = Math.max(0, Math.trunc(totalQuota));
+    responseBody.quota_period_end = effectiveEntitlement.period_end;
+    responseBody.remaining_quota = quotaTable.reduce((sum, row) => sum + row.remaining, 0);
     responseBody.quota_table = quotaTable;
     responseBody.capacity_table = capacityTable;
     responseBody.capacity_addons = structuralCapacityRows.map((row: any) => ({
