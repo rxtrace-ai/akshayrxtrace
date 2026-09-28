@@ -72,9 +72,6 @@ export async function POST(req: Request) {
 
   if (error) {
     const message = String(error.message || "Seat invite failed");
-    if (message.includes("TRIAL_EXPIRED")) {
-      return apiJson({ error: "TRIAL_EXPIRED" }, { status: 403 });
-    }
     if (message.includes("SEAT_QUOTA_EXCEEDED") || message.includes("SEAT_LIMIT_EXCEEDED")) {
       return apiJson({ error: "SEAT_QUOTA_EXCEEDED" }, { status: 403 });
     }

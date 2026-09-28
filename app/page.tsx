@@ -121,7 +121,7 @@ export default function HomePage() {
                 href="/auth/signup"
                 className="inline-flex items-center justify-center rounded-xl bg-[#0F5D5E] px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#083B3C]"
               >
-                Start Trial
+                Get Started
               </Link>
               <Link
                 href="#book-demo"
@@ -287,10 +287,10 @@ export default function HomePage() {
           <div className="max-w-2xl">
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">Start Now</p>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
-              Start your traceability setup with a guided trial
+              Start your traceability setup with the FREE plan
             </h2>
             <p className="mt-4 text-base leading-7 text-[#D7EAEA]">
-              Use the trial flow to create your account, complete company setup, and begin exploring Rxtrace with your team.
+              Create your account, complete company setup, and begin with the FREE plan.
             </p>
           </div>
 
@@ -299,7 +299,7 @@ export default function HomePage() {
               href="/auth/signup"
               className="inline-flex items-center justify-center rounded-xl bg-[#F59E0B] px-6 py-3 text-sm font-semibold text-[#083B3C] transition hover:bg-[#F7B733]"
             >
-              Start Trial
+              Get Started
             </Link>
             <Link
               href="/contact"

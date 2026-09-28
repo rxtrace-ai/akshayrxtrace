@@ -40,12 +40,6 @@ function getStatusView(params: {
   if (subscriptionStatus.source === "subscription" && subscriptionStatus.status === "expired") {
     return { label: "Plan Expired", code: "subscription_expired" as const };
   }
-  if (entitlement.trial_active) {
-    return { label: "Trial Active", code: "trial_active" as const };
-  }
-  if (entitlement.trial_expires_at) {
-    return { label: "Trial Expired", code: "trial_expired" as const };
-  }
   return { label: "No Active Plan", code: "no_active_plan" as const };
 }
 
@@ -138,8 +132,6 @@ async function getOverviewStats(params: {
         : "No active plan",
       status: statusView.label,
       status_code: statusView.code,
-      is_trial: Boolean(entitlement.trial_active),
-      trial_ends_at: entitlement.trial_expires_at,
       subscription_starts_at: showSubscriptionDetails
         ? (subscription as any)?.start_date || (subscription as any)?.current_period_start || null
         : null,

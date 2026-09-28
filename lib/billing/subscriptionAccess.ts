@@ -12,7 +12,7 @@ export function normalizeLocalSubscriptionStatus(value: unknown): LocalSubscript
   const parsed = String(value || "").trim().toLowerCase();
   if (["active", "authenticated", "activated", "charged"].includes(parsed)) return "active";
   if (["cancelled", "canceled"].includes(parsed)) return "cancelled";
-  if (["pending", "pending_payment", "trial", "trialing"].includes(parsed)) return "pending";
+  if (["pending", "pending_payment"].includes(parsed)) return "pending";
   return "expired";
 }
 

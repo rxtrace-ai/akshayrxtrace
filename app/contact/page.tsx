@@ -25,7 +25,7 @@ const faqItems = [
   },
   {
     question: "How can we evaluate the platform?",
-    answer: "You can start a trial directly from the site or book a guided demo if you want a walkthrough for your team.",
+    answer: "Create an account on the FREE plan or book a guided demo if you want a walkthrough for your team.",
   },
   {
     question: "What support options are available?",
@@ -131,14 +131,14 @@ export default function ContactPage() {
               <div className="mt-10 rounded-3xl border border-[#F2D9A1] bg-[#FFF8E8] p-8 shadow-sm">
                 <h2 className="text-2xl font-semibold text-[#9A6500]">Ready to see Rxtrace in action?</h2>
                 <p className="mt-3 text-sm leading-6 text-[#7A5A11]">
-                  Start your trial now, or book a demo if you want a guided walkthrough for your team.
+                  Start on the FREE plan, or book a demo if you want a guided walkthrough for your team.
                 </p>
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row">
                   <Link
                     href="/auth/signup"
                     className="inline-flex items-center justify-center rounded-xl bg-[#0F5D5E] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#083B3C]"
                   >
-                    Start Trial
+                    Get Started
                   </Link>
                   <Link
                     href="/#book-demo"

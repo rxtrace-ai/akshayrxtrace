@@ -3,15 +3,12 @@ import { apiJson } from '@/lib/api/response';
 import { headers } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAppUrl } from "@/lib/config";
-import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
 import { getUnifiedSubscriptionStatus } from "@/lib/billing/subscriptionStatus";
 import { sendTransactionalEmail } from "@/lib/transactionalEmail";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const TRIAL_DURATION_DAYS = 3;
-const TRIAL_REMINDER_DAY = 1;
 
 function isAuthorized(authHeader: string | null): boolean {
   const secret = String(process.env.INTERNAL_SYNC_TOKEN || process.env.CRON_SECRET || "").trim();
@@ -47,12 +44,9 @@ export async function POST() {
   const admin = getSupabaseAdmin();
   const appUrl = getAppUrl();
   const renewLink = `${appUrl}/dashboard/subscription`;
-  const upgradeLink = `${appUrl}/pricing`;
 
   const stats = {
     companies_checked: 0,
-    sent_trial_reminder_1: 0,
-    sent_trial_expired: 0,
     sent_reminder_7: 0,
     sent_reminder_2: 0,
     sent_subscription_expired: 0,
@@ -85,41 +79,7 @@ export async function POST() {
       const ownerName =
         String((ownerResult?.data?.user?.user_metadata as any)?.full_name || "").trim() || "there";
 
-      const [entitlement, subscription] = await Promise.all([
-        getCompanyEntitlementSnapshot(admin, companyId),
-        getUnifiedSubscriptionStatus({ supabase: admin, companyId }),
-      ]);
-
-      if (entitlement.trial_active && entitlement.trial_expires_at) {
-        const trialDays = daysUntilUtc(entitlement.trial_expires_at);
-        if (trialDays === TRIAL_REMINDER_DAY) {
-          await sendTransactionalEmail({
-            to: ownerEmail,
-            event: "TRIAL_REMINDER_1",
-            payload: {
-              user_name: ownerName,
-              expiry_date: formatDateForEmail(entitlement.trial_expires_at),
-              upgrade_link: upgradeLink,
-            },
-          });
-          stats.sent_trial_reminder_1 += 1;
-        }
-      }
-
-      if (!entitlement.trial_active && entitlement.trial_expires_at) {
-        const trialDays = daysUntilUtc(entitlement.trial_expires_at);
-        if (trialDays === 0) {
-          await sendTransactionalEmail({
-            to: ownerEmail,
-            event: "TRIAL_EXPIRED",
-            payload: {
-              user_name: ownerName,
-              upgrade_link: upgradeLink,
-            },
-          });
-          stats.sent_trial_expired += 1;
-        }
-      }
+      const subscription = await getUnifiedSubscriptionStatus({ supabase: admin, companyId });
 
       const currentPeriodEnd = String((subscription.subscription as any)?.current_period_end || "").trim();
       if (!currentPeriodEnd) continue;
@@ -170,7 +130,6 @@ export async function POST() {
 
   return apiJson({
     success: true,
-    trial_duration_days: TRIAL_DURATION_DAYS,
     ...stats,
   });
 }

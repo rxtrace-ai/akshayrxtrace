@@ -6,21 +6,7 @@ import { getUnifiedSubscriptionStatus } from '@/lib/billing/subscriptionStatus';
 import { isTrustedOrigin, shouldEnforceCsrfForApi } from '@/lib/security/csrf';
 
 const COMPANY_SETUP_ROUTE = '/onboarding/company-setup';
-const TRIAL_ACTIVATION_PATH = '/dashboard/settings';
-
-function withTrialActivationReason(request: NextRequest) {
-  const url = new URL(TRIAL_ACTIVATION_PATH, request.url);
-  url.searchParams.set('onboarding', 'trial_activation');
-  return url;
-}
-
-function isOwnerActivationAllowedRoute(pathname: string) {
-  return (
-    pathname === TRIAL_ACTIVATION_PATH ||
-    pathname.startsWith('/dashboard/subscription') ||
-    pathname.startsWith('/dashboard/checkout')
-  );
-}
+const SUBSCRIPTION_ROUTE = '/dashboard/subscription';
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -141,7 +127,7 @@ export async function middleware(request: NextRequest) {
     const resolved = await resolveCompanyForUser(
       supabase,
       session.user.id,
-      'id, profile_completed'
+      'id, profile_completed, subscription_page_seen_at'
     );
 
     if (!resolved) {
@@ -162,6 +148,9 @@ export async function middleware(request: NextRequest) {
     }
 
     if (resolved.isOwner) {
+      if (!(company.subscription_page_seen_at as string | null) && pathname !== SUBSCRIPTION_ROUTE && !pathname.startsWith('/dashboard/checkout')) {
+        return NextResponse.redirect(new URL(SUBSCRIPTION_ROUTE + '?onboarding=complete', request.url));
+      }
       const status = await getUnifiedSubscriptionStatus({
         supabase: supabase as any,
         companyId: resolved.companyId,
@@ -169,21 +158,13 @@ export async function middleware(request: NextRequest) {
       const hasOperationalAccess =
         status.status === 'active' || status.status === 'pending';
 
-      if (!hasOperationalAccess) {
-        if (isOnboardingCompanySetupRoute) {
-          return NextResponse.redirect(withTrialActivationReason(request));
-        }
-
-        if (!isOwnerActivationAllowedRoute(pathname)) {
-          return NextResponse.redirect(withTrialActivationReason(request));
-        }
-      } else if (pathname === TRIAL_ACTIVATION_PATH && request.nextUrl.searchParams.get('onboarding') === 'trial_activation') {
-        return NextResponse.redirect(new URL('/dashboard', request.url));
+      if (!hasOperationalAccess && pathname !== SUBSCRIPTION_ROUTE && !pathname.startsWith('/dashboard/checkout')) {
+        return NextResponse.redirect(new URL(SUBSCRIPTION_ROUTE, request.url));
       }
     }
 
     if (isOnboardingCompanySetupRoute) {
-      return NextResponse.redirect(new URL('/dashboard', request.url));
+      return NextResponse.redirect(new URL(SUBSCRIPTION_ROUTE, request.url));
     }
 
     // Access control: completed profiles can access dashboard routes.

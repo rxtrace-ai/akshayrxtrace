@@ -56,7 +56,7 @@ export default function Analytics() {
             <div className="grid md:grid-cols-2 gap-6">
               <div className="space-y-2">
                 <p className="text-gray-600">Plan Type</p>
-                <p className="text-3xl font-bold text-[#0052CC]">Free Trial (30 Days)</p>
+                <p className="text-3xl font-bold text-[#0052CC]">FREE Plan</p>
               </div>
               <div className="space-y-2">
                 <p className="text-gray-600">Labels Remaining</p>
@@ -67,7 +67,7 @@ export default function Analytics() {
             <div className="border-t pt-4 mt-6">
               <p className="text-gray-700 mb-4">
                 <strong>Note:</strong> Paid billing is disabled during pilot. 
-                For now, enjoy your free trial with up to 1,000 labels.
+                Choose a paid plan to activate code generation quotas.
               </p>
               <Link href="/contact">
                 <Button className="bg-orange-500 hover:bg-orange-600 text-white">

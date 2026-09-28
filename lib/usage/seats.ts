@@ -18,7 +18,7 @@ async function getSeatAllocationBreakdown(
   return ((data as Array<{ source: string | null; amount: number | null }>) || []).reduce(
     (acc, row) => {
       const amount = Math.max(0, Math.trunc(Number(row.amount ?? 0)));
-      if (row.source === 'subscription' || row.source === 'trial') {
+      if (row.source === 'subscription') {
         acc.seatsFromPlan += amount;
       } else if (row.source === 'addon') {
         acc.seatsFromAddons += amount;

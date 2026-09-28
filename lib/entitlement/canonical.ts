@@ -6,8 +6,6 @@ export type CanonicalMetric = "unit" | "box" | "carton" | "pallet" | "seat" | "p
 
 export type EntitlementSnapshot = {
   state: string;
-  trial_active: boolean;
-  trial_expires_at: string | null;
   period_start: string | null;
   period_end: string | null;
   limits: Record<CanonicalMetric, number>;
@@ -54,8 +52,6 @@ function normalizeSnapshot(raw: any): EntitlementSnapshot {
 
   return {
     state: String(raw?.state || "NO_ACTIVE_SUBSCRIPTION"),
-    trial_active: Boolean(raw?.trial_active),
-    trial_expires_at: raw?.trial_expires_at ?? null,
     period_start: raw?.period_start ?? null,
     period_end: raw?.period_end ?? null,
     limits,

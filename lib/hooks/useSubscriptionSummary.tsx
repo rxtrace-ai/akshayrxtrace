@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 export type CanonicalDecisionCode =
-  | 'TRIAL_EXPIRED'
   | 'NO_ACTIVE_SUBSCRIPTION'
   | 'QUOTA_EXHAUSTED'
   | null;
@@ -24,16 +23,10 @@ export type SubscriptionSummaryResponse = {
   } | null;
   subscriptionStatus?: {
     status: "active" | "pending" | "expired" | "cancelled";
-    source?: "trial" | "subscription" | null;
+    source?: "subscription" | null;
     rawStatus?: "active" | "pending" | "expired" | "cancelled" | null;
     paidThroughPeriodEnd?: boolean;
     accessEndsAt?: string | null;
-    trialExpiresAt: string | null;
-  };
-  trial?: {
-    active: boolean;
-    expires_at: string | null;
-    days_remaining: number;
   };
   subscription: null | {
     status: string | null;
@@ -124,8 +117,6 @@ export type SubscriptionSummaryResponse = {
   }>;
   entitlement: {
     state: string;
-    trial_active: boolean;
-    trial_expires_at: string | null;
     period_start: string | null;
     period_end: string | null;
     limits: Record<string, number>;

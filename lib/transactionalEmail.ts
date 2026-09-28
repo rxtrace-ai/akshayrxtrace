@@ -2,8 +2,6 @@ import { getAppUrl } from "@/lib/config";
 
 export type TransactionalEmailEvent =
   | "PASSWORD_RESET"
-  | "TRIAL_REMINDER_1"
-  | "TRIAL_EXPIRED"
   | "SUBSCRIPTION_CANCELLED"
   | "SUBSCRIPTION_REMINDER_7"
   | "SUBSCRIPTION_REMINDER_2"
@@ -16,8 +14,6 @@ type CommonPayload = {
 
 type EventPayloadMap = {
   PASSWORD_RESET: CommonPayload & { reset_link: string };
-  TRIAL_REMINDER_1: CommonPayload & { expiry_date: string; upgrade_link: string };
-  TRIAL_EXPIRED: CommonPayload & { upgrade_link: string };
   SUBSCRIPTION_CANCELLED: CommonPayload & { expiry_date: string; renew_link: string };
   SUBSCRIPTION_REMINDER_7: CommonPayload & { expiry_date: string; renew_link: string };
   SUBSCRIPTION_REMINDER_2: CommonPayload & { expiry_date: string; renew_link: string };
@@ -134,40 +130,6 @@ function buildTemplate<E extends TransactionalEmailEvent>(event: E, payload: Eve
         }),
       };
     }
-    case "TRIAL_REMINDER_1":
-      const trialReminderPayload = payload as EventPayloadMap["TRIAL_REMINDER_1"];
-      return {
-        subject: "Your trial ends tomorrow",
-        html: baseEmailShell({
-          preheader: "Your RxTrace trial ends tomorrow",
-          title: "Your trial ends tomorrow",
-          greetingName: userName,
-          lines: [
-            `Your RxTrace trial will end on ${trialReminderPayload.expiry_date}.`,
-            "Upgrade now to continue using code generation, tracking, and compliance features without interruption.",
-            "If you need help selecting the right plan, our team can help.",
-          ],
-          ctaLabel: "Upgrade Plan",
-          ctaLink: trialReminderPayload.upgrade_link,
-        }),
-      };
-    case "TRIAL_EXPIRED":
-      const trialPayload = payload as EventPayloadMap["TRIAL_EXPIRED"];
-      return {
-        subject: "Your trial has expired",
-        html: baseEmailShell({
-          preheader: "Your RxTrace trial has expired",
-          title: "Your trial has expired",
-          greetingName: userName,
-          lines: [
-            "Your RxTrace trial has expired.",
-            "To continue using code generation, tracking, and compliance features, please upgrade your plan.",
-            "If you need help selecting a plan, contact us anytime.",
-          ],
-          ctaLabel: "Upgrade Plan",
-          ctaLink: trialPayload.upgrade_link,
-        }),
-      };
     case "SUBSCRIPTION_CANCELLED":
       const cancelledPayload = payload as EventPayloadMap["SUBSCRIPTION_CANCELLED"];
       return {

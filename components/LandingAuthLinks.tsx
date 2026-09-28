@@ -63,7 +63,7 @@ export default function LandingAuthLinks({
           Log in
         </Link>
         <Link href="/auth/signup" className={registerClassName}>
-          Start Trial
+          Get Started
         </Link>
       </>
     );
@@ -76,7 +76,7 @@ export default function LandingAuthLinks({
           Log in
         </Link>
         <Link href="/auth/signup" className={registerClassName}>
-          Start Trial
+          Get Started
         </Link>
       </>
     );

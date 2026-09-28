@@ -86,9 +86,6 @@ export async function POST(req: Request) {
 
   if (error) {
     const message = String(error.message || "Plant activation failed");
-    if (message.includes("TRIAL_EXPIRED")) {
-      return apiJson({ error: "TRIAL_EXPIRED" }, { status: 403 });
-    }
     if (message.includes("PLANT_QUOTA_EXCEEDED")) {
       return apiJson({ error: "PLANT_QUOTA_EXCEEDED" }, { status: 403 });
     }

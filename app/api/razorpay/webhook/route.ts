@@ -13,19 +13,6 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const TRIAL_AMOUNT_PAISE = 100;
-const TRIAL_DURATION_DAYS = 3;
-
-const TRIAL_QUOTAS = {
-  unit: 5000,
-  box: 500,
-  carton: 100,
-  pallet: 25,
-  seats: 5,
-  plants: 2,
-  handsets: 2,
-} as const;
-
 const SUPPORTED_WEBHOOK_EVENTS = new Set([
   "payment.captured",
   "order.paid",
@@ -39,146 +26,6 @@ const SUPPORTED_WEBHOOK_EVENTS = new Set([
   "invoice.paid",
   "invoice.payment_failed",
 ]);
-
-function extractTrialCompanyIdFromPurpose(purpose: string): string | null {
-  const value = String(purpose || "").trim();
-  const prefix = "trial_activation_company_";
-  if (!value.startsWith(prefix)) return null;
-  const companyId = value.slice(prefix.length).trim();
-  return companyId || null;
-}
-
-async function activateTrialFromPaidOrder(params: {
-  supabase: ReturnType<typeof getSupabaseAdmin>;
-  orderId: string;
-  paymentId: string | null;
-  amountPaise: number;
-  correlationId: string;
-  paymentNotes: any;
-}) {
-  const { supabase, orderId, paymentId, amountPaise, correlationId, paymentNotes } = params;
-
-  const { data: orderRow, error: orderError } = await supabase
-    .from("razorpay_orders")
-    .select("order_id, purpose, receipt, amount_paise, status, payment_id")
-    .eq("order_id", orderId)
-    .maybeSingle();
-
-  if (orderError) {
-    logError("WEBHOOK_TRIAL_LOOKUP_ERROR", {
-      operation: "razorpay_webhook_trial",
-      correlationId,
-      order_id: orderId,
-      error: orderError.message,
-    });
-    return;
-  }
-  if (!orderRow) return;
-
-  const purpose = String((orderRow as any)?.purpose || "").trim();
-  const receipt = String((orderRow as any)?.receipt || "").trim();
-  const companyId = extractTrialCompanyIdFromPurpose(purpose);
-
-  const notesPurpose = String(paymentNotes?.purpose || "").trim();
-  const notesCompanyId = String(paymentNotes?.company_id || "").trim();
-  const notesProvided = notesPurpose.length > 0 || notesCompanyId.length > 0;
-  const notesMatch = !notesProvided || (notesPurpose === purpose && notesCompanyId === companyId);
-
-  const strictTrialMatch =
-    !!companyId &&
-    receipt.startsWith("trial_") &&
-    Number((orderRow as any)?.amount_paise || 0) === TRIAL_AMOUNT_PAISE &&
-    Math.trunc(amountPaise) === TRIAL_AMOUNT_PAISE &&
-    notesMatch;
-
-  if (!strictTrialMatch) return;
-
-  const now = new Date();
-  const nowIso = now.toISOString();
-
-  await supabase
-    .from("razorpay_orders")
-    .update({
-      status: "paid",
-      paid_at: nowIso,
-      ...(paymentId ? { payment_id: paymentId } : {}),
-    })
-    .eq("order_id", orderId);
-
-  const trialEnd = new Date(now);
-  trialEnd.setUTCDate(trialEnd.getUTCDate() + TRIAL_DURATION_DAYS);
-  const trialEndIso = trialEnd.toISOString();
-
-  const { data: insertedTrialRows, error: insertTrialError } = await supabase
-    .from("company_trials")
-    .upsert(
-      {
-        company_id: companyId,
-        trial_start: nowIso,
-        trial_end: trialEndIso,
-        status: "active",
-        updated_at: nowIso,
-      },
-      { onConflict: "company_id", ignoreDuplicates: true }
-    )
-    .select("company_id");
-
-  if (insertTrialError) {
-    logError("WEBHOOK_TRIAL_ACTIVATION_ERROR", {
-      operation: "razorpay_webhook_trial",
-      correlationId,
-      companyId,
-      order_id: orderId,
-      payment_id: paymentId,
-      error: insertTrialError.message,
-    });
-    return;
-  }
-
-  if (!insertedTrialRows || insertedTrialRows.length === 0) {
-    return;
-  }
-
-  const quotaRows = [
-    { resource: "unit", amount: TRIAL_QUOTAS.unit, quota_type: "variable" },
-    { resource: "box", amount: TRIAL_QUOTAS.box, quota_type: "variable" },
-    { resource: "carton", amount: TRIAL_QUOTAS.carton, quota_type: "variable" },
-    { resource: "pallet", amount: TRIAL_QUOTAS.pallet, quota_type: "variable" },
-    { resource: "seats", amount: TRIAL_QUOTAS.seats, quota_type: "base" },
-    { resource: "plants", amount: TRIAL_QUOTAS.plants, quota_type: "base" },
-    { resource: "handsets", amount: TRIAL_QUOTAS.handsets, quota_type: "base" },
-  ]
-    .filter((row) => row.amount > 0)
-    .map((row) => ({
-      company_id: companyId,
-      source: "trial",
-      quota_type: row.quota_type,
-      resource: row.resource,
-      amount: row.amount,
-      expires_at: trialEndIso,
-      metadata: {
-        activated_via: "razorpay_webhook",
-        activated_event: paymentId ? "payment.captured" : "order.paid",
-        order_id: orderId,
-        payment_id: paymentId,
-        correlation_id: correlationId,
-      },
-    }));
-
-  if (quotaRows.length === 0) return;
-
-  const { error: quotaError } = await supabase.from("quota_allocations").insert(quotaRows as any[]);
-  if (quotaError) {
-    logError("WEBHOOK_TRIAL_QUOTA_ALLOCATION_ERROR", {
-      operation: "razorpay_webhook_trial",
-      correlationId,
-      companyId,
-      order_id: orderId,
-      payment_id: paymentId,
-      error: quotaError.message,
-    });
-  }
-}
 
 function timingSafeEqual(a: string, b: string): boolean {
   const aa = Buffer.from(a, "utf8");
@@ -518,21 +365,7 @@ export async function POST(req: Request) {
       const paymentId = extractPaymentId(event);
       const amountPaise = extractAmountPaise(event);
 
-      if (orderId && amountPaise) {
-        try {
-          await activateTrialFromPaidOrder({
-            supabase,
-            orderId,
-            paymentId,
-            amountPaise,
-            correlationId,
-            paymentNotes: payment?.notes || {},
-          });
-        } catch (trialActivationError) {
-          console.error("Webhook paid-trial activation error:", trialActivationError);
-          return jsonResponse({ ok: false, error: "TRIAL_ACTIVATION_FAILED", event_id: eventId }, 500);
-        }
-      }
+
 
       if (orderId && paymentId && amountPaise) {
         let quoteId: string | null = null;

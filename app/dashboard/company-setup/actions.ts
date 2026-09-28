@@ -207,8 +207,21 @@ export async function createOrUpdateCompanyProfile(
       console.log('[Company Setup] Company created:', companyId);
     }
 
+    const { error: freeSubscriptionError } = await admin.rpc('activate_default_free_subscription', {
+      p_company_id: companyId,
+    });
+    if (freeSubscriptionError) {
+      console.error('[Company Setup] Default subscription activation failed:', freeSubscriptionError);
+      return {
+        success: false,
+        error: 'Company profile saved but default subscription activation failed',
+        details: freeSubscriptionError.message,
+      };
+    }
+
     // 9. Revalidate dashboard paths
     revalidatePath('/dashboard');
+    revalidatePath('/dashboard/subscription');
     revalidatePath('/onboarding/company-setup');
 
     return {

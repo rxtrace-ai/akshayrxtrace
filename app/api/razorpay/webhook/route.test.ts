@@ -154,14 +154,6 @@ vi.mock("@/lib/supabase/admin", () => ({
           };
         }
 
-        if (table === "company_trials") {
-          return {
-            upsert: () => ({
-              select: async () => ({ data: [], error: null }),
-            }),
-          };
-        }
-
         if (table === "quota_allocations") {
           return {
             insert: async () => ({ error: null }),

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,8 +34,6 @@ type CheckoutContextPayload = {
   plans: Plan[];
   subscriptionStatus?: {
     status: "active" | "pending" | "expired" | "cancelled";
-    source?: "trial" | "subscription" | null;
-    trialExpiresAt: string | null;
   };
   current_subscription: null | {
     id: string;
@@ -73,8 +71,6 @@ type SubscriptionSummary = {
   success: boolean;
   subscriptionStatus?: {
     status: "active" | "pending" | "expired" | "cancelled";
-    source?: "trial" | "subscription" | null;
-    trialExpiresAt: string | null;
   };
   subscription: null | {
     status: string | null;
@@ -131,6 +127,7 @@ function MetricCard({ label, value }: { label: string; value: string }) {
 
 export default function SubscriptionPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -147,7 +144,9 @@ export default function SubscriptionPage() {
     const payload = (await res.json()) as CheckoutContextPayload;
     if (!res.ok || !payload.success) throw new Error((payload as any).error || "Failed to load subscription context");
     setContext(payload);
-    setSelectedPlanTemplateId((current) => current || payload.plans[0]?.template_id || "");
+    const requestedPlan = typeof window !== "undefined" ? window.localStorage.getItem("rxtrace_selected_plan") : null;
+    const requestedPlanTemplateId = payload.plans.find((plan) => plan.name.toUpperCase() === requestedPlan)?.template_id;
+    setSelectedPlanTemplateId((current) => current || requestedPlanTemplateId || payload.plans.find((plan) => plan.name.toUpperCase() !== "FREE")?.template_id || "");
     setLoading(false);
   }, []);
 
@@ -165,11 +164,13 @@ export default function SubscriptionPage() {
   }, [loadContext, refreshSummary]);
 
   useEffect(() => {
-    refreshPageState().catch((err: any) => {
-      setError(err?.message || "Failed to load subscription page");
-      setLoading(false);
-      setSummaryLoading(false);
-    });
+    fetch("/api/user/subscription/acknowledge", { method: "POST" })
+      .then(() => refreshPageState())
+      .catch((err: any) => {
+        setError(err?.message || "Failed to load subscription page");
+        setLoading(false);
+        setSummaryLoading(false);
+      });
   }, [refreshPageState]);
 
   const plans = useMemo(() => context?.plans ?? [], [context?.plans]);
@@ -260,6 +261,11 @@ export default function SubscriptionPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
+            {searchParams.get("onboarding") === "complete" ? (
+              <Button asChild variant="outline" className="bg-white">
+                <Link href="/dashboard">Continue to Dashboard</Link>
+              </Button>
+            ) : null}
             <Button asChild variant="outline" className="bg-white">
               <Link href="/dashboard/add-ons">Open Add-ons</Link>
             </Button>
@@ -408,7 +414,7 @@ export default function SubscriptionPage() {
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="grid gap-4 lg:grid-cols-2">
-            {plans.map((plan) => {
+            {plans.filter((plan) => plan.name.toUpperCase() !== "FREE").map((plan) => {
               const isSelected = selectedPlanTemplateId === plan.template_id;
               const isCurrent = currentPlanId === plan.template_id;
               return (

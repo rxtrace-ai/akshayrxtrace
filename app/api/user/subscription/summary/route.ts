@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse  } from 'next/server';
 import { apiJson } from '@/lib/api/response';
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
-import { getCompanyEntitlementSnapshot, type EntitlementSnapshot } from "@/lib/entitlement/canonical";
+import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
 import { getUnifiedSubscriptionStatus } from "@/lib/billing/subscriptionStatus";
-import { TRIAL_LIMITS } from "@/lib/trial";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,57 +19,17 @@ const CACHE_TTL_MS = 10_000;
 const CACHE_STALE_MS = 30_000;
 const summaryCache = new Map<string, CachedSummary>();
 
-function daysRemaining(expiresAtIso: string | null): number {
-  if (!expiresAtIso) return 0;
-  const expires = new Date(expiresAtIso).getTime();
-  if (Number.isNaN(expires)) return 0;
-  const diffMs = expires - Date.now();
-  if (diffMs <= 0) return 0;
-  return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
-}
-
 function normalizeStatus(value: unknown): "active" | "pending" | "expired" | "cancelled" {
   const parsed = String(value || "").trim().toLowerCase();
   if (["active", "authenticated", "activated", "charged"].includes(parsed)) return "active";
   if (["cancelled", "canceled"].includes(parsed)) return "cancelled";
-  if (["pending", "pending_payment", "trial", "trialing"].includes(parsed)) return "pending";
+  if (["pending", "pending_payment"].includes(parsed)) return "pending";
   return "expired";
 }
 
 function toSafeInt(value: unknown): number {
   const parsed = Math.trunc(Number(value ?? 0));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
-function applyTrialLimitFallback(
-  entitlement: EntitlementSnapshot,
-  hasPaidSubscription: boolean
-): EntitlementSnapshot {
-  if (!entitlement.trial_active || hasPaidSubscription) {
-    return entitlement;
-  }
-
-  const metricKeys = Object.keys(TRIAL_LIMITS) as Array<keyof typeof TRIAL_LIMITS>;
-  const limits = { ...entitlement.limits };
-  const remaining = { ...entitlement.remaining };
-
-  for (const key of metricKeys) {
-    const fallbackLimit = Math.max(0, Math.trunc(TRIAL_LIMITS[key] ?? 0));
-    const currentLimit = Math.max(0, Math.trunc(entitlement.limits[key] ?? 0));
-    const nextLimit = Math.max(currentLimit, fallbackLimit);
-    const currentUsage = Math.max(0, Math.trunc(entitlement.usage[key] ?? 0));
-    limits[key] = nextLimit;
-    remaining[key] = Math.max(
-      Math.max(0, Math.trunc(entitlement.remaining[key] ?? 0)),
-      Math.max(0, nextLimit - currentUsage)
-    );
-  }
-
-  return {
-    ...entitlement,
-    limits,
-    remaining,
-  };
 }
 
 function parseView(value: string | null): SummaryView {
@@ -126,7 +85,7 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
   const currentSubscription = subscriptionStatus.subscription ?? null;
   const hasEffectivePaidSubscription =
     subscriptionStatus.source === "subscription" && subscriptionStatus.status === "active";
-  const effectiveEntitlement = applyTrialLimitFallback(entitlement, hasEffectivePaidSubscription);
+  const effectiveEntitlement = entitlement;
   const subTemplate = (currentSubscription as any)?.subscription_plan_templates || null;
   const nowTs = Date.now();
 
@@ -253,7 +212,7 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       if (subscriptionStatus.status === "cancelled" || subscriptionStatus.status === "expired") {
         return { blocked: true, code: "NO_ACTIVE_SUBSCRIPTION" as const };
       }
-      if (!hasEffectivePaidSubscription && subscriptionStatus.source !== "trial") {
+      if (!hasEffectivePaidSubscription) {
         return { blocked: true, code: "NO_ACTIVE_SUBSCRIPTION" as const };
       }
       const remaining = quotaTable.reduce((sum, row) => sum + row.remaining, 0);
@@ -278,11 +237,6 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
 
   const responseBody: Record<string, unknown> = {
     success: true,
-    trial: {
-      active: effectiveEntitlement.trial_active,
-      expires_at: effectiveEntitlement.trial_expires_at,
-      days_remaining: effectiveEntitlement.trial_active ? daysRemaining(effectiveEntitlement.trial_expires_at) : 0,
-    },
     subscription: currentSubscription
       ? {
           status: normalizeStatus((currentSubscription as any).status),
@@ -306,7 +260,6 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
       rawStatus: subscriptionStatus.rawStatus ?? null,
       paidThroughPeriodEnd: Boolean(subscriptionStatus.paidThroughPeriodEnd),
       accessEndsAt: subscriptionStatus.accessEndsAt ?? null,
-      trialExpiresAt: subscriptionStatus.trialExpiresAt ? subscriptionStatus.trialExpiresAt.toISOString() : null,
     },
     entitlement: effectiveEntitlement,
     decisions,

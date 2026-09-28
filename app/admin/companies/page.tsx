@@ -68,7 +68,6 @@ export default function CompaniesManagement() {
     gst_number: '',
     pan: '',
   });
-  // Trials are webhook-only; admin trial reset is intentionally disabled.
 
   // PHASE-2: Two-step confirmation for freeze/unfreeze
   const [freezeConfirming, setFreezeConfirming] = useState(false);

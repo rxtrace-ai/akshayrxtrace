@@ -13,7 +13,7 @@ export type EntitlementDecision = {
   reason_code: string;
   remaining: number;
   consumed: number;
-  fallback_used: "base" | "bonus" | "trial" | null;
+  fallback_used: "base" | "bonus" | null;
 };
 
 const usageTypeToMetric: Record<UsageType, CanonicalMetric> = {
@@ -51,7 +51,6 @@ export type EntitlementBatchItem = {
 
 function mapErrorToReasonCode(error?: string): EntitlementDecision["reason_code"] {
   const value = (error || "").toUpperCase();
-  if (value.includes("TRIAL_EXPIRED")) return "TRIAL_EXPIRED";
   if (value.includes("NO_ACTIVE_SUBSCRIPTION")) return "NO_ACTIVE_SUBSCRIPTION";
   if (value.includes("QUOTA_EXCEEDED")) return "QUOTA_EXCEEDED";
   if (value.includes("UNSUPPORTED_METRIC")) return "INVALID_USAGE_TYPE";

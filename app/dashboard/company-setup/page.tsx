@@ -157,7 +157,7 @@ function CompanySetupContent() {
 
     setSuccess(true);
     setTimeout(() => {
-      router.push('/dashboard/settings?onboarding=trial_activation');
+      router.push('/dashboard/subscription?onboarding=complete');
     }, 1500);
   };
 
@@ -231,7 +231,7 @@ function CompanySetupContent() {
         <Alert className="bg-green-50 border-green-200">
           <CheckCircle className="h-4 w-4 text-green-600" />
           <AlertDescription className="text-green-800">
-            Company setup completed successfully. Redirecting to trial activation...
+            Company setup completed successfully. Redirecting to your subscription...
           </AlertDescription>
         </Alert>
       )}
@@ -452,7 +452,7 @@ function CompanySetupContent() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => router.push('/dashboard')}
+                onClick={() => router.push('/dashboard/subscription')}
                 disabled={submitting}
                 className="border-gray-300"
               >

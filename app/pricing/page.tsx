@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const planHighlights = [
-  "3-day guided trial activation for INR 1",
+  "FREE plan available after company setup",
   "GTIN or PIC-based product traceability",
   "Unit, box, carton, and pallet hierarchy",
   "Verification history and audit-ready records",
@@ -26,40 +26,37 @@ const planMarketingByName: Record<
     extraItems: string[];
   }
 > = {
+  free: {
+    featured: false,
+    cta: "Choose FREE",
+    href: "/signup?plan=FREE",
+    fallbackDescription: "Start on the FREE plan after company setup.",
+    extraItems: ["Zero included quotas", "Upgrade when you are ready"],
+  },
   starter: {
     featured: false,
-    cta: "Start 3-Day Trial",
-    href: "/auth/signup",
+    cta: "Choose Starter",
+    href: "/signup?plan=STARTER",
     fallbackDescription: "For pilot teams starting product traceability with a focused rollout.",
     extraItems: ["GTIN and PIC workflows", "Reports and traceability history"],
   },
   growth: {
     featured: true,
-    cta: "Start 3-Day Trial",
-    href: "/auth/signup",
+    cta: "Choose Growth",
+    href: "/signup?plan=GROWTH",
     fallbackDescription: "For growing operations that need more team capacity and higher monthly volume.",
     extraItems: ["Everything in Starter", "Guided rollout support"],
   },
-  scale: {
+  enterprise: {
     featured: false,
-    cta: "Start 3-Day Trial",
-    href: "/auth/signup",
+    cta: "Choose Enterprise",
+    href: "/signup?plan=ENTERPRISE",
     fallbackDescription: "For multi-site operations that need stronger throughput and rollout control.",
     extraItems: ["Priority onboarding support", "Advanced rollout planning"],
   },
 };
 
 const faqItems = [
-  {
-    question: "How does the trial work?",
-    answer:
-      "You sign up, complete company setup, and activate the 3-day trial through an INR 1 Razorpay payment. Trial access starts after payment confirmation.",
-  },
-  {
-    question: "Is the INR 1 trial refundable?",
-    answer:
-      "The INR 1 payment is used to activate the trial flow. Commercial subscription charges begin only when you choose a paid plan.",
-  },
   {
     question: "Does Rxtrace support both GTIN and PIC flows?",
     answer:
@@ -107,7 +104,7 @@ function normalizePlanName(value: string): string {
 function planSortWeight(name: string): number {
   if (name === "starter") return 1;
   if (name === "growth") return 2;
-  if (name === "scale") return 3;
+  if (name === "enterprise") return 3;
   return 99;
 }
 
@@ -149,8 +146,6 @@ function buildComparisonRows(planCards: PricingCard[], hasAddOns: boolean) {
   const valuesFor = (mapper: (plan: PricingCard) => string) => planCards.map(mapper);
 
   return [
-    ["3-day trial available", ...valuesFor(() => "Yes"), "Sales-led"],
-    ["Trial activation", ...valuesFor(() => "INR 1"), "Custom"],
     ["GTIN workflow support", ...valuesFor(() => "Yes"), "Yes"],
     ["PIC workflow support", ...valuesFor(() => "Yes"), "Yes"],
     ["Packaging hierarchy", ...valuesFor(() => "Yes"), "Yes"],
@@ -162,12 +157,12 @@ function buildComparisonRows(planCards: PricingCard[], hasAddOns: boolean) {
     ["Carton quota", ...valuesFor((plan) => formatInteger(plan.quotas.carton)), "Custom"],
     ["Pallet quota", ...valuesFor((plan) => formatInteger(plan.quotas.pallet)), "Custom"],
     ["Add-ons supported", ...valuesFor(() => (hasAddOns ? "Yes" : "No")), "Yes"],
-    ["API / ERP integration", ...valuesFor((plan) => (normalizePlanName(plan.name) === "scale" ? "Available" : "Add-on")), "Included by scope"],
+    ["API / ERP integration", ...valuesFor((plan) => (normalizePlanName(plan.name) === "enterprise" ? "Available" : "Add-on")), "Included by scope"],
     ["Onboarding support", ...valuesFor((plan) => {
       const normalizedName = normalizePlanName(plan.name);
       if (normalizedName === "starter") return "Standard";
       if (normalizedName === "growth") return "Guided";
-      if (normalizedName === "scale") return "Priority";
+      if (normalizedName === "enterprise") return "Priority";
       return "Standard";
     }), "Dedicated"],
   ];
@@ -229,7 +224,7 @@ export default async function PricingPage() {
         <div className="mx-auto max-w-7xl px-6 py-20">
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">Pricing</p>
           <h1 className="mt-4 max-w-4xl text-4xl font-semibold tracking-tight md:text-5xl">
-            Start with a 3-day trial, then scale with your operations
+            Start on FREE, then scale with your operations
           </h1>
           <p className="mt-6 max-w-3xl text-lg leading-8 text-[#D7EAEA]">
             Rxtrace pricing is built for teams that need real product traceability, anti-counterfeit protection,
@@ -240,7 +235,7 @@ export default async function PricingPage() {
               href="/auth/signup"
               className="inline-flex items-center justify-center rounded-xl bg-[#F59E0B] px-6 py-3 text-sm font-semibold text-[#083B3C] transition hover:bg-[#F7B733]"
             >
-              Start 3-Day Trial
+              Get Started
             </Link>
             <Link
               href="/#book-demo"
@@ -267,22 +262,21 @@ export default async function PricingPage() {
           </div>
 
           <div className="rounded-3xl border border-[#D7E3E4] bg-[#083B3C] p-8 text-white shadow-[0_20px_60px_rgba(8,59,60,0.18)]">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">Trial First</p>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#F7C35F]">FREE Plan</p>
             <h2 className="mt-3 text-3xl font-semibold">A low-friction evaluation path</h2>
             <p className="mt-4 text-sm leading-7 text-[#D7EAEA]">
-              The best way to evaluate Rxtrace is to onboard your team, test GTIN or PIC code generation, and review traceability flows in your own environment before commercial rollout.
+              Every company starts with an active FREE subscription. Upgrade to a paid plan when you need quotas and capacity.
             </p>
             <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
-              <div className="text-sm font-semibold text-[#F7C35F]">Trial details</div>
-              <p className="mt-3 text-sm leading-6 text-[#D7EAEA]">3-day access window</p>
-              <p className="mt-1 text-sm leading-6 text-[#D7EAEA]">INR 1 activation through Razorpay</p>
-              <p className="mt-1 text-sm leading-6 text-[#D7EAEA]">Starts after payment confirmation</p>
+              <div className="text-sm font-semibold text-[#F7C35F]">Included</div>
+              <p className="mt-3 text-sm leading-6 text-[#D7EAEA]">Automatic activation after company setup</p>
+              <p className="mt-1 text-sm leading-6 text-[#D7EAEA]">No payment required</p>
             </div>
             <Link
               href="/auth/signup"
               className="mt-8 inline-flex items-center justify-center rounded-xl bg-[#F59E0B] px-6 py-3 text-sm font-semibold text-[#083B3C] transition hover:bg-[#F7B733]"
             >
-              Start 3-Day Trial
+              Choose a Plan
             </Link>
           </div>
         </div>
@@ -430,7 +424,7 @@ export default async function PricingPage() {
 
           <div className="rounded-3xl border border-[#D7E3E4] bg-white p-8 shadow-sm">
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#0F5D5E]">Frequently Asked Questions</p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C]">Pricing and trial questions, answered simply</h2>
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#083B3C]">Pricing questions, answered simply</h2>
             <div className="mt-8 grid gap-4">
               {faqItems.map((item) => (
                 <div key={item.question} className="rounded-2xl border border-[#E2ECEC] bg-[#FCFEFE] p-5 shadow-sm">

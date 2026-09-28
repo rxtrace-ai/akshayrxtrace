@@ -174,7 +174,6 @@ export async function GET() {
     0,
     Number(entitlement.allocated || 0) - Number(entitlement.active || 0) - pendingCount
   );
-  const blockedByTrial = entitlement.reason === "trial_expired";
 
   return apiJson({
     success: true,
@@ -183,8 +182,8 @@ export async function GET() {
       active: entitlement.active,
       pending: pendingCount,
       remaining: remainingInvitable,
-      blocked: blockedByTrial || remainingInvitable <= 0,
-      reason: blockedByTrial ? "trial_expired" : remainingInvitable <= 0 ? "quota_exceeded" : null,
+      blocked: remainingInvitable <= 0,
+      reason: remainingInvitable <= 0 ? "quota_exceeded" : null,
     },
     seats: rows,
   });

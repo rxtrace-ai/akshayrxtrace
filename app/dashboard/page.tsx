@@ -18,11 +18,7 @@ type OverviewResponse = {
       | 'active_until_end_date'
       | 'subscription_cancelled'
       | 'subscription_expired'
-      | 'trial_active'
-      | 'trial_expired'
       | 'no_active_plan';
-    is_trial: boolean;
-    trial_ends_at: string | null;
     subscription_starts_at: string | null;
     subscription_ends_at: string | null;
     renewal_at: string | null;
@@ -107,8 +103,6 @@ function getStatusBadgeClass(code: OverviewResponse['subscription']['status_code
   if (code === 'active_until_end_date') return 'bg-blue-100 text-blue-800';
   if (code === 'subscription_cancelled') return 'bg-rose-100 text-rose-700';
   if (code === 'subscription_expired') return 'bg-rose-100 text-rose-700';
-  if (code === 'trial_active') return 'bg-emerald-100 text-emerald-800';
-  if (code === 'trial_expired') return 'bg-rose-100 text-rose-700';
   return 'bg-gray-100 text-gray-700';
 }
 
@@ -207,10 +201,7 @@ export default function DashboardPage() {
     if (code === 'active_subscription' || code === 'active_until_end_date') {
       return { label: 'Manage Plan', tone: 'secondary' as const };
     }
-    if (code === 'trial_active') {
-      return { label: 'Upgrade Plan', tone: 'primary' as const };
-    }
-    if (code === 'subscription_expired' || code === 'subscription_cancelled' || code === 'trial_expired') {
+    if (code === 'subscription_expired' || code === 'subscription_cancelled') {
       return { label: 'Reactivate Plan', tone: 'primary' as const };
     }
     return { label: 'Activate Plan', tone: 'primary' as const };

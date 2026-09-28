@@ -120,7 +120,7 @@ export default function DashboardPlantsPage() {
         <div>
           <h1 className="text-3xl font-semibold">Plant Management</h1>
           <p className="text-sm text-gray-500 max-w-xl">
-            All plants belong to your company tenant. Activate new plants once the trial or paid quota allows.
+            All plants belong to your company tenant. Activate new plants when your subscription allows.
           </p>
         </div>
         <Button onClick={() => setModalOpen(true)} disabled={Boolean(summary.blocked)}>
@@ -153,7 +153,7 @@ export default function DashboardPlantsPage() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-semibold">{summary.remaining}</p>
-            <p className="text-sm text-gray-500">Quota remaining (trial/plan)</p>
+            <p className="text-sm text-gray-500">Subscription quota remaining</p>
           </CardContent>
         </Card>
       </div>

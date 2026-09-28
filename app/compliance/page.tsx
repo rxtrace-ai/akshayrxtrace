@@ -54,7 +54,7 @@ export default function CompliancePage() {
               href="/auth/signup"
               className="inline-flex items-center justify-center rounded-xl bg-[#F59E0B] px-6 py-3 text-sm font-semibold text-[#083B3C] transition hover:bg-[#F7B733]"
             >
-              Start Trial
+              Get Started
             </Link>
             <Link
               href="/#book-demo"

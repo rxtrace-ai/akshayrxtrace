@@ -253,6 +253,10 @@ export default function SignupPage() {
       localStorage.setItem("rxtrace_signup_email", normalizedEmail);
       localStorage.setItem("rxtrace_signup_full_name", fullName.trim());
       localStorage.setItem("rxtrace_signup_password", password);
+      const selectedPlan = new URLSearchParams(window.location.search).get("plan")?.toUpperCase();
+      if (["FREE", "STARTER", "GROWTH", "ENTERPRISE"].includes(selectedPlan || "")) {
+        localStorage.setItem("rxtrace_selected_plan", selectedPlan!);
+      }
 
       router.push(`/signup/verify?email=${encodeURIComponent(normalizedEmail)}`);
     } catch {
@@ -284,12 +288,12 @@ export default function SignupPage() {
                 Create Your RxTrace Account
               </h1>
               <p className="mt-6 text-base leading-8 text-blue-50 lg:text-lg">
-                Start your 30-day free enterprise trial in less than 2 minutes.
+                Create your RxTrace account in less than 2 minutes.
               </p>
             </div>
 
             <div className="mt-10 flex flex-wrap gap-3">
-              {["GS1 Compliant", "No Credit Card", "30-Day Trial"].map((badge) => (
+              {["GS1 Compliant", "No Credit Card", "FREE Plan"].map((badge) => (
                 <span
                   key={badge}
                   className="inline-flex h-10 items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 text-sm font-semibold text-white backdrop-blur"

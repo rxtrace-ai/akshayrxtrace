@@ -87,11 +87,11 @@ export default function UnitCodeGenerationPage() {
     entitlementSummary?.subscription?.cancel_at_period_end;
   const canGenerate = generationDecision
     ? !generationDecision.blocked
-    : subscriptionActive || Boolean(entitlementSummary?.entitlement?.trial_active);
+    : subscriptionActive;
   const generationBlockMessage =
     generationDecision?.code === 'QUOTA_EXHAUSTED'
       ? 'Generation is disabled because your available code quota is exhausted.'
-      : 'Generation is disabled. Trial expired or no active subscription.';
+      : 'Generation is disabled. An active subscription with available quota is required.';
 
   const [items, setItems] = useState<UnitSkuMaster[]>([]);
   const [selectedId, setSelectedId] = useState('');

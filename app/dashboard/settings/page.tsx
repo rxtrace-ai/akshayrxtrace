@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState, FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSubscriptionSummary } from "@/lib/hooks/useSubscriptionSummary";
-import { useQueryParams } from "@/lib/hooks/useQueryParams";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -40,7 +39,6 @@ function formatDate(value: string | null | undefined) {
 
 export default function SettingsPage() {
   const router = useRouter();
-  const query = useQueryParams();
   const {
     data: entitlementSummary,
     loading: summaryLoading,
@@ -49,10 +47,6 @@ export default function SettingsPage() {
   } = useSubscriptionSummary({
     view: "settings",
   });
-  const [trialActivating, setTrialActivating] = useState(false);
-  const [trialActivateError, setTrialActivateError] = useState<string | null>(null);
-  const [trialCancelling, setTrialCancelling] = useState(false);
-  const [trialCancelError, setTrialCancelError] = useState<string | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
   const [profileError, setProfileError] = useState("");
@@ -66,7 +60,6 @@ export default function SettingsPage() {
   });
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const showTrialOnboarding = query.get("onboarding") === "trial_activation";
 
   useEffect(() => {
     const profile = entitlementSummary?.company_profile;
@@ -88,92 +81,6 @@ export default function SettingsPage() {
       gst_number: profile.gst_number ?? "",
     });
   }, [entitlementSummary, summaryError, summaryLoading]);
-
-  async function loadRazorpayScript(): Promise<void> {
-    if (typeof window === "undefined") return;
-    if ((window as any).Razorpay) return;
-    await new Promise<void>((resolve, reject) => {
-      const existing = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
-      if (existing) {
-        existing.addEventListener("load", () => resolve());
-        existing.addEventListener("error", () => reject(new Error("RAZORPAY_SCRIPT_LOAD_FAILED")));
-        return;
-      }
-      const script = document.createElement("script");
-      script.src = "https://checkout.razorpay.com/v1/checkout.js";
-      script.async = true;
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error("RAZORPAY_SCRIPT_LOAD_FAILED"));
-      document.body.appendChild(script);
-    });
-    if (!(window as any).Razorpay) throw new Error("RAZORPAY_SDK_NOT_AVAILABLE");
-  }
-
-  async function handleActivateTrial() {
-    setTrialActivateError(null);
-    setTrialActivating(true);
-    try {
-      const idempotencyKey = crypto.randomUUID();
-      const res = await fetch("/api/user/trial/activate/initiate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": idempotencyKey,
-        },
-        body: JSON.stringify({ idempotency_key: idempotencyKey }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok || !payload?.success) {
-        throw new Error(payload?.error || "TRIAL_ACTIVATION_INIT_FAILED");
-      }
-
-      await loadRazorpayScript();
-      const RazorpayCtor = (window as any).Razorpay;
-
-      await new Promise<void>((resolve) => {
-        const rzp = new RazorpayCtor({
-          key: payload?.razorpay?.key_id,
-          order_id: payload?.razorpay?.order_id,
-          amount: payload?.razorpay?.amount_paise,
-          currency: payload?.razorpay?.currency || "INR",
-          name: "RxTrace",
-          description: "Trial activation (\u20b91)",
-          handler: () => resolve(),
-          modal: { ondismiss: () => resolve() },
-        });
-        rzp.open();
-      });
-
-      await refreshSummary({ force: true });
-      router.refresh();
-    } catch (err: any) {
-      setTrialActivateError(err?.message || "TRIAL_ACTIVATION_FAILED");
-    } finally {
-      setTrialActivating(false);
-    }
-  }
-
-  async function handleCancelTrial() {
-    setTrialCancelError(null);
-    setTrialCancelling(true);
-    try {
-      const res = await fetch("/api/company/trial/cancel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok || !payload?.success) {
-        throw new Error(payload?.error || "TRIAL_CANCEL_FAILED");
-      }
-
-      await refreshSummary({ force: true });
-      router.refresh();
-    } catch (err: any) {
-      setTrialCancelError(err?.message || "TRIAL_CANCEL_FAILED");
-    } finally {
-      setTrialCancelling(false);
-    }
-  }
 
   async function handleProfileSave(e: FormEvent) {
     e.preventDefault();
@@ -241,6 +148,9 @@ export default function SettingsPage() {
   const hasActiveSubscription =
     entitlementSummary?.subscriptionStatus?.source === "subscription" &&
     entitlementSummary?.subscriptionStatus?.status === "active";
+  const generationEnabled = Boolean(
+    hasActiveSubscription && entitlementSummary?.decisions?.generation && !entitlementSummary.decisions.generation.blocked
+  );
   const scheduledToEnd =
     hasActiveSubscription &&
     entitlementSummary?.subscriptionStatus?.rawStatus === "cancelled" &&
@@ -249,18 +159,6 @@ export default function SettingsPage() {
   const inactiveSubscriptionStatus = subscriptionInactive
     ? entitlementSummary?.subscriptionStatus?.status ?? entitlementSummary?.subscription?.status ?? "expired"
     : null;
-  const trialActive = Boolean(
-    entitlementSummary?.trial?.active ?? entitlementSummary?.entitlement?.trial_active
-  ) && !hasActiveSubscription;
-  const trialWasAlreadyUsed = Boolean(entitlementSummary?.trial?.expires_at);
-  const generationEnabled = entitlementSummary?.decisions?.generation
-    ? !entitlementSummary.decisions.generation.blocked
-    : hasActiveSubscription || trialActive;
-  const trialBadgeLabel = trialActive
-    ? "Trial Activated"
-    : trialWasAlreadyUsed
-      ? "Trial Expired"
-      : "Trial Inactive";
   const planRecoveryLabel =
     inactiveSubscriptionStatus === "cancelled"
       ? "Reactivate Plan"
@@ -277,7 +175,7 @@ export default function SettingsPage() {
         : inactiveSubscriptionStatus === "pending"
           ? "Payment Pending"
           : "Plan Expired"
-      : trialBadgeLabel;
+      : "No Active Subscription";
 
   const accessMessage = useMemo(
     () =>
@@ -291,9 +189,7 @@ export default function SettingsPage() {
               : inactiveSubscriptionStatus === "pending"
                 ? "Payment is pending. Complete checkout or choose a plan to activate access."
                 : "Plan expired. Renew or upgrade to restore paid access."
-            : trialActive
-            ? "Trial activated (limits apply)"
-            : "Trial expired. Upgrade to continue",
+            : "Choose a plan to activate access.",
     [
       entitlementSummary?.subscription?.current_period_end,
       entitlementSummary?.subscription?.plan_name,
@@ -301,7 +197,6 @@ export default function SettingsPage() {
       inactiveSubscriptionStatus,
       scheduledToEnd,
       subscriptionInactive,
-      trialActive,
     ]
   );
 
@@ -313,12 +208,6 @@ export default function SettingsPage() {
         <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
         <p className="text-gray-500 mt-2">Pilot configuration and system setup.</p>
       </div>
-
-      {showTrialOnboarding ? (
-        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-          Account created and company setup is complete. Activate the trial below to finish onboarding.
-        </div>
-      ) : null}
 
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
         <div className="flex items-center justify-between">
@@ -502,7 +391,7 @@ export default function SettingsPage() {
               {!hasActiveSubscription ? (
                 <Button asChild size="sm" className="w-fit bg-blue-600 hover:bg-blue-700">
                   <Link href="/dashboard/subscription">
-                    {subscriptionInactive ? planRecoveryLabel : trialActive ? "Upgrade Plan" : "Activate Plan"}
+                    {subscriptionInactive ? planRecoveryLabel : "Upgrade Plan"}
                   </Link>
                 </Button>
               ) : null}
@@ -512,8 +401,6 @@ export default function SettingsPage() {
       </div>
 
       {!!summaryError && <p className="text-sm text-red-600">{summaryError}</p>}
-      {trialActivateError && <p className="text-sm text-red-600">{trialActivateError}</p>}
-      {trialCancelError && <p className="text-sm text-red-600">{trialCancelError}</p>}
 
       {summaryLoading && !entitlementSummary ? (
         <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-3">
@@ -580,101 +467,7 @@ export default function SettingsPage() {
             </div>
           ) : null}
         </div>
-      ) : (
-        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-medium">Trial</h2>
-              <p className="text-sm text-gray-500">
-                Activate a trial or choose a subscription plan to restore generation access.
-              </p>
-            </div>
-            <Badge className={`px-3 py-1 text-sm ${trialActive ? "bg-green-600 text-white" : "bg-red-100 text-red-700"}`}>
-              {accessBadgeLabel}
-            </Badge>
-          </div>
-
-          {trialActive && entitlementSummary ? (
-            <>
-              <div className="text-sm text-gray-600">
-                {Math.max(0, Number(entitlementSummary?.trial?.days_remaining || 0))} day(s) remaining
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                {[
-                  { label: "Unit", key: "unit" },
-                  { label: "Box", key: "box" },
-                  { label: "Carton", key: "carton" },
-                  { label: "Pallet", key: "pallet" },
-                  { label: "Seats", key: "seat" },
-                  { label: "Plants", key: "plant" },
-                  { label: "Handsets", key: "handset" },
-                ].map((metric) => {
-                  const usage = entitlementSummary.entitlement?.usage?.[metric.key] ?? 0;
-                  const limit = entitlementSummary.entitlement?.limits?.[metric.key] ?? 0;
-                  const remaining = entitlementSummary.entitlement?.remaining?.[metric.key] ?? 0;
-                  return (
-                    <div
-                      key={metric.key}
-                      className="flex items-center justify-between border border-dashed border-gray-200 rounded-xl px-4 py-3"
-                    >
-                      <span className="text-gray-500">{metric.label}</span>
-                      <span className="font-semibold text-gray-900">
-                        {usage} / {limit} ({remaining} left)
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="flex items-center gap-3">
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={handleCancelTrial}
-                  disabled={trialCancelling}
-                >
-                  {trialCancelling ? "Cancelling..." : "Cancel Trial"}
-                </Button>
-                <span className="text-xs text-gray-500">
-                  Cancelling removes trial quotas and ends access immediately.
-                </span>
-              </div>
-            </>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-gray-600">
-                {subscriptionInactive
-                  ? inactiveSubscriptionStatus === "cancelled"
-                    ? "Plan cancelled. Previous plan details are hidden because paid access is no longer active."
-                    : inactiveSubscriptionStatus === "pending"
-                      ? "Plan payment is pending. Complete checkout or choose a plan to activate access."
-                      : "Plan expired. Previous plan details are hidden because paid access is no longer active."
-                  : trialWasAlreadyUsed
-                    ? "Trial expired or cancelled. Reactivation is not available."
-                    : "Trial inactive."}
-              </p>
-              <div className="flex items-center gap-3">
-                {!subscriptionInactive && !trialWasAlreadyUsed && (
-                  <Button
-                    type="button"
-                    onClick={handleActivateTrial}
-                    disabled={trialActivating}
-                    className="bg-blue-600 hover:bg-blue-700"
-                  >
-                    {trialActivating ? "Opening payment..." : "Activate Trial (INR 1)"}
-                  </Button>
-                )}
-                <Button asChild className="bg-blue-600 hover:bg-blue-700">
-                  <Link href="/dashboard/subscription">
-                    {subscriptionInactive ? planRecoveryLabel : "Upgrade Plan"}
-                  </Link>
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      ) : null}
 
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
         <h2 className="text-xl font-medium">ERP Code Ingestion</h2>
