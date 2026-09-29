@@ -8,6 +8,7 @@ export type EntitlementSnapshot = {
   state: string;
   period_start: string | null;
   period_end: string | null;
+  quota_period_end: string | null;
   limits: Record<CanonicalMetric, number>;
   usage: Record<CanonicalMetric, number>;
   topups: Record<"unit" | "box" | "carton" | "pallet", number>;
@@ -54,6 +55,7 @@ function normalizeSnapshot(raw: any): EntitlementSnapshot {
     state: String(raw?.state || "NO_ACTIVE_SUBSCRIPTION"),
     period_start: raw?.period_start ?? null,
     period_end: raw?.period_end ?? null,
+    quota_period_end: raw?.quota_period_end ?? raw?.period_end ?? null,
     limits,
     usage,
     topups,

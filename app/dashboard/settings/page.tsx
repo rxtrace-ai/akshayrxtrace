@@ -437,13 +437,37 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          <div className="rounded-xl border border-gray-200 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-medium text-gray-900">Quota for current period</h3>
+              <p className="text-xs text-gray-500">
+                {formatDate(entitlementSummary.period?.start)} – {formatDate(entitlementSummary.period?.end)}
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="text-xs uppercase tracking-wide text-gray-500">
+                  <tr><th className="py-2">Resource</th><th className="py-2">Opening</th><th className="py-2">Used</th><th className="py-2">Remaining / Closing</th></tr>
+                </thead>
+                <tbody>
+                  {(entitlementSummary.quota_table || []).map((row) => (
+                    <tr key={row.metric} className="border-t border-gray-100">
+                      <td className="py-2 capitalize">{row.metric === "pallet" ? "Pallet SSCC" : `${row.metric} QR`}</td>
+                      <td className="py-2">{row.opening.toLocaleString("en-IN")}</td>
+                      <td className="py-2">{row.used.toLocaleString("en-IN")}</td>
+                      <td className="py-2">{row.remaining.toLocaleString("en-IN")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3 text-sm">
             {entitlementSummary.capacity_table?.map((row) => (
               <div key={row.metric} className="rounded-xl border border-dashed border-gray-200 px-4 py-3">
                 <p className="text-gray-500 capitalize">{row.metric}s</p>
-                <p className="font-semibold text-gray-900">
-                  {row.consumed} / {row.allocated}
-                </p>
+                <p className="font-semibold text-gray-900">{row.opening} capacity · {row.used} active</p>
                 <p className="text-xs text-gray-500">
                   Plan {row.subscription_allocated}, Add-ons {row.addon_allocated}, Remaining {row.remaining}
                 </p>

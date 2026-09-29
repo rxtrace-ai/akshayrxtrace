@@ -90,10 +90,19 @@ type SubscriptionSummary = {
   };
   quota_table: Array<{
     metric: string;
+    opening: number;
+    used: number;
     allocated: number;
     consumed: number;
     remaining: number;
   }>;
+  capacity_table?: Array<{
+    metric: string;
+    opening: number;
+    used: number;
+    remaining: number;
+  }>;
+  period?: { start: string | null; end: string | null };
   quota_period_end?: string | null;
   remaining_quota?: number;
   total_quota?: number;
@@ -341,27 +350,41 @@ export default function SubscriptionPage() {
                   <MetricCard label="Status" value={normalizeStatusLabel(currentSubscription.status)} />
                 </div>
 
+                <p className="text-sm text-slate-500">
+                  Quota period: {formatDateLabel(summary?.period?.start)} to {formatDateLabel(summary?.quota_period_end || summary?.period?.end)}
+                </p>
+
                 <div className="overflow-x-auto rounded-[24px] border border-slate-200">
                   <table className="w-full text-left text-sm">
                     <thead className="bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
                       <tr>
                         <th className="px-4 py-3">Resource</th>
-                        <th className="px-4 py-3">Allocated</th>
-                        <th className="px-4 py-3">Consumed</th>
-                        <th className="px-4 py-3">Remaining</th>
+                        <th className="px-4 py-3">Opening</th>
+                        <th className="px-4 py-3">Used</th>
+                        <th className="px-4 py-3">Remaining / Closing</th>
                       </tr>
                     </thead>
                     <tbody>
                       {summary?.quota_table.map((row) => (
                         <tr key={row.metric} className="border-t border-slate-200">
-                          <td className="px-4 py-3 font-medium capitalize text-slate-900">{row.metric}</td>
-                          <td className="px-4 py-3 text-slate-600">{row.allocated.toLocaleString()}</td>
-                          <td className="px-4 py-3 text-slate-600">{row.consumed.toLocaleString()}</td>
+                          <td className="px-4 py-3 font-medium text-slate-900">{row.metric === "pallet" ? "Pallet SSCC" : `${row.metric} QR`}</td>
+                          <td className="px-4 py-3 text-slate-600">{row.opening.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-slate-600">{row.used.toLocaleString()}</td>
                           <td className="px-4 py-3 text-slate-600">{row.remaining.toLocaleString()}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  {(summary?.capacity_table || []).map((row) => (
+                    <div key={row.metric} className="rounded-xl border border-slate-200 p-4">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">{row.metric} capacity</p>
+                      <p className="mt-1 font-semibold text-slate-900">{row.opening.toLocaleString()} opening · {row.used.toLocaleString()} active</p>
+                      <p className="text-sm text-slate-500">Remaining: {row.remaining.toLocaleString()}</p>
+                    </div>
+                  ))}
                 </div>
               </>
             ) : (

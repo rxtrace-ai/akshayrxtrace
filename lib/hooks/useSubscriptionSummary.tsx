@@ -40,8 +40,14 @@ export type SubscriptionSummaryResponse = {
     billing_cycle: string | null;
     plan_price_paise?: number;
   };
+  period?: { start: string | null; end: string | null };
+  quota_period_end?: string | null;
+  total_quota?: number;
+  remaining_quota?: number;
   quota_table?: Array<{
     metric: string;
+    opening: number;
+    used: number;
     allocated: number;
     subscription_allocated: number;
     addon_allocated: number;
@@ -50,6 +56,8 @@ export type SubscriptionSummaryResponse = {
   }>;
   capacity_table?: Array<{
     metric: string;
+    opening: number;
+    used: number;
     allocated: number;
     subscription_allocated: number;
     addon_allocated: number;
@@ -119,6 +127,7 @@ export type SubscriptionSummaryResponse = {
     state: string;
     period_start: string | null;
     period_end: string | null;
+    quota_period_end?: string | null;
     limits: Record<string, number>;
     usage: Record<string, number>;
     remaining: Record<string, number>;
@@ -147,7 +156,7 @@ type CacheEntry = {
   inflight: Promise<SubscriptionSummaryResponse> | null;
 };
 
-const DEFAULT_TTL_MS = 10_000;
+const DEFAULT_TTL_MS = 0;
 const cacheByView = new Map<SummaryView, CacheEntry>();
 
 function getUrl(view: SummaryView) {

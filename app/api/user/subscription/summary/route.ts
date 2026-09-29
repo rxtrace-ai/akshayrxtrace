@@ -3,21 +3,12 @@ import { apiJson } from '@/lib/api/response';
 import { requireOwnerContext } from "@/lib/billing/userSubscriptionAuth";
 import { getCompanyEntitlementSnapshot } from "@/lib/entitlement/canonical";
 import { getUnifiedSubscriptionStatus } from "@/lib/billing/subscriptionStatus";
+import { buildCapacitySummaryRows, buildQuotaSummaryRows } from "@/lib/entitlement/summaryRows";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type SummaryView = "full" | "dashboard" | "settings";
-
-type CachedSummary = {
-  payload: unknown;
-  updatedAt: number;
-  inflight: Promise<unknown> | null;
-};
-
-const CACHE_TTL_MS = 10_000;
-const CACHE_STALE_MS = 30_000;
-const summaryCache = new Map<string, CachedSummary>();
 
 function normalizeStatus(value: unknown): "active" | "pending" | "expired" | "cancelled" {
   const parsed = String(value || "").trim().toLowerCase();
@@ -27,26 +18,9 @@ function normalizeStatus(value: unknown): "active" | "pending" | "expired" | "ca
   return "expired";
 }
 
-function toSafeInt(value: unknown): number {
-  const parsed = Math.trunc(Number(value ?? 0));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
 function parseView(value: string | null): SummaryView {
   if (value === "dashboard" || value === "settings") return value;
   return "full";
-}
-
-function isFresh(entry: CachedSummary) {
-  return Date.now() - entry.updatedAt < CACHE_TTL_MS;
-}
-
-function isStaleWithinWindow(entry: CachedSummary) {
-  return Date.now() - entry.updatedAt < CACHE_STALE_MS;
-}
-
-function getCacheKey(companyId: string, view: SummaryView) {
-  return `${companyId}:${view}`;
 }
 
 function classifyInvoiceLabel(row: any): string {
@@ -134,23 +108,7 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
     throw new Error(companyProfileResult.error.message);
   }
 
-  const codeTypes = ["unit", "box", "carton", "pallet"] as const;
-  const quotaTable = codeTypes.map((metric) => {
-    const allocated = Math.max(0, Math.trunc(effectiveEntitlement.limits?.[metric] ?? 0));
-    const addonAllocated = Math.max(0, Math.trunc(effectiveEntitlement.topups?.[metric] ?? 0));
-    const subscriptionAllocated = Math.max(0, allocated - addonAllocated);
-    const consumed = Math.max(0, Math.trunc(effectiveEntitlement.usage?.[metric] ?? 0));
-    const remaining = Math.max(0, Math.trunc(effectiveEntitlement.remaining?.[metric] ?? 0));
-    return {
-      metric,
-      allocated,
-      subscription_allocated: subscriptionAllocated,
-      addon_allocated: addonAllocated,
-      consumed,
-      remaining,
-    };
-  });
-  const totalQuota = quotaTable.reduce((sum, row) => sum + row.allocated, 0);
+  const quotaTable = buildQuotaSummaryRows(effectiveEntitlement);
 
   const structuralCapacityRows = ((structuralResult.data as any[]) || []).filter((row: any) => {
     const addon = row.add_ons;
@@ -180,32 +138,8 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
     { seat: 0, plant: 0, handset: 0 }
   );
 
-  const planCapacityByMetric: Record<"seat" | "plant" | "handset", number> = {
-    seat: toSafeInt((currentSubscription as any)?.seat_limit),
-    plant: toSafeInt((currentSubscription as any)?.plant_limit),
-    handset: toSafeInt((currentSubscription as any)?.handset_limit),
-  };
-
-  const capacityTypes = ["seat", "plant", "handset"] as const;
   const capacityTable = includeCapacity
-    ? capacityTypes.map((metric) => {
-        const subscriptionAllocated = planCapacityByMetric[metric];
-        const addonAllocated = addonCapacityByMetric[metric] || 0;
-        const allocated = Math.max(
-          subscriptionAllocated + addonAllocated,
-          Math.max(0, Math.trunc(effectiveEntitlement.limits?.[metric] ?? 0))
-        );
-        const consumed = Math.max(0, Math.trunc(effectiveEntitlement.usage?.[metric] ?? 0));
-        const remaining = Math.max(0, Math.trunc(effectiveEntitlement.remaining?.[metric] ?? 0));
-        return {
-          metric,
-          allocated,
-          subscription_allocated: subscriptionAllocated,
-          addon_allocated: addonAllocated,
-          consumed,
-          remaining,
-        };
-      })
+    ? buildCapacitySummaryRows(effectiveEntitlement, addonCapacityByMetric)
     : undefined;
 
   const decisions = {
@@ -266,6 +200,15 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
     },
     entitlement: effectiveEntitlement,
     decisions,
+    quota_table: quotaTable,
+    ...(capacityTable ? { capacity_table: capacityTable } : {}),
+    period: {
+      start: effectiveEntitlement.period_start,
+      end: effectiveEntitlement.quota_period_end ?? effectiveEntitlement.period_end,
+    },
+    quota_period_end: effectiveEntitlement.quota_period_end ?? effectiveEntitlement.period_end,
+    total_quota: quotaTable.reduce((sum, row) => sum + row.opening, 0),
+    remaining_quota: quotaTable.reduce((sum, row) => sum + row.remaining, 0),
   };
 
   if (view === "full") {
@@ -295,15 +238,6 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
     }));
     responseBody.company = { id: owner.companyId, name: owner.companyName };
     responseBody.state = effectiveEntitlement.state;
-    responseBody.period = {
-      start: effectiveEntitlement.period_start,
-      end: effectiveEntitlement.period_end,
-    };
-    responseBody.total_quota = Math.max(0, Math.trunc(totalQuota));
-    responseBody.quota_period_end = effectiveEntitlement.period_end;
-    responseBody.remaining_quota = quotaTable.reduce((sum, row) => sum + row.remaining, 0);
-    responseBody.quota_table = quotaTable;
-    responseBody.capacity_table = capacityTable;
     responseBody.capacity_addons = structuralCapacityRows.map((row: any) => ({
       addon_id: row.addon_id,
       name: row.add_ons?.name ?? null,
@@ -324,7 +258,6 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
     responseBody.subscription_invoices = invoices.filter((row) => String((row as any).invoice_type || "").trim().toLowerCase() === "subscription");
     responseBody.addon_invoices = invoices.filter((row) => String((row as any).invoice_type || "").trim().toLowerCase() !== "subscription");
   } else if (view === "settings") {
-    responseBody.capacity_table = capacityTable;
     responseBody.capacity_addons = structuralCapacityRows.map((row: any) => ({
       addon_id: row.addon_id,
       name: row.add_ons?.name ?? null,
@@ -341,50 +274,13 @@ async function buildSummaryPayload(owner: Awaited<ReturnType<typeof requireOwner
   return responseBody;
 }
 
-async function computeAndStoreSummary(cacheKey: string, owner: Awaited<ReturnType<typeof requireOwnerContext>>, view: SummaryView) {
-  const cacheEntry = summaryCache.get(cacheKey) ?? { payload: null, updatedAt: 0, inflight: null };
-  if (cacheEntry.inflight) {
-    return cacheEntry.inflight;
-  }
-
-  const inflight = buildSummaryPayload(owner, view)
-    .then((payload) => {
-      cacheEntry.payload = payload;
-      cacheEntry.updatedAt = Date.now();
-      cacheEntry.inflight = null;
-      summaryCache.set(cacheKey, cacheEntry);
-      return payload;
-    })
-    .catch((error) => {
-      cacheEntry.inflight = null;
-      summaryCache.set(cacheKey, cacheEntry);
-      throw error;
-    });
-
-  cacheEntry.inflight = inflight;
-  summaryCache.set(cacheKey, cacheEntry);
-  return inflight;
-}
-
 export async function GET(request: NextRequest) {
   const owner = await requireOwnerContext();
   if (!owner.ok) return owner.response;
 
   try {
     const view = parseView(request.nextUrl.searchParams.get("view"));
-    const cacheKey = getCacheKey(owner.companyId, view);
-    const existing = summaryCache.get(cacheKey);
-
-    if (existing?.payload && isFresh(existing)) {
-      return apiJson(existing.payload);
-    }
-
-    if (existing?.payload && isStaleWithinWindow(existing)) {
-      computeAndStoreSummary(cacheKey, owner, view).catch(() => undefined);
-      return apiJson(existing.payload);
-    }
-
-    const payload = await computeAndStoreSummary(cacheKey, owner, view);
+    const payload = await buildSummaryPayload(owner, view);
     return apiJson(payload);
   } catch (error: any) {
     return apiJson(
