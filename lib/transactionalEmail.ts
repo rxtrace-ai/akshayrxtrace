@@ -6,7 +6,12 @@ export type TransactionalEmailEvent =
   | "SUBSCRIPTION_REMINDER_7"
   | "SUBSCRIPTION_REMINDER_2"
   | "SUBSCRIPTION_EXPIRED"
-  | "SUBSCRIPTION_PURCHASED";
+  | "SUBSCRIPTION_PURCHASED"
+  | "FREE_WELCOME"
+  | "FREE_QUOTA_RESET"
+  | "SUBSCRIPTION_UPGRADED"
+  | "SUBSCRIPTION_RENEWED"
+  | "SUBSCRIPTION_PAYMENT_FAILED";
 
 type CommonPayload = {
   user_name?: string;
@@ -19,6 +24,11 @@ type EventPayloadMap = {
   SUBSCRIPTION_REMINDER_2: CommonPayload & { expiry_date: string; renew_link: string };
   SUBSCRIPTION_EXPIRED: CommonPayload & { renew_link: string };
   SUBSCRIPTION_PURCHASED: CommonPayload & { invoice_link: string };
+  FREE_WELCOME: CommonPayload & { company_name: string; login_link: string; getting_started_link: string };
+  FREE_QUOTA_RESET: CommonPayload & { company_name: string; quotas: string; reset_date: string; next_reset_date: string };
+  SUBSCRIPTION_UPGRADED: CommonPayload & { previous_plan: string; new_plan: string; billing_cycle: string; effective_date: string };
+  SUBSCRIPTION_RENEWED: CommonPayload & { plan: string; start_date: string; end_date: string; billing_cycle: string; remaining_quota: string; invoice_link: string };
+  SUBSCRIPTION_PAYMENT_FAILED: CommonPayload & { plan: string; retry_link: string; grace_period: string; support_email: string };
 };
 
 type EventPayload<E extends TransactionalEmailEvent> = EventPayloadMap[E];
@@ -212,6 +222,41 @@ function buildTemplate<E extends TransactionalEmailEvent>(event: E, payload: Eve
           ctaLink: purchasedPayload.invoice_link,
         }),
       };
+    case "FREE_WELCOME": {
+      const p = payload as EventPayloadMap["FREE_WELCOME"];
+      return { subject: "Welcome to RxTrace — Your FREE Subscription is Active", html: baseEmailShell({
+        preheader: "Your FREE RxTrace subscription is active", title: "Your FREE subscription is active", greetingName: userName,
+        lines: [`Company: ${p.company_name}`, "Active Plan: FREE", "Status: Active"], ctaLabel: "Log in to RxTrace", ctaLink: p.login_link,
+      }).replace("</body>", `<p style="text-align:center"><a href="${escapeHtml(sanitizeUrl(p.getting_started_link))}">Getting Started</a></p></body>`) };
+    }
+    case "FREE_QUOTA_RESET": {
+      const p = payload as EventPayloadMap["FREE_QUOTA_RESET"];
+      return { subject: "Your RxTrace Monthly Quota Has Been Refreshed", html: baseEmailShell({
+        preheader: "Your monthly FREE plan quota has been refreshed", title: "Monthly quota refreshed", greetingName: userName,
+        lines: [`Company: ${p.company_name}`, "Plan: FREE", `Fresh monthly quota: ${p.quotas}`, `Reset date: ${p.reset_date}`, `Next reset date: ${p.next_reset_date}`], ctaLabel: "Open Dashboard", ctaLink: "/dashboard",
+      }) };
+    }
+    case "SUBSCRIPTION_UPGRADED": {
+      const p = payload as EventPayloadMap["SUBSCRIPTION_UPGRADED"];
+      return { subject: "Your RxTrace Subscription Has Been Upgraded", html: baseEmailShell({
+        preheader: "Your RxTrace plan has been upgraded", title: "Subscription upgraded", greetingName: userName,
+        lines: [`Previous plan: ${p.previous_plan}`, `New plan: ${p.new_plan}`, `Billing cycle: ${p.billing_cycle}`, `Effective date: ${p.effective_date}`], ctaLabel: "View Subscription", ctaLink: "/dashboard/subscription",
+      }) };
+    }
+    case "SUBSCRIPTION_RENEWED": {
+      const p = payload as EventPayloadMap["SUBSCRIPTION_RENEWED"];
+      return { subject: "Your RxTrace Subscription Has Been Renewed", html: baseEmailShell({
+        preheader: "Your RxTrace subscription renewal is confirmed", title: "Subscription renewed", greetingName: userName,
+        lines: [`Plan: ${p.plan}`, `Start date: ${p.start_date}`, `End date: ${p.end_date}`, `Billing cycle: ${p.billing_cycle}`, `Remaining quota: ${p.remaining_quota}`, "Your invoice is attached and available below."], ctaLabel: "View Invoice", ctaLink: p.invoice_link,
+      }) };
+    }
+    case "SUBSCRIPTION_PAYMENT_FAILED": {
+      const p = payload as EventPayloadMap["SUBSCRIPTION_PAYMENT_FAILED"];
+      return { subject: "Action Required: Subscription Renewal Failed", html: baseEmailShell({
+        preheader: "Your RxTrace subscription payment needs attention", title: "Renewal payment failed", greetingName: userName,
+        lines: [`Plan: ${p.plan}`, `Grace period: ${p.grace_period}`, `Need help? Contact ${p.support_email}.`], ctaLabel: "Retry Payment", ctaLink: p.retry_link,
+      }) };
+    }
     default:
       throw new Error(`Unsupported event: ${String(event)}`);
   }
@@ -222,6 +267,7 @@ export async function sendTransactionalEmail<E extends TransactionalEmailEvent>(
   event: E;
   payload: EventPayload<E>;
   attachments?: EmailAttachment[];
+  idempotencyKey?: string;
 }): Promise<{ success: true }> {
   const resendApiKey = String(process.env.RESEND_API_KEY || "").trim();
   if (!resendApiKey) {
@@ -244,6 +290,7 @@ export async function sendTransactionalEmail<E extends TransactionalEmailEvent>(
     headers: {
       Authorization: `Bearer ${resendApiKey}`,
       "Content-Type": "application/json",
+      ...(params.idempotencyKey ? { "Idempotency-Key": params.idempotencyKey } : {}),
     },
     body: JSON.stringify({
       from,

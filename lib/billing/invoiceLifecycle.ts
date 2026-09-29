@@ -69,3 +69,33 @@ export async function ensureInvoicePdfForInvoice(params: {
 
   return { ok: true, invoice_pdf_url: pdfDataUrl, generated: true };
 }
+
+export async function createInvoicePdfAttachment(params: {
+  supabase: SupabaseClient<any>;
+  invoiceId: string;
+}): Promise<{ filename: string; contentBase64: string; contentType: "application/pdf" }> {
+  const { data: invoice, error: invoiceError } = await params.supabase
+    .from("billing_invoices").select("*").eq("id", params.invoiceId).maybeSingle();
+  if (invoiceError) throw new Error(invoiceError.message);
+  if (!invoice) throw new Error("INVOICE_NOT_FOUND");
+  const { data: company, error: companyError } = await params.supabase
+    .from("companies").select("*").eq("id", (invoice as any).company_id).maybeSingle();
+  if (companyError) throw new Error(companyError.message);
+  if (!company) throw new Error("COMPANY_NOT_FOUND");
+  const buffer = await renderInvoicePdfBuffer({
+    invoice: invoice as any,
+    company: {
+      id: String((company as any).id), company_name: (company as any).company_name || null,
+      gst_number: (company as any).gst_number || null,
+      contact_email: (company as any).contact_email || (company as any).email || null,
+      contact_phone: (company as any).contact_phone || (company as any).phone || null,
+      address: (company as any).address || null,
+    },
+  });
+  const reference = String((invoice as any).reference || (invoice as any).provider_invoice_id || params.invoiceId);
+  return {
+    filename: `${reference.replace(/[^a-zA-Z0-9_.-]/g, "_")}.pdf`,
+    contentBase64: buffer.toString("base64"),
+    contentType: "application/pdf",
+  };
+}

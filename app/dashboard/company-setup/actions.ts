@@ -4,6 +4,8 @@ import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { supabaseServer } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
 import { isIndustryOption } from '@/lib/companies/industry';
+import { deliverNotification } from '@/lib/notifications/delivery';
+import { getAppUrl } from '@/lib/config';
 
 export type CompanySetupResult = 
   | { success: true; companyId: string; message: string }
@@ -217,6 +219,35 @@ export async function createOrUpdateCompanyProfile(
         error: 'Company profile saved but default subscription activation failed',
         details: freeSubscriptionError.message,
       };
+    }
+
+    const { data: activeSubscription } = await admin
+      .from('company_subscriptions')
+      .select('id,status,plan_template_id')
+      .eq('company_id', companyId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const activePlanResult = (activeSubscription as any)?.plan_template_id
+      ? await admin.from('subscription_plan_templates').select('name').eq('id', (activeSubscription as any).plan_template_id).maybeSingle()
+      : { data: null };
+    const activePlan = String((activePlanResult as any)?.data?.name || '').toUpperCase();
+    if (String((activeSubscription as any)?.status || '').toLowerCase() === 'active' && activePlan === 'FREE') {
+      try {
+        await deliverNotification({
+          eventType: 'FREE_WELCOME', event: 'FREE_WELCOME', companyId,
+          recipientEmail: String(user.email || ''), idempotencyKey: `free-welcome:${companyId}`,
+          metadata: { subscription_id: (activeSubscription as any)?.id },
+          payload: {
+            user_name: String(user.user_metadata?.full_name || 'there'),
+            company_name: resolvedCompanyName,
+            login_link: `${getAppUrl()}/login`,
+            getting_started_link: `${getAppUrl()}/dashboard`,
+          },
+        });
+      } catch (notificationError) {
+        console.error('[Company Setup] FREE welcome notification failed:', notificationError);
+      }
     }
 
     // 9. Revalidate dashboard paths

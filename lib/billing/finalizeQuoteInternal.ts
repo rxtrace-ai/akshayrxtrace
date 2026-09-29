@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ensureInvoicePdfForInvoice } from "@/lib/billing/invoiceLifecycle";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAppUrl } from "@/lib/config";
-import { sendTransactionalEmail } from "@/lib/transactionalEmail";
+import { deliverNotification } from "@/lib/notifications/delivery";
 import { logError, logInfo } from "@/lib/observability";
 
 export type FinalizeQuoteParams = {
@@ -70,8 +70,12 @@ async function sendInvoiceEmail(params: {
           ]
         : [];
 
-    await sendTransactionalEmail({
-      to: ownerEmail,
+    await deliverNotification({
+      eventType: "SUBSCRIPTION_PURCHASED",
+      companyId,
+      recipientEmail: ownerEmail,
+      idempotencyKey: `subscription-purchase-invoice:${invoiceId}`,
+      metadata: { invoice_id: invoiceId, quote_id: quoteId },
       event: "SUBSCRIPTION_PURCHASED",
       payload: {
         user_name: ownerName,

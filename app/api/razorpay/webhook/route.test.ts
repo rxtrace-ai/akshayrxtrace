@@ -365,8 +365,10 @@ describe("POST /api/razorpay/webhook", () => {
     expect(replayRes.status).toBe(200);
     expect(replayJson.ok).toBe(true);
     expect(replayJson.duplicate).toBe(true);
-    expect(mockState.finalizeCalls).toHaveLength(1);
-    expect(mockState.paymentIntentUpdates).toHaveLength(1);
+    // Invoice replays re-enter the idempotent sync path to retry failed email
+    // notifications; quote finalization and allocation remain DB-idempotent.
+    expect(mockState.finalizeCalls).toHaveLength(2);
+    expect(mockState.paymentIntentUpdates).toHaveLength(2);
   });
 
   it("handles out-of-order invoice.payment_failed without finalizing the quote", async () => {

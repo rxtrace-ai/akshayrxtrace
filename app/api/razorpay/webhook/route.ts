@@ -3,6 +3,9 @@ import { headers } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { consumeRateLimit } from "@/lib/security/rateLimit";
 import { finalizeQuoteInternal } from "@/lib/billing/finalizeQuoteInternal";
+import { deliverNotification, getCompanyOwnerEmail } from "@/lib/notifications/delivery";
+import { getAppUrl } from "@/lib/config";
+import { createInvoicePdfAttachment } from "@/lib/billing/invoiceLifecycle";
 import { logError, logInfo, logWarn } from "@/lib/observability";
 import {
   fetchRazorpaySubscription,
@@ -196,7 +199,7 @@ async function syncQuoteBackedSubscriptionFromWebhook(params: {
 
   const { data: existingSubscription, error: existingSubscriptionError } = await supabase
     .from("company_subscriptions")
-    .select("id, metadata, start_date")
+    .select("id, metadata, start_date, current_period_start, plan_template_id, billing_cycle")
     .eq("company_id", (quote as any).company_id)
     .order("updated_at", { ascending: false })
     .limit(1)
@@ -304,6 +307,88 @@ async function syncQuoteBackedSubscriptionFromWebhook(params: {
     }
   }
 
+  if (eventType === "invoice.paid" || eventType === "invoice.payment_failed") {
+    try {
+    const owner = await getCompanyOwnerEmail(String((quote as any).company_id));
+    const invoiceId = String(event?.payload?.invoice?.entity?.id || "").trim();
+    const invoiceRowResult = invoiceId
+      ? await supabase.from("billing_invoices").select("id,invoice_pdf_url,reference").eq("provider_invoice_id", invoiceId).maybeSingle()
+      : { data: null, error: null };
+    if (invoiceRowResult.error) throw new Error(invoiceRowResult.error.message);
+    const invoiceRow = invoiceRowResult.data as any;
+    const planResult = (quote as any).plan_id
+      ? await supabase.from("subscription_plan_templates").select("name").eq("id", (quote as any).plan_id).maybeSingle()
+      : { data: null, error: null };
+    if (planResult.error) throw new Error(planResult.error.message);
+    const planName = String(planResult.data?.name || (quote as any).plan_snapshot_json?.name || "Paid").toUpperCase();
+
+    if (owner && eventType === "invoice.payment_failed") {
+      await deliverNotification({
+        eventType: "SUBSCRIPTION_PAYMENT_FAILED", event: "SUBSCRIPTION_PAYMENT_FAILED",
+        companyId: String((quote as any).company_id), recipientEmail: owner.email,
+        idempotencyKey: `subscription-payment-failed:${invoiceId || subscriptionId}`,
+        metadata: { invoice_id: invoiceId, subscription_id: subscriptionId },
+        payload: {
+          user_name: owner.name, plan: planName,
+          retry_link: `${getAppUrl()}/dashboard/subscription`,
+          grace_period: currentPeriodEnd ? `Please retry before ${new Date(currentPeriodEnd).toLocaleDateString("en-IN", { dateStyle: "medium", timeZone: "UTC" })}.` : "No grace period is configured; please retry promptly.",
+          support_email: "support@rxtrace.in",
+        },
+      });
+    }
+
+    if (owner && eventType === "invoice.paid" && currentPeriodStart && currentPeriodEnd) {
+      const previousTemplateId = String((existingSubscription as any)?.plan_template_id || "");
+      const previousPlanResult = previousTemplateId
+        ? await supabase.from("subscription_plan_templates").select("name").eq("id", previousTemplateId).maybeSingle()
+        : { data: null, error: null };
+      if (previousPlanResult.error) throw new Error(previousPlanResult.error.message);
+      const previousPlan = String(previousPlanResult.data?.name || "").toUpperCase();
+      const rank = (value: string) => ({ FREE: 0, STARTER: 1, GROWTH: 2, ENTERPRISE: 3 } as Record<string, number>)[value] ?? 0;
+      const billingCycleText = billingCycle === "yearly" ? "Yearly" : "Monthly";
+      const date = (value: string) => new Date(value).toLocaleDateString("en-IN", { dateStyle: "medium", timeZone: "UTC" });
+      if (previousPlan && rank(planName) > rank(previousPlan)) {
+        await deliverNotification({
+          eventType: "SUBSCRIPTION_UPGRADED", event: "SUBSCRIPTION_UPGRADED",
+          companyId: String((quote as any).company_id), recipientEmail: owner.email,
+          idempotencyKey: `subscription-upgraded:${subscriptionId}:${currentPeriodStart}:${planName}`,
+          metadata: { previous_plan: previousPlan, new_plan: planName, subscription_id: subscriptionId },
+          payload: { user_name: owner.name, previous_plan: previousPlan, new_plan: planName, billing_cycle: billingCycleText, effective_date: date(currentPeriodStart) },
+        });
+      } else if (
+        previousPlan && previousPlan === planName && invoiceId &&
+        String((existingSubscription as any)?.start_date || (existingSubscription as any)?.current_period_start || "") !== currentPeriodStart
+      ) {
+        const entitlement = await supabase.rpc("get_company_entitlement_snapshot", { p_company_id: String((quote as any).company_id), p_at: new Date().toISOString() });
+        if (entitlement.error) throw new Error(entitlement.error.message);
+        const remaining = (entitlement.data as any)?.remaining || {};
+        const remainingText = [`Unit QR ${remaining.unit ?? 0}`, `Box QR ${remaining.box ?? 0}`, `Carton QR ${remaining.carton ?? 0}`, `Pallet SSCC ${remaining.pallet ?? 0}`].join(" • ");
+        let attachments: Array<{ filename: string; contentBase64: string; contentType: string }> = [];
+        if (invoiceRow?.id) {
+          const attachment = await createInvoicePdfAttachment({ supabase: supabase as any, invoiceId: String(invoiceRow.id) }).catch((error) => {
+            logWarn("RENEWAL_INVOICE_ATTACHMENT_FAILED", { invoice_id: invoiceId, error: String((error as any)?.message || "UNKNOWN") });
+            return null;
+          });
+          if (attachment) attachments = [attachment];
+        }
+        await deliverNotification({
+          eventType: "SUBSCRIPTION_RENEWED", event: "SUBSCRIPTION_RENEWED",
+          companyId: String((quote as any).company_id), recipientEmail: owner.email,
+          idempotencyKey: `subscription-renewed:${invoiceId}`,
+          metadata: { invoice_id: invoiceId, subscription_id: subscriptionId },
+          payload: { user_name: owner.name, plan: planName, start_date: date(currentPeriodStart), end_date: date(currentPeriodEnd), billing_cycle: billingCycleText, remaining_quota: remainingText, invoice_link: invoiceRow?.id ? `${getAppUrl()}/api/billing/invoice/${invoiceRow.id}/pdf` : `${getAppUrl()}/dashboard/invoices` },
+          attachments,
+        });
+      }
+    }
+    } catch (notificationError) {
+      logWarn("SUBSCRIPTION_NOTIFICATION_DELIVERY_FAILED", {
+        companyId: String((quote as any).company_id), event_type: eventType,
+        error: String((notificationError as any)?.message || "UNKNOWN"),
+      });
+    }
+  }
+
   return {
     quote_id: (quote as any).id,
     subscription_id: subscriptionId,
@@ -372,7 +457,7 @@ export async function POST(req: Request) {
       return jsonResponse({ ok: false, error: "WEBHOOK_EVENT_RPC_FAILED", event_id: eventId }, 500);
     }
 
-    if (Boolean((webhookResult as any)?.duplicate)) {
+    if (Boolean((webhookResult as any)?.duplicate) && !eventType.startsWith("invoice.")) {
       return jsonResponse({
         ok: true,
         event_id: eventId,
