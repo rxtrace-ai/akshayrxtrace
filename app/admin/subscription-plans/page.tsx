@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { getApiErrorMessage } from '@/lib/api/clientError';
 import { Plus, RefreshCw, Upload } from 'lucide-react';
 
 type PlanVersion = {
@@ -136,7 +137,7 @@ export default function SubscriptionPlansPage() {
       const res = await fetch('/api/admin/subscription-plans', { cache: 'no-store' });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.message || data.error || 'Failed to fetch plans');
+        throw new Error(getApiErrorMessage(data, 'Failed to fetch plans'));
       }
       const nextPlans = (Array.isArray(data.plans) ? data.plans : []).map((plan: any) => ({
         template: plan.template,
@@ -208,7 +209,7 @@ export default function SubscriptionPlansPage() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.message || data.error || 'Failed to save plan');
+        throw new Error(getApiErrorMessage(data, 'Failed to save plan'));
       }
 
       setMessage(isNewTemplate ? 'Plan created' : 'Plan updated');

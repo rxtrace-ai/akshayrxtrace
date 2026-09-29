@@ -11,6 +11,7 @@ import {
   persistAdminIdempotencyResult,
 } from "@/lib/admin/idempotency";
 import { appendAdminMutationAuditEvent } from "@/lib/admin/audit";
+import { resolveUpdatedRazorpayPlanId } from "@/lib/admin/subscriptionPlanValidation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -447,11 +448,15 @@ export async function PUT(req: NextRequest) {
   }
   if ("plan_price" in (body as any)) templateUpdates.plan_price = toPaise((body as any).plan_price);
   if ("razorpay_plan_id" in (body as any)) {
-    const razorpayPlanId = normalizeProviderPlanId((body as any).razorpay_plan_id);
-    if (!razorpayPlanId) {
-      return errorResponse(400, "BAD_REQUEST", "razorpay_plan_id is required", correlationId);
+    const effectivePlanName = templateUpdates.name ?? beforeState.template.name;
+    try {
+      templateUpdates.razorpay_plan_id = resolveUpdatedRazorpayPlanId(
+        (body as any).razorpay_plan_id,
+        effectivePlanName,
+      );
+    } catch (error) {
+      return errorResponse(400, "BAD_REQUEST", (error as Error).message, correlationId);
     }
-    templateUpdates.razorpay_plan_id = razorpayPlanId;
   }
   if ("pricing_unit_size" in (body as any)) {
     templateUpdates.pricing_unit_size = Math.max(1, nonNegativeInt((body as any).pricing_unit_size, 1));
