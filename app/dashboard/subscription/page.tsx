@@ -367,7 +367,7 @@ export default function SubscriptionPage() {
                     <tbody>
                       {summary?.quota_table.map((row) => (
                         <tr key={row.metric} className="border-t border-slate-200">
-                          <td className="px-4 py-3 font-medium text-slate-900">{row.metric === "pallet" ? "Pallet SSCC" : `${row.metric} QR`}</td>
+                          <td className="px-4 py-3 font-medium text-slate-900">{row.metric === "pallet" ? "Pallet SSCC" : `${row.metric[0].toUpperCase()}${row.metric.slice(1)} QR`}</td>
                           <td className="px-4 py-3 text-slate-600">{row.opening.toLocaleString()}</td>
                           <td className="px-4 py-3 text-slate-600">{row.used.toLocaleString()}</td>
                           <td className="px-4 py-3 text-slate-600">{row.remaining.toLocaleString()}</td>

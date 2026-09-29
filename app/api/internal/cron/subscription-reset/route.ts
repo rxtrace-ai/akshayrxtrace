@@ -21,25 +21,20 @@ async function run(request: NextRequest) {
   if (error) return apiJson({ success: false, error: error.message }, { status: 500 });
   const admin = getSupabaseAdmin();
   let resetEmailsSent = 0;
-  const periodStart = String((data as any)?.period_start || "");
-  if (periodStart) {
-    const { data: periods, error: periodError } = await admin
-      .from("subscription_quota_periods")
-      .select("company_id,subscription_id,period_start,period_end")
-      .eq("source", "free_monthly")
-      .eq("period_start", periodStart);
-    if (periodError) return apiJson({ success: false, error: periodError.message, result: data }, { status: 500 });
-
-    for (const period of periods || []) {
+  const periods = Array.isArray((data as any)?.free_periods) ? (data as any).free_periods : [];
+  for (const period of periods) {
+      const periodStart = String(period?.period_start || "");
+      const subscriptionId = String(period?.subscription_id || "");
+      const companyId = String(period?.company_id || "");
+      if (!periodStart || !subscriptionId || !companyId) continue;
       try {
-        const companyId = String(period.company_id);
         const owner = await getCompanyOwnerEmail(companyId);
         if (!owner) continue;
         const { data: allocations, error: allocationError } = await admin
           .from("quota_allocations")
           .select("resource,amount")
           .eq("company_id", companyId)
-          .eq("subscription_id", String(period.subscription_id))
+          .eq("subscription_id", subscriptionId)
           .eq("period_start", periodStart)
           .eq("source", "subscription")
           .eq("quota_type", "base");
@@ -54,15 +49,14 @@ async function run(request: NextRequest) {
         const result = await deliverNotification({
           eventType: "FREE_QUOTA_RESET", event: "FREE_QUOTA_RESET", companyId,
           recipientEmail: owner.email,
-          idempotencyKey: `free-quota-reset:${period.subscription_id}:${periodStart}`,
-          metadata: { subscription_id: period.subscription_id, period_start: periodStart, period_end: period.period_end },
+          idempotencyKey: `free-quota-reset:${subscriptionId}:${periodStart}`,
+          metadata: { subscription_id: subscriptionId, period_start: periodStart, period_end: period.period_end },
           payload: { user_name: owner.name, company_name: owner.companyName, quotas, reset_date: resetDate, next_reset_date: nextResetDate },
         });
         if (result === "sent") resetEmailsSent += 1;
       } catch (notificationError) {
-        console.error("[Subscription Reset] FREE reset email failed", { company_id: period.company_id, error: String((notificationError as any)?.message || notificationError) });
+        console.error("[Subscription Reset] FREE reset email failed", { company_id: companyId, error: String((notificationError as any)?.message || notificationError) });
       }
-    }
   }
   return apiJson({ success: true, result: data, free_reset_emails_sent: resetEmailsSent });
 }

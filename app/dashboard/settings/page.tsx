@@ -452,7 +452,7 @@ export default function SettingsPage() {
                 <tbody>
                   {(entitlementSummary.quota_table || []).map((row) => (
                     <tr key={row.metric} className="border-t border-gray-100">
-                      <td className="py-2 capitalize">{row.metric === "pallet" ? "Pallet SSCC" : `${row.metric} QR`}</td>
+                      <td className="py-2">{row.metric === "pallet" ? "Pallet SSCC" : `${row.metric[0].toUpperCase()}${row.metric.slice(1)} QR`}</td>
                       <td className="py-2">{row.opening.toLocaleString("en-IN")}</td>
                       <td className="py-2">{row.used.toLocaleString("en-IN")}</td>
                       <td className="py-2">{row.remaining.toLocaleString("en-IN")}</td>

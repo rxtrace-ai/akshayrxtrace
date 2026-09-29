@@ -12,6 +12,8 @@ import {
 } from "@/lib/admin/idempotency";
 import { appendAdminMutationAuditEvent } from "@/lib/admin/audit";
 import { resolveUpdatedRazorpayPlanId } from "@/lib/admin/subscriptionPlanValidation";
+import { deliverNotification, getCompanyOwnerEmail } from "@/lib/notifications/delivery";
+import { getSubscriptionPeriodWindow } from "@/lib/billing/subscriptionCycle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -381,6 +383,7 @@ export async function POST(req: NextRequest) {
     correlationId,
     supabase,
   });
+
   await persistAdminIdempotencyResult({
     adminId: auth.userId,
     endpoint,
@@ -563,6 +566,64 @@ export async function PUT(req: NextRequest) {
     correlationId,
     supabase,
   });
+
+  const quotaFields = [
+    ["unit_limit", "Unit QR"],
+    ["box_limit", "Box QR"],
+    ["carton_limit", "Carton QR"],
+    ["pallet_limit", "Pallet SSCC"],
+  ] as const;
+  const changedQuotas = quotaFields.flatMap(([field, label]) => {
+    const previous = nonNegativeInt(beforeState.active_version?.[field]);
+    const next = nonNegativeInt(currentState.active_version?.[field]);
+    return previous === next ? [] : [`${label}: ${previous.toLocaleString("en-IN")} → ${next.toLocaleString("en-IN")}`];
+  });
+
+  if (changedQuotas.length > 0) {
+    const { data: affectedSubscriptions, error: affectedError } = await supabase
+      .from("company_subscriptions")
+      .select("id,company_id,status,billing_cycle,current_period_start,current_period_end,activated_at,subscription_plan_templates(name,billing_cycle)")
+      .eq("plan_template_id", templateId)
+      .in("status", ["active", "authenticated"]);
+
+    if (affectedError) {
+      console.error("[Subscription Plan] Failed to find customers for quota-change notification", affectedError.message);
+    } else {
+      for (const subscription of affectedSubscriptions || []) {
+        try {
+          const companyId = String((subscription as any).company_id || "");
+          const owner = await getCompanyOwnerEmail(companyId);
+          if (!owner) continue;
+          const cycle = String((subscription as any).billing_cycle || (subscription as any).subscription_plan_templates?.billing_cycle || "monthly").toLowerCase() === "yearly" ? "yearly" : "monthly";
+          const anchor = (subscription as any).current_period_start || (subscription as any).activated_at;
+          const effectiveAt = (subscription as any).current_period_end || (anchor ? getSubscriptionPeriodWindow(anchor, cycle, new Date()).periodEnd.toISOString() : null);
+          if (!effectiveAt) continue;
+          await deliverNotification({
+            eventType: "PLAN_QUOTA_NEXT_CYCLE",
+            event: "PLAN_QUOTA_NEXT_CYCLE",
+            companyId,
+            recipientEmail: owner.email,
+            idempotencyKey: `plan-quota-next-cycle:${correlationId}:${String((subscription as any).id)}`,
+            metadata: { template_id: templateId, subscription_id: (subscription as any).id, effective_at: effectiveAt },
+            payload: {
+              user_name: owner.name,
+              company_name: owner.companyName,
+              plan: String(currentState.template.name || "Subscription"),
+              billing_cycle: cycle,
+              effective_date: new Date(effectiveAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }),
+              changed_quotas: changedQuotas.join("; "),
+            },
+          });
+        } catch (notificationError: any) {
+          console.error("[Subscription Plan] Quota-change notification failed", {
+            company_id: (subscription as any).company_id,
+            error: String(notificationError?.message || "UNKNOWN"),
+          });
+        }
+      }
+    }
+  }
+
   await persistAdminIdempotencyResult({
     adminId: auth.userId,
     endpoint,

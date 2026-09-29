@@ -23,6 +23,7 @@ export function getEffectivePaidSubscriptionAccess(params: {
   const now = params.now ?? new Date();
   const subscription = params.subscription ?? null;
   const rawStatus = normalizeLocalSubscriptionStatus(subscription?.status);
+  const isFreePlan = String(subscription?.subscription_plan_templates?.name || "").trim().toUpperCase() === "FREE";
   const periodEndIso = String(subscription?.current_period_end || "").trim();
   const accessEndsAt =
     periodEndIso && !Number.isNaN(Date.parse(periodEndIso)) ? new Date(periodEndIso) : null;
@@ -30,6 +31,15 @@ export function getEffectivePaidSubscriptionAccess(params: {
   const cancelAtPeriodEnd = Boolean(subscription?.cancel_at_period_end);
 
   if (rawStatus === "active") {
+    if (isFreePlan) {
+      return {
+        rawStatus,
+        effectiveStatus: "active",
+        hasPaidAccess: false,
+        paidThroughPeriodEnd: false,
+        accessEndsAt: null,
+      };
+    }
     if (accessEndsAt && accessEndsAt.getTime() <= now.getTime()) {
       return {
         rawStatus,

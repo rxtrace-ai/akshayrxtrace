@@ -20,7 +20,7 @@ export function buildQuotaSummaryRows(entitlement: EntitlementSnapshot): Entitle
     const used = Math.max(0, Math.trunc(entitlement.usage[metric] ?? 0));
     const addonAllocated = Math.max(0, Math.trunc(entitlement.topups[metric] ?? 0));
     return {
-      metric, opening, used, remaining: opening - used,
+      metric, opening, used, remaining: Math.max(opening - used, 0),
       allocated: opening, consumed: used,
       subscription_allocated: Math.max(0, opening - addonAllocated), addon_allocated: addonAllocated,
     };

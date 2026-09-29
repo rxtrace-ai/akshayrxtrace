@@ -34,4 +34,13 @@ describe("canonical entitlement display rows", () => {
     }));
     expect(rows.find((row) => row.metric === "unit")).toMatchObject({ opening: 125, subscription_allocated: 100, addon_allocated: 25 });
   });
+
+  it("clamps closing quota to zero but preserves actual used quantity", () => {
+    const rows = buildQuotaSummaryRows(snapshot({
+      limits: { unit: 500, box: 50, carton: 25, pallet: 10, seat: 5, plant: 2, handset: 3 },
+      usage: { unit: 600, box: 4, carton: 5, pallet: 1, seat: 2, plant: 1, handset: 1 },
+      remaining: { unit: 0, box: 46, carton: 20, pallet: 9, seat: 3, plant: 1, handset: 2 },
+    }));
+    expect(rows.find((row) => row.metric === "unit")).toMatchObject({ opening: 500, used: 600, remaining: 0 });
+  });
 });

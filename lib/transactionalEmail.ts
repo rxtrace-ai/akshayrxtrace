@@ -11,7 +11,8 @@ export type TransactionalEmailEvent =
   | "FREE_QUOTA_RESET"
   | "SUBSCRIPTION_UPGRADED"
   | "SUBSCRIPTION_RENEWED"
-  | "SUBSCRIPTION_PAYMENT_FAILED";
+  | "SUBSCRIPTION_PAYMENT_FAILED"
+  | "PLAN_QUOTA_NEXT_CYCLE";
 
 type CommonPayload = {
   user_name?: string;
@@ -29,6 +30,7 @@ type EventPayloadMap = {
   SUBSCRIPTION_UPGRADED: CommonPayload & { previous_plan: string; new_plan: string; billing_cycle: string; effective_date: string };
   SUBSCRIPTION_RENEWED: CommonPayload & { plan: string; start_date: string; end_date: string; billing_cycle: string; remaining_quota: string; invoice_link: string };
   SUBSCRIPTION_PAYMENT_FAILED: CommonPayload & { plan: string; retry_link: string; grace_period: string; support_email: string };
+  PLAN_QUOTA_NEXT_CYCLE: CommonPayload & { company_name: string; plan: string; billing_cycle: string; effective_date: string; changed_quotas: string };
 };
 
 type EventPayload<E extends TransactionalEmailEvent> = EventPayloadMap[E];
@@ -255,6 +257,23 @@ function buildTemplate<E extends TransactionalEmailEvent>(event: E, payload: Eve
       return { subject: "Action Required: Subscription Renewal Failed", html: baseEmailShell({
         preheader: "Your RxTrace subscription payment needs attention", title: "Renewal payment failed", greetingName: userName,
         lines: [`Plan: ${p.plan}`, `Grace period: ${p.grace_period}`, `Need help? Contact ${p.support_email}.`], ctaLabel: "Retry Payment", ctaLink: p.retry_link,
+      }) };
+    }
+    case "PLAN_QUOTA_NEXT_CYCLE": {
+      const p = payload as EventPayloadMap["PLAN_QUOTA_NEXT_CYCLE"];
+      return { subject: "Your RxTrace quota changes take effect next cycle", html: baseEmailShell({
+        preheader: "Your current quota allocation remains unchanged",
+        title: "Quota update scheduled for your next cycle",
+        greetingName: userName,
+        lines: [
+          `Company: ${p.company_name}`,
+          `Plan: ${p.plan} (${p.billing_cycle})`,
+          "Your current period opening quota remains unchanged.",
+          `The updated plan quota applies from ${p.effective_date}.`,
+          `Updated quota: ${p.changed_quotas}`,
+        ],
+        ctaLabel: "View Subscription",
+        ctaLink: "/dashboard/subscription",
       }) };
     }
     default:

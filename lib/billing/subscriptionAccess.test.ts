@@ -17,6 +17,22 @@ describe("getEffectivePaidSubscriptionAccess", () => {
     expect(result.paidThroughPeriodEnd).toBe(false);
   });
 
+  it("keeps FREE access active after a finite monthly quota period ends", () => {
+    const result = getEffectivePaidSubscriptionAccess({
+      subscription: {
+        status: "active",
+        cancel_at_period_end: false,
+        current_period_end: "2026-04-10T00:00:00.000Z",
+        subscription_plan_templates: { name: "FREE" },
+      },
+      now: new Date("2026-04-25T00:00:00.000Z"),
+    });
+
+    expect(result.hasPaidAccess).toBe(false);
+    expect(result.effectiveStatus).toBe("active");
+    expect(result.accessEndsAt).toBeNull();
+  });
+
   it("keeps cancel-at-period-end subscriptions active until the paid period ends", () => {
     const result = getEffectivePaidSubscriptionAccess({
       subscription: {
