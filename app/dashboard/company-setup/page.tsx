@@ -42,57 +42,73 @@ function CompanySetupContent() {
   const [pan, setPan] = useState('');
 
   useEffect(() => {
-    (async () => {
-      const supabase = supabaseClient();
-      const { data: { user } } = await supabase.auth.getUser();
-
-      if (!user) {
-        router.replace('/login');
-        return;
-      }
-
-      const fallbackContactPerson = String(
-        user.user_metadata?.full_name || user.email || ''
-      ).trim();
-      if (fallbackContactPerson) {
-        setContactPerson((current) => current || fallbackContactPerson);
-      }
-
-      // Check if company exists (always allow editing, even if profile_completed === true)
-      const { data: existingCompany } = await supabase
-        .from('companies')
-        .select('id, company_name, contact_person, phone, address, industry, business_type, firm_type, business_category, gst_number, pan, profile_completed')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      // Load existing data if available
-      if (existingCompany?.id) {
-        setCompanyName(existingCompany.company_name || '');
-        setContactPerson(existingCompany.contact_person || '');
-        setPhone(existingCompany.phone || '');
-        setAddress(existingCompany.address || '');
-        if (existingCompany.industry && isIndustryOption(existingCompany.industry)) {
-          setIndustry(existingCompany.industry);
-        }
-        if (existingCompany.business_type) {
-          setBusinessType(existingCompany.business_type as BusinessType);
-        }
-        if (existingCompany.firm_type) {
-          setLegalStructure(existingCompany.firm_type as LegalStructure);
-        }
-        if (existingCompany.business_category && isIndustryOption(existingCompany.business_category)) {
-          setBusinessCategory(existingCompany.business_category);
-        }
-        if (existingCompany.gst_number) {
-          setGstNumber(existingCompany.gst_number);
-        }
-        if (existingCompany.pan) {
-          setPan(existingCompany.pan);
-        }
-      }
-
+    const loadingTimeout = window.setTimeout(() => {
+      setError('Company information is taking too long to load. Check your connection and refresh the page.');
       setLoading(false);
+    }, 15000);
+
+    (async () => {
+      try {
+        const supabase = supabaseClient();
+        const { data: { user } } = await supabase.auth.getUser();
+
+        if (!user) {
+          router.replace('/login');
+          return;
+        }
+
+        const fallbackContactPerson = String(
+          user.user_metadata?.full_name || user.email || ''
+        ).trim();
+        if (fallbackContactPerson) {
+          setContactPerson((current) => current || fallbackContactPerson);
+        }
+
+        // Check if company exists (always allow editing, even if profile_completed === true)
+        const { data: existingCompany, error: companyError } = await supabase
+          .from('companies')
+          .select('id, company_name, contact_person, phone, address, industry, business_type, firm_type, business_category, gst_number, pan, profile_completed')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (companyError) throw companyError;
+
+        // Load existing data if available
+        if (existingCompany?.id) {
+          setCompanyName(existingCompany.company_name || '');
+          setContactPerson(existingCompany.contact_person || '');
+          setPhone(existingCompany.phone || '');
+          setAddress(existingCompany.address || '');
+          if (existingCompany.industry && isIndustryOption(existingCompany.industry)) {
+            setIndustry(existingCompany.industry);
+          }
+          if (existingCompany.business_type) {
+            setBusinessType(existingCompany.business_type as BusinessType);
+          }
+          if (existingCompany.firm_type) {
+            setLegalStructure(existingCompany.firm_type as LegalStructure);
+          }
+          if (existingCompany.business_category && isIndustryOption(existingCompany.business_category)) {
+            setBusinessCategory(existingCompany.business_category);
+          }
+          if (existingCompany.gst_number) {
+            setGstNumber(existingCompany.gst_number);
+          }
+          if (existingCompany.pan) {
+            setPan(existingCompany.pan);
+          }
+        }
+        setError('');
+
+      } catch (loadError) {
+        console.error('Failed to load company information', loadError);
+        setError('Unable to load company information. Please refresh and try again.');
+      } finally {
+        window.clearTimeout(loadingTimeout);
+        setLoading(false);
+      }
     })();
+
+    return () => window.clearTimeout(loadingTimeout);
   }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
