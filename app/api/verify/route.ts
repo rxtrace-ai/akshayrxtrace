@@ -8,7 +8,7 @@ import { isExpiredStrict } from "@/lib/scanner/expiry";
 import { beginScannerIdempotency, completeScannerIdempotency, waitForScannerReplay } from "@/lib/scanner/idempotency";
 import { insertScanLogSafe, recordSerialScanAtomic } from "@/lib/scanner/logging";
 import { extractVerifyRawInput, verifyRequestBodySchema } from "@/lib/scanner/schemas";
-import { logError } from "@/lib/observability/logging";
+import { logError, logWarn } from "@/lib/observability/logging";
 import { enforceVerifyRateLimit } from "@/lib/scanner/requestRateLimit";
 
 const GS = String.fromCharCode(29);
@@ -200,9 +200,52 @@ export async function POST(req: Request) {
     if (idem.kind === "conflict") {
       return json(409, failPayload("INVALID_REQUEST", "Idempotency key conflict"));
     }
-    if (idem.kind === "replay") {
-      return json(idem.statusCode, idem.payload);
-    }
+
+    const parsedForLog =
+      parsedAny.mode === "INVALID"
+        ? { parseError: parsedAny.error, raw: parsedAny.raw }
+        : {
+            mode: parsedAny.mode,
+            serial: serial || null,
+            gtin: gtin || null,
+            batch: batch || null,
+          };
+
+    const reconcileReplayLog = async (payload: any, idempotencyKey: string, requestHash: string) => {
+      const replayStatus = String(payload?.status || "UNKNOWN");
+      const writeResult = await insertScanLogSafe(supabase, {
+        company_id: resolvedCompanyId,
+        raw_scan: rawInput,
+        parsed: parsedForLog,
+        code_id: matchedUnit?.id ?? null,
+        scanner_printer_id: req.headers.get("x-printer-id") || null,
+        ip: req.headers.get("x-forwarded-for") || null,
+        metadata: {
+          status: replayStatus,
+          mode: parsedAny.mode,
+          serial: serial || null,
+          gtin: gtin || null,
+          batch: batch || null,
+          quota_consumed: false,
+        },
+        status: replayStatus === "VALID" ? "SUCCESS" : "FAILED",
+        endpoint: "verify",
+        idempotency_key: idempotencyKey,
+        request_hash: requestHash,
+      });
+      // The helper emits a redacted structured error. Keep the cached verification result
+      // authoritative while allowing a later replay to retry this idempotent upsert.
+      if (!writeResult.ok) {
+        logWarn("Verification response preserved despite scan-log write failure", {
+          route: "/api/verify",
+          operation: "scanner_log_insert",
+          errorCode: writeResult.errorCode,
+          errorMessage: writeResult.message,
+        });
+      }
+      return writeResult;
+    };
+
     if (idem.kind === "pending") {
       const wait = await waitForScannerReplay({
         supabase,
@@ -213,10 +256,28 @@ export async function POST(req: Request) {
         timeoutMs: 3500,
       });
       if (wait.kind === "replay") {
+        await reconcileReplayLog(wait.payload, idem.key, idem.requestHash);
         return json(wait.statusCode, wait.payload);
       }
       return json(409, failPayload("INVALID_REQUEST", "Request already in progress"));
     }
+
+    if (idem.kind === "replay") {
+      // Reconcile the log with the same idempotency key before returning a cached result.
+      // The scan_logs unique index makes this retry an upsert, never a second row.
+      const replayKey = String(
+        body.idempotency_key || req.headers.get("idempotency-key") || req.headers.get("x-idempotency-key") || ""
+      ).trim();
+      const replayRequestHash = crypto
+        .createHash("sha256")
+        .update(JSON.stringify({ raw: rawInput, mode, serial: serial || null, company_scope: scopeKey }))
+        .digest("hex");
+      await reconcileReplayLog(idem.payload, replayKey, replayRequestHash);
+      return json(idem.statusCode, idem.payload);
+    }
+
+    const activeIdempotencyKey = idem.key;
+    const activeRequestHash = idem.requestHash;
 
     const finalize = async (statusCode: number, payload: any) => {
       try {
@@ -224,8 +285,8 @@ export async function POST(req: Request) {
           supabase,
           endpoint: "/api/verify",
           scopeKey,
-          idempotencyKey: idem.key,
-          requestHash: idem.requestHash,
+          idempotencyKey: activeIdempotencyKey,
+          requestHash: activeRequestHash,
           statusCode,
           payload,
         });
@@ -238,16 +299,6 @@ export async function POST(req: Request) {
       }
       return json(statusCode, payload);
     };
-
-    const parsedForLog =
-      parsedAny.mode === "INVALID"
-        ? { parseError: parsedAny.error, raw: parsedAny.raw }
-        : {
-            mode: parsedAny.mode,
-            serial: serial || null,
-            gtin: gtin || null,
-            batch: batch || null,
-          };
 
     if (parsedAny.mode === "INVALID") {
       const payload = okPayload({
@@ -378,7 +429,7 @@ export async function POST(req: Request) {
           : parsedAny.parsed,
     });
 
-    await insertScanLogSafe(supabase, {
+    const logWrite = await insertScanLogSafe(supabase, {
       company_id: resolvedCompanyId,
       raw_scan: rawInput,
       parsed: parsedForLog,
@@ -401,6 +452,17 @@ export async function POST(req: Request) {
       idempotency_key: idem.key,
       request_hash: idem.requestHash,
     });
+
+    // A logging outage must not turn an authentic/duplicate verification into an API failure.
+    // The helper reports and logs the failure; replays retry this same idempotent write.
+    if (!logWrite.ok) {
+      logWarn("Verification response preserved despite scan-log write failure", {
+        route: "/api/verify",
+        operation: "scanner_log_insert",
+        errorCode: logWrite.errorCode,
+        errorMessage: logWrite.message,
+      });
+    }
 
     return finalize(200, payload);
   } catch (err: any) {

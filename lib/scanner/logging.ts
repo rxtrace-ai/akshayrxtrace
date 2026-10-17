@@ -16,7 +16,11 @@ type ScanLogPayload = {
   request_hash?: string | null;
 };
 
-export async function insertScanLogSafe(supabase: SupabaseClient, payload: ScanLogPayload): Promise<void> {
+export type ScanLogWriteResult =
+  | { ok: true }
+  | { ok: false; errorCode: string; message: string };
+
+export async function insertScanLogSafe(supabase: SupabaseClient, payload: ScanLogPayload): Promise<ScanLogWriteResult> {
   const row = {
     company_id: payload.company_id,
     handset_id: null,
@@ -39,17 +43,23 @@ export async function insertScanLogSafe(supabase: SupabaseClient, payload: ScanL
         .from("scan_logs")
         .upsert(row as any, { onConflict: "company_id,endpoint,idempotency_key" });
       if (error) throw error;
-      return;
+      return { ok: true };
     }
     const { error } = await supabase.from("scan_logs").insert(row as any);
     if (error) throw error;
+    return { ok: true };
   } catch (error: any) {
+    const candidateCode = String(error?.code || "UNKNOWN");
+    const errorCode = /^[A-Z0-9_]{1,32}$/.test(candidateCode) ? candidateCode : "UNKNOWN";
+    // Use a fixed message: database error messages can contain key values or row data.
+    const message = "Database rejected scan log write";
     logError("Scanner log write failed", {
       operation: "scanner_log_insert",
       endpoint: payload.endpoint,
-      companyId: payload.company_id ?? undefined,
-      error: String(error?.message || error),
+      errorCode,
+      errorMessage: message,
     });
+    return { ok: false, errorCode, message };
   }
 }
 
@@ -75,4 +85,3 @@ export async function recordSerialScanAtomic(params: {
     scanCount: Number((row as any)?.scan_count ?? 0),
   };
 }
-
