@@ -20,6 +20,10 @@ export type ScanLogWriteResult =
   | { ok: true }
   | { ok: false; errorCode: string; message: string };
 
+function isUniqueViolation(error: any): boolean {
+  return String(error?.code || "") === "23505";
+}
+
 export async function insertScanLogSafe(supabase: SupabaseClient, payload: ScanLogPayload): Promise<ScanLogWriteResult> {
   const row = {
     company_id: payload.company_id,
@@ -39,10 +43,24 @@ export async function insertScanLogSafe(supabase: SupabaseClient, payload: ScanL
 
   try {
     if (row.idempotency_key && row.company_id) {
-      const { error } = await supabase
-        .from("scan_logs")
-        .upsert(row as any, { onConflict: "company_id,endpoint,idempotency_key" });
-      if (error) throw error;
+      // The existing unique index is partial (idempotency_key IS NOT NULL), so
+      // Postgres cannot infer it from a bare ON CONFLICT column list. Insert first
+      // and reconcile only the matching idempotency key on a unique-key replay.
+      const { error: insertError } = await supabase.from("scan_logs").insert(row as any);
+      if (insertError) {
+        if (!isUniqueViolation(insertError)) throw insertError;
+
+        const { data, error: updateError } = await supabase
+          .from("scan_logs")
+          .update(row as any)
+          .eq("company_id", row.company_id)
+          .eq("endpoint", row.endpoint)
+          .eq("idempotency_key", row.idempotency_key)
+          .select("id")
+          .maybeSingle();
+        if (updateError) throw updateError;
+        if (!data) throw insertError;
+      }
       return { ok: true };
     }
     const { error } = await supabase.from("scan_logs").insert(row as any);
