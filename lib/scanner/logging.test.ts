@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { logError } = vi.hoisted(() => ({ logError: vi.fn() }));
 vi.mock("@/lib/observability/logging", () => ({ logError }));
@@ -12,7 +12,7 @@ function createSupabase(insertError: any = null, updateError: any = null, update
   const eqKey = vi.fn(() => ({ select }));
   const eqEndpoint = vi.fn(() => ({ eq: eqKey }));
   const eqCompany = vi.fn(() => ({ eq: eqEndpoint }));
-  const update = vi.fn(() => ({ eq: eqCompany }));
+  const update = vi.fn((_row: any) => ({ eq: eqCompany }));
   const from = vi.fn(() => ({ insert, update }));
   return { client: { from } as any, from, insert, update, eqCompany, eqEndpoint, eqKey, select, maybeSingle };
 }
@@ -22,13 +22,16 @@ const payload = {
   raw_scan: "PRODUCT_SECRET_123",
   parsed: { serial: "PRODUCT_SECRET_123" },
   metadata: { status: "DUPLICATE", serial: "SERIAL-1", quota_consumed: false },
-  status: "FAILED",
+  handset_id: "handset-safe-id",
+  status: "DUPLICATE",
   endpoint: "verify" as const,
   idempotency_key: "idem-safe-123",
   request_hash: "hash-123",
 };
 
 describe("insertScanLogSafe", () => {
+  beforeEach(() => logError.mockClear());
+
   it("inserts a new idempotent log row", async () => {
     const db = createSupabase();
     const result = await insertScanLogSafe(db.client, payload);
@@ -38,8 +41,9 @@ describe("insertScanLogSafe", () => {
     expect(db.insert).toHaveBeenCalledWith(expect.objectContaining({
       company_id: payload.company_id,
       endpoint: "verify",
-      status: "FAILED",
+      status: "DUPLICATE",
       metadata: payload.metadata,
+      handset_id: payload.handset_id,
       idempotency_key: payload.idempotency_key,
       request_hash: payload.request_hash,
       scanned_at: expect.any(String),
@@ -61,6 +65,15 @@ describe("insertScanLogSafe", () => {
     expect(db.eqEndpoint).toHaveBeenCalledWith("endpoint", "verify");
     expect(db.eqKey).toHaveBeenCalledWith("idempotency_key", payload.idempotency_key);
     expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("does not clear an existing handset ID when a retry lacks handset context", async () => {
+    const db = createSupabase({ code: "23505", message: "duplicate value" });
+    await insertScanLogSafe(db.client, { ...payload, handset_id: null });
+
+    const updateRow = db.update.mock.calls[0][0];
+    expect("handset_id" in updateRow).toBe(false);
+    expect("scanned_at" in updateRow).toBe(false);
   });
 
   it("reports a unique collision if no matching row can be reconciled", async () => {

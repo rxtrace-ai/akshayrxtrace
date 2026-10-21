@@ -10,24 +10,29 @@ import Link from "next/link";
 
 type ScanLogItem = {
   id: string;
-  scanned_at: string;
-  status: string;
-  serial: string;
-  gtin: string;
-  batch: string;
-  expiry: string;
-  raw_scan: string;
-  ip: string;
+  scanned_at: string | null;
+  status: string | null;
+  serial_number: string | null;
+  gtin: string | null;
+  batch: string | null;
+  expiry: string | null;
   handset_id: string | null;
 };
 
 type ScanLogResponse = {
   success: boolean;
-  items: ScanLogItem[];
-  page: number;
-  limit: number;
-  total: number;
-  has_more: boolean;
+  data?: {
+    items: ScanLogItem[];
+    page: number;
+    limit: number;
+    total: number;
+    has_more: boolean;
+  };
+  items?: ScanLogItem[];
+  page?: number;
+  limit?: number;
+  total?: number;
+  has_more?: boolean;
   error?: string;
 };
 
@@ -78,9 +83,10 @@ export default function History() {
           throw new Error(String((json as any).error || "Failed to load scan activity."));
         }
 
-        setScanLogs(Array.isArray(json.items) ? json.items : []);
-        setTotal(Number(json.total || 0));
-        setHasMore(Boolean(json.has_more));
+        const data = json.data || json;
+        setScanLogs(Array.isArray(data.items) ? data.items : []);
+        setTotal(Number(data.total || 0));
+        setHasMore(Boolean(data.has_more));
       } catch (err: any) {
         if (err?.name === "AbortError") return;
         setError(String(err?.message || "Failed to load scan activity."));
@@ -110,6 +116,7 @@ export default function History() {
 
   const showingFrom = total === 0 ? 0 : (page - 1) * limit + 1;
   const showingTo = Math.min(page * limit, total);
+  const displayValue = (value: string | null | undefined) => value?.trim() || "—";
 
   return (
     <div className="space-y-6">
@@ -186,8 +193,8 @@ export default function History() {
                 <th className="p-4">GTIN</th>
                 <th className="p-4">Batch</th>
                 <th className="p-4">Expiry</th>
+                <th className="p-4">Handset ID</th>
                 <th className="p-4">Scanned At</th>
-                <th className="p-4">IP Address</th>
               </tr>
             </thead>
             <tbody>
@@ -195,22 +202,22 @@ export default function History() {
                 scanLogs.map((log) => (
                   <tr key={log.id} className="border-b hover:bg-gray-50">
                     <td className="p-4">
-                      <Badge className={getStatusBadge(log.status)}>{log.status || "UNKNOWN"}</Badge>
+                      <Badge className={getStatusBadge(log.status || "UNKNOWN")}>{displayValue(log.status)}</Badge>
                     </td>
-                    <td className="p-4 font-mono text-sm">{log.serial || "N/A"}</td>
-                    <td className="p-4 font-mono text-sm">{log.gtin || "N/A"}</td>
-                    <td className="p-4">{log.batch || "N/A"}</td>
-                    <td className="p-4">{log.expiry || "N/A"}</td>
+                    <td className="p-4 font-mono text-sm">{displayValue(log.serial_number)}</td>
+                    <td className="p-4 font-mono text-sm">{displayValue(log.gtin)}</td>
+                    <td className="p-4">{displayValue(log.batch)}</td>
+                    <td className="p-4">{displayValue(log.expiry)}</td>
+                    <td className="p-4 font-mono text-xs">{displayValue(log.handset_id)}</td>
                     <td className="p-4">
-                      {new Date(log.scanned_at).toLocaleString("en-IN", {
+                      {log.scanned_at && Number.isFinite(Date.parse(log.scanned_at)) ? new Date(log.scanned_at).toLocaleString("en-IN", {
                         day: "2-digit",
                         month: "short",
                         year: "numeric",
                         hour: "2-digit",
                         minute: "2-digit",
-                      })}
+                      }) : "—"}
                     </td>
-                    <td className="p-4 text-sm text-gray-600">{log.ip || "N/A"}</td>
                   </tr>
                 ))}
               {!loading && scanLogs.length === 0 ? (

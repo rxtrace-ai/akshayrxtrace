@@ -8,7 +8,7 @@ type ScanLogPayload = {
   code_id?: string | null;
   scanner_printer_id?: string | null;
   scanned_at?: string;
-  ip?: string | null;
+  handset_id?: string | null;
   metadata?: Record<string, unknown>;
   status: string;
   endpoint: "scan" | "verify";
@@ -27,13 +27,12 @@ function isUniqueViolation(error: any): boolean {
 export async function insertScanLogSafe(supabase: SupabaseClient, payload: ScanLogPayload): Promise<ScanLogWriteResult> {
   const row = {
     company_id: payload.company_id,
-    handset_id: null,
+    handset_id: payload.handset_id ?? null,
     raw_scan: payload.raw_scan,
     parsed: payload.parsed ?? null,
     code_id: payload.code_id ?? null,
     scanner_printer_id: payload.scanner_printer_id ?? null,
     scanned_at: payload.scanned_at ?? new Date().toISOString(),
-    ip: payload.ip ?? null,
     metadata: payload.metadata ?? {},
     status: payload.status,
     endpoint: payload.endpoint,
@@ -50,9 +49,15 @@ export async function insertScanLogSafe(supabase: SupabaseClient, payload: ScanL
       if (insertError) {
         if (!isUniqueViolation(insertError)) throw insertError;
 
+        const reconciliationRow: Record<string, unknown> = { ...row };
+        // Keep the timestamp of the original physical scan when reconciling a retry.
+        delete reconciliationRow.scanned_at;
+        if (!payload.handset_id) delete reconciliationRow.handset_id;
         const { data, error: updateError } = await supabase
           .from("scan_logs")
-          .update(row as any)
+          // A replay without handset authentication must not erase an association
+          // already written by the original authenticated request.
+          .update(reconciliationRow as any)
           .eq("company_id", row.company_id)
           .eq("endpoint", row.endpoint)
           .eq("idempotency_key", row.idempotency_key)

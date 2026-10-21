@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   beginKind: "ok" as "ok" | "replay",
+  handsetId: "handset-1" as string | null,
+  companyId: null as string | null,
+  isDuplicate: true,
   rateLimitAllowed: true,
   logResult: { ok: true } as { ok: boolean; errorCode?: string; message?: string },
   logCalls: [] as any[],
@@ -25,7 +28,9 @@ vi.mock("@/lib/supabase/admin", () => ({
   }),
 }));
 
-vi.mock("@/lib/company/resolve", () => ({ resolveCompanyIdFromRequest: async () => null }));
+vi.mock("@/lib/handset-v2/scannerContext", () => ({
+  resolveScannerRequestContext: async () => ({ companyId: state.companyId, handsetId: state.handsetId }),
+}));
 vi.mock("@/lib/scanner/requestRateLimit", () => ({
   enforceVerifyRateLimit: async () => state.rateLimitAllowed
     ? { allowed: true }
@@ -40,21 +45,24 @@ vi.mock("@/lib/scanner/idempotency", () => ({
 }));
 vi.mock("@/lib/scanner/logging", () => ({
   insertScanLogSafe: async (_supabase: unknown, payload: any) => { state.logCalls.push(payload); return state.logResult; },
-  recordSerialScanAtomic: async () => ({ isDuplicate: true, firstScannedAt: "2026-01-01T00:00:00.000Z", scanCount: 2 }),
+  recordSerialScanAtomic: async () => ({ isDuplicate: state.isDuplicate, firstScannedAt: "2026-01-01T00:00:00.000Z", scanCount: state.isDuplicate ? 2 : 1 }),
 }));
 vi.mock("@/lib/observability/logging", () => ({ logError: () => undefined, logWarn: () => undefined }));
 
-function request() {
+function request(body: any = { raw: "(95)SERIAL-1" }) {
   return new Request("http://localhost/api/verify", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": "idem-verify-1" },
-    body: JSON.stringify({ raw: "(95)SERIAL-1" }),
+    body: JSON.stringify(body),
   });
 }
 
 describe("POST /api/verify scan-log behavior", () => {
   beforeEach(() => {
     state.beginKind = "ok";
+    state.handsetId = "handset-1";
+    state.companyId = null;
+    state.isDuplicate = true;
     state.rateLimitAllowed = true;
     state.logResult = { ok: true };
     state.logCalls = [];
@@ -69,7 +77,7 @@ describe("POST /api/verify scan-log behavior", () => {
     expect(response.status).toBe(200);
     expect(payload.status).toBe("DUPLICATE");
     expect(state.logCalls).toHaveLength(1);
-    expect(state.logCalls[0]).toMatchObject({ company_id: "company-1", status: "FAILED", endpoint: "verify", idempotency_key: "idem-verify-1" });
+    expect(state.logCalls[0]).toMatchObject({ company_id: "company-1", handset_id: "handset-1", status: "DUPLICATE", endpoint: "verify", idempotency_key: "idem-verify-1" });
   });
 
   it("keeps a valid duplicate result when the log write fails", async () => {
@@ -81,6 +89,22 @@ describe("POST /api/verify scan-log behavior", () => {
     expect(response.status).toBe(200);
     expect(payload.status).toBe("DUPLICATE");
     expect(state.completeCalls).toHaveLength(1);
+  });
+
+  it("records a first valid scan with the authenticated handset and actual outcome", async () => {
+    state.isDuplicate = false;
+    const { POST } = await import("@/app/api/verify/route");
+    const response = await POST(request());
+    const payload = await response.json();
+
+    expect(payload.status).toBe("VALID");
+    expect(state.logCalls[0]).toMatchObject({
+      company_id: "company-1",
+      handset_id: "handset-1",
+      status: "VALID",
+      endpoint: "verify",
+      parsed: { serial: "SERIAL-1", mode: "PIC" },
+    });
   });
 
   it("retries the same upsert on completed replay after a failed write", async () => {
@@ -97,6 +121,23 @@ describe("POST /api/verify scan-log behavior", () => {
     expect(state.logCalls).toHaveLength(2);
     expect(state.logCalls[0].idempotency_key).toBe(state.logCalls[1].idempotency_key);
     expect(state.logCalls[0].company_id).toBe(state.logCalls[1].company_id);
+  });
+
+  it("leaves handset association optional when verified handset context is unavailable", async () => {
+    state.handsetId = null;
+    const { POST } = await import("@/app/api/verify/route");
+    await POST(request());
+
+    expect(state.logCalls[0].handset_id).toBeNull();
+  });
+
+  it("rejects a scan request that claims a company different from the authenticated handset", async () => {
+    state.companyId = "company-1";
+    const { POST } = await import("@/app/api/verify/route");
+    const response = await POST(request({ raw: "(95)SERIAL-1", company_id: "00000000-0000-4000-8000-000000000002" }));
+
+    expect(response.status).toBe(403);
+    expect(state.logCalls).toHaveLength(0);
   });
 
   it("preserves rate limiting and does not log rejected requests", async () => {

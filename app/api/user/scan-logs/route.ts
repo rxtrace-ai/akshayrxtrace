@@ -3,17 +3,19 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { resolveCompanyForUser } from "@/lib/company/resolve";
 import { buildSafeIlikePattern } from "@/lib/api/filter";
 import { fail, ok } from "@/lib/api/response";
+import { parseExpiryStrict } from "@/lib/scanner/expiry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type ScanLogRow = {
   id: string;
-  scanned_at: string;
+  scanned_at: string | null;
   raw_scan: string | null;
   parsed: Record<string, unknown> | null;
   metadata: Record<string, unknown> | null;
-  ip: string | null;
+  status: string | null;
+  handset_id: string | null;
 };
 
 function asString(value: unknown): string {
@@ -33,8 +35,8 @@ function applyFilters(query: any, params: URLSearchParams) {
   const q = asString(params.get("q")).trim();
 
   let next = query;
-  if (status) {
-    next = next.eq("metadata->>status", status);
+  if (status && /^[A-Z0-9_]{1,32}$/.test(status)) {
+    next = next.or(`status.eq.${status},metadata->>status.eq.${status}`);
   }
   if (from) {
     next = next.gte("scanned_at", `${from}T00:00:00`);
@@ -46,7 +48,7 @@ function applyFilters(query: any, params: URLSearchParams) {
     const pattern = buildSafeIlikePattern(q, 80);
     if (pattern) {
       next = next.or(
-        `raw_scan.ilike.${pattern},parsed->>serialNo.ilike.${pattern},parsed->>serial.ilike.${pattern},parsed->>gtin.ilike.${pattern},parsed->>batchNo.ilike.${pattern},parsed->>batch.ilike.${pattern}`
+        `raw_scan.ilike.${pattern},parsed->>serialNo.ilike.${pattern},parsed->>serial.ilike.${pattern},parsed->>serial_number.ilike.${pattern},parsed->>21.ilike.${pattern},parsed->>gtin.ilike.${pattern},parsed->>01.ilike.${pattern},parsed->>batchNo.ilike.${pattern},parsed->>batch.ilike.${pattern},parsed->>10.ilike.${pattern}`
       );
     }
   }
@@ -54,28 +56,36 @@ function applyFilters(query: any, params: URLSearchParams) {
 }
 
 function normalizeScanLog(row: ScanLogRow) {
-  const parsed = row.parsed || {};
+  const parsedRow = row.parsed || {};
+  const parsed = parsedRow.parsed && typeof parsedRow.parsed === "object"
+    ? (parsedRow.parsed as Record<string, unknown>)
+    : parsedRow;
   const metadata = row.metadata || {};
-
-  const serial =
-    asString((parsed as any).serialNo) ||
-    asString((parsed as any).serial) ||
-    asString((metadata as any).serial);
-  const gtin = asString((parsed as any).gtin);
-  const batch = asString((parsed as any).batchNo) || asString((parsed as any).batch);
-  const expiry = asString((parsed as any).expiryDate) || asString((parsed as any).expiryYYMMDD);
+  const firstString = (...values: unknown[]) => values.find((value) => typeof value === "string" && value.trim()) as string | undefined;
+  const serial = firstString(parsed.serialNo, parsed.serial, parsed.serial_number, parsed["21"], parsed["(21)"], (metadata as any).serial) || null;
+  const gtin = firstString(parsed.gtin, parsed.gtin14, parsed["01"], parsed["(01)"], (metadata as any).gtin) || null;
+  const batch = firstString(parsed.batchNo, parsed.batch, parsed.lot, parsed["10"], parsed["(10)"], (metadata as any).batch) || null;
+  const rawExpiry = firstString(parsed.expiryDate, parsed.expiry, parsed.expiryYYMMDD, parsed["17"], parsed["(17)"], (metadata as any).expiry);
+  const parsedExpiry = rawExpiry ? parseExpiryStrict(rawExpiry) : null;
+  const expiry = parsedExpiry?.ok
+    ? `${String(parsedExpiry.day).padStart(2, "0")}-${String(parsedExpiry.month).padStart(2, "0")}-${parsedExpiry.year}`
+    : rawExpiry || null;
+  const scannedAt = row.scanned_at && Number.isFinite(Date.parse(row.scanned_at)) ? row.scanned_at : null;
+  const storedStatus = asString(row.status).toUpperCase();
+  const metadataStatus = asString((metadata as any).status).toUpperCase();
+  const status = (storedStatus === "SUCCESS" || storedStatus === "FAILED") && metadataStatus
+    ? metadataStatus
+    : storedStatus || metadataStatus || "UNKNOWN";
 
   return {
     id: row.id,
-    scanned_at: row.scanned_at,
-    status: asString((metadata as any).status) || "UNKNOWN",
-    serial,
+    scanned_at: scannedAt,
+    status,
+    serial_number: serial,
     gtin,
     batch,
     expiry,
-    raw_scan: row.raw_scan || "",
-    ip: row.ip || "",
-    handset_id: null,
+    handset_id: row.handset_id || null,
   };
 }
 
@@ -105,7 +115,7 @@ export async function GET(req: Request) {
 
     const baseQuery = admin
       .from("scan_logs")
-      .select("id, scanned_at, raw_scan, parsed, metadata, ip", { count: "exact" })
+      .select("id, scanned_at, raw_scan, parsed, metadata, status, handset_id", { count: "exact" })
       .eq("company_id", resolved.companyId)
       .order("scanned_at", { ascending: false });
 

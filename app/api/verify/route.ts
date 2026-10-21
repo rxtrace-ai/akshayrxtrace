@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { parsePayload } from "@/lib/parsePayload";
 import { compareGS1Payloads } from "@/lib/gs1Canonical";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { resolveCompanyIdFromRequest } from "@/lib/company/resolve";
+import { resolveScannerRequestContext } from "@/lib/handset-v2/scannerContext";
 import { isExpiredStrict } from "@/lib/scanner/expiry";
 import { beginScannerIdempotency, completeScannerIdempotency, waitForScannerReplay } from "@/lib/scanner/idempotency";
 import { insertScanLogSafe, recordSerialScanAtomic } from "@/lib/scanner/logging";
@@ -95,7 +95,8 @@ export async function POST(req: Request) {
     requireApiKeyIfConfigured(req);
 
     const supabase = getSupabaseAdmin();
-    const authCompanyId = await resolveCompanyIdFromRequest(req).catch(() => null);
+    const scannerContext = await resolveScannerRequestContext(req).catch(() => ({ companyId: null, handsetId: null }));
+    const authCompanyId = scannerContext.companyId;
 
     const rawBody = await req.json().catch(() => null);
     if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
@@ -219,7 +220,7 @@ export async function POST(req: Request) {
         parsed: parsedForLog,
         code_id: matchedUnit?.id ?? null,
         scanner_printer_id: req.headers.get("x-printer-id") || null,
-        ip: req.headers.get("x-forwarded-for") || null,
+        handset_id: scannerContext.handsetId,
         metadata: {
           status: replayStatus,
           mode: parsedAny.mode,
@@ -228,7 +229,7 @@ export async function POST(req: Request) {
           batch: batch || null,
           quota_consumed: false,
         },
-        status: replayStatus === "VALID" ? "SUCCESS" : "FAILED",
+        status: replayStatus,
         endpoint: "verify",
         idempotency_key: idempotencyKey,
         request_hash: requestHash,
@@ -312,9 +313,9 @@ export async function POST(req: Request) {
         raw_scan: rawInput,
         parsed: parsedForLog,
         scanner_printer_id: req.headers.get("x-printer-id") || null,
-        ip: req.headers.get("x-forwarded-for") || null,
+        handset_id: scannerContext.handsetId,
         metadata: { status: "INVALID", reason: "parse_error", quota_consumed: false },
-        status: "FAILED",
+        status: "INVALID",
         endpoint: "verify",
         idempotency_key: idem.key,
         request_hash: idem.requestHash,
@@ -334,9 +335,9 @@ export async function POST(req: Request) {
         raw_scan: rawInput,
         parsed: parsedForLog,
         scanner_printer_id: req.headers.get("x-printer-id") || null,
-        ip: req.headers.get("x-forwarded-for") || null,
+        handset_id: scannerContext.handsetId,
         metadata: { status: "INVALID", reason: "missing_required_fields", mode: parsedAny.mode, quota_consumed: false },
-        status: "FAILED",
+        status: "INVALID",
         endpoint: "verify",
         idempotency_key: idem.key,
         request_hash: idem.requestHash,
@@ -356,9 +357,9 @@ export async function POST(req: Request) {
         raw_scan: rawInput,
         parsed: parsedForLog,
         scanner_printer_id: req.headers.get("x-printer-id") || null,
-        ip: req.headers.get("x-forwarded-for") || null,
+        handset_id: scannerContext.handsetId,
         metadata: { status: "INVALID", reason: "code_not_found", mode: parsedAny.mode, quota_consumed: false },
-        status: "FAILED",
+        status: "INVALID",
         endpoint: "verify",
         idempotency_key: idem.key,
         request_hash: idem.requestHash,
@@ -380,9 +381,9 @@ export async function POST(req: Request) {
         parsed: parsedForLog,
         code_id: matchedUnit.id,
         scanner_printer_id: req.headers.get("x-printer-id") || null,
-        ip: req.headers.get("x-forwarded-for") || null,
+        handset_id: scannerContext.handsetId,
         metadata: { status: "INVALID", reason: "invalid_expiry", mode: parsedAny.mode, quota_consumed: false },
-        status: "FAILED",
+        status: "INVALID",
         endpoint: "verify",
         idempotency_key: idem.key,
         request_hash: idem.requestHash,
@@ -435,7 +436,7 @@ export async function POST(req: Request) {
       parsed: parsedForLog,
       code_id: matchedUnit.id,
       scanner_printer_id: req.headers.get("x-printer-id") || null,
-      ip: req.headers.get("x-forwarded-for") || null,
+      handset_id: scannerContext.handsetId,
       metadata: {
         status,
         mode: parsedAny.mode,
@@ -447,7 +448,7 @@ export async function POST(req: Request) {
         scan_count: duplicate.scanCount,
         quota_consumed: false,
       },
-      status: status === "VALID" ? "SUCCESS" : "FAILED",
+      status,
       endpoint: "verify",
       idempotency_key: idem.key,
       request_hash: idem.requestHash,

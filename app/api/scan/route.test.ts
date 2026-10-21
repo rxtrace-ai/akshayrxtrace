@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockState = vi.hoisted(() => ({
   rateLimitResponses: [] as any[],
+  logCalls: [] as any[],
 }));
 
 vi.mock("@/lib/security/rateLimit", () => ({
@@ -12,11 +13,12 @@ vi.mock("@/lib/supabase/admin", () => ({
   getSupabaseAdmin: () => ({}),
 }));
 
-vi.mock("@/lib/company/resolve", () => ({
-  resolveCompanyIdFromRequest: async () => "company-1",
+vi.mock("@/lib/handset-v2/scannerContext", () => ({
+  resolveScannerRequestContext: async () => ({ companyId: "company-1", handsetId: "handset-1" }),
 }));
 
 vi.mock("@/lib/scanner/idempotency", () => ({
+  buildRequestHash: () => "hash-replay",
   beginScannerIdempotency: async () => ({
     kind: "replay",
     statusCode: 200,
@@ -29,7 +31,7 @@ vi.mock("@/lib/scanner/idempotency", () => ({
 }));
 
 vi.mock("@/lib/scanner/logging", () => ({
-  insertScanLogSafe: async () => undefined,
+  insertScanLogSafe: async (_supabase: unknown, payload: any) => { mockState.logCalls.push(payload); return { ok: true }; },
   recordSerialScanAtomic: async () => null,
 }));
 
@@ -40,6 +42,7 @@ vi.mock("@/lib/observability/logging", () => ({
 describe("POST /api/scan rate limiting", () => {
   beforeEach(() => {
     mockState.rateLimitResponses = [];
+    mockState.logCalls = [];
   });
 
   it("allows valid scanner traffic below the limit", async () => {
@@ -63,6 +66,7 @@ describe("POST /api/scan rate limiting", () => {
 
     expect(res.status).toBe(200);
     expect(json.success).toBe(true);
+    expect(mockState.logCalls[0]).toMatchObject({ company_id: "company-1", handset_id: "handset-1", endpoint: "scan" });
   });
 
   it("returns 429 above the limit without leaking the device auth token", async () => {
