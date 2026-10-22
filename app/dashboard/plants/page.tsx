@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useSubscriptionSummary } from "@/lib/hooks/useSubscriptionSummary";
+import { getApiErrorMessage } from "@/lib/api/clientError";
 
 type PlantRow = {
   id: string;
@@ -45,18 +46,27 @@ export default function DashboardPlantsPage() {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const readPayload = async (response: Response): Promise<Record<string, any>> => {
+    const payload: unknown = await response.json().catch(() => null);
+    return payload !== null && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, any>)
+      : {};
+  };
 
   const fetchPlants = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const res = await fetch("/api/user/plants");
-      const payload = await res.json();
+      const payload = await readPayload(res);
       if (!res.ok) {
-        throw new Error(payload.error || "Failed to load plants");
+        throw new Error(getApiErrorMessage(payload, "Failed to load plants"));
       }
-      setPlants(payload.plants || []);
-      const activeCount = payload.summary?.active ?? payload.plants?.filter((p: any) => p.status === "active")?.length ?? 0;
+      const plantRows = Array.isArray(payload.plants) ? payload.plants : [];
+      setPlants(plantRows);
+      const activeCount = payload.summary?.active ?? plantRows.filter((p: any) => p?.status === "active").length;
       const allocated = subscriptionSummary?.entitlement?.limits?.plant ?? payload.summary?.allocated ?? 0;
       const remaining = subscriptionSummary?.entitlement?.remaining?.plant ?? payload.summary?.remaining ?? Math.max(allocated - activeCount, 0);
       const blocked = subscriptionSummary?.decisions?.plants?.blocked ?? false;
@@ -69,7 +79,7 @@ export default function DashboardPlantsPage() {
         reason,
       });
     } catch (err: any) {
-      setError(err?.message || "Unable to load plant data");
+      setError(typeof err?.message === "string" ? err.message : "Unable to load plant data");
     } finally {
       setLoading(false);
     }
@@ -94,21 +104,27 @@ export default function DashboardPlantsPage() {
     event.preventDefault();
     setSaving(true);
     setError("");
+    setMessage("");
     try {
       const res = await fetch("/api/user/plants", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
-      const payload = await res.json();
+      const payload = await readPayload(res);
       if (!res.ok) {
-        throw new Error(payload.error || "Failed to activate plant");
+        throw new Error(getApiErrorMessage(payload, "Failed to activate plant"));
       }
+      const plantName = typeof payload.plant?.name === "string" ? payload.plant.name.trim() : "";
+      const plantStatus = typeof payload.plant?.status === "string" ? payload.plant.status.trim() : "";
       setForm({ name: "", street_address: "", city_state: "", location_description: "" });
       setModalOpen(false);
+      setMessage(plantName
+        ? `${plantName} ${plantStatus ? `(${plantStatus}) ` : ""}activated successfully.`
+        : "Plant activated successfully.");
       await fetchPlants();
     } catch (err: any) {
-      setError(err?.message || "Unable to activate plant");
+      setError(typeof err?.message === "string" ? err.message : "Unable to activate plant");
     } finally {
       setSaving(false);
     }
@@ -162,6 +178,7 @@ export default function DashboardPlantsPage() {
           Plant activation blocked: {summary.reason || "quota_exceeded"}
         </p>
       )}
+      {message && <p role="status" className="text-sm text-green-700">{message}</p>}
 
       <Card>
         <CardHeader>
