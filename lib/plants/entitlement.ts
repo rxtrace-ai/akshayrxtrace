@@ -11,7 +11,7 @@ export type PlantEntitlement = {
   reason: PlantEntitlementReason;
 };
 
-function normalizeSnapshot(snapshot: any): PlantEntitlement {
+export function normalizePlantEntitlement(snapshot: any): PlantEntitlement {
   const allocated = Math.max(0, Number(snapshot?.limits?.plant ?? 0));
   const active = Math.max(0, Number(snapshot?.usage?.plant ?? 0));
   const remaining = Math.max(0, Number(snapshot?.remaining?.plant ?? 0));
@@ -35,5 +35,5 @@ export async function getPlantEntitlement(
     companyId,
     new Date().toISOString()
   );
-  return normalizeSnapshot(snapshot);
+  return normalizePlantEntitlement(snapshot);
 }
