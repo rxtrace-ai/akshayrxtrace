@@ -203,6 +203,36 @@ export async function POST(req: Request) {
   if (idem.kind === "conflict") {
     return json(409, failPayload("INVALID_REQUEST", "Idempotency key conflict"));
   }
+  const logIdempotencyKey = idem.kind === "replay"
+    ? String(body.idempotency_key || req.headers.get("idempotency-key") || req.headers.get("x-idempotency-key") || "").trim()
+    : idem.key;
+  const logRequestHash = idem.kind === "replay"
+    ? buildRequestHash({ raw: body.raw, company_id: body.company_id ?? null, device_context: body.device_context ?? null })
+    : idem.requestHash;
+  const scanLogUnavailable = async (statusCode: number, payload: any) => {
+    try {
+      // Preserve this outcome so retries reconcile the log without counting the
+      // same physical scan as a second duplicate scan.
+      await completeScannerIdempotency({
+        supabase,
+        endpoint: "/api/scan",
+        scopeKey,
+        idempotencyKey: logIdempotencyKey,
+        requestHash: logRequestHash,
+        statusCode,
+        payload,
+      });
+    } catch (error: any) {
+      logError("Failed to retain scan outcome after scan-log failure", {
+        route: "/api/scan",
+        operation: "scanner_idempotency_finalize",
+        errorCode: String(error?.code || "UNKNOWN"),
+      });
+    }
+    const response = json(503, failPayload("SCAN_LOG_UNAVAILABLE", "Unable to record scan. Please retry."));
+    response.headers.set("Retry-After", "1");
+    return response;
+  };
   const reconcileReplayLog = async (payload: any, idempotencyKey: string, requestHash: string) => {
     const replayParsed = parsePayload(body.raw);
     const replayStatus = String(payload?.data?.status || "UNKNOWN");
@@ -218,26 +248,26 @@ export async function POST(req: Request) {
       endpoint: "scan",
       idempotency_key: idempotencyKey,
       request_hash: requestHash,
-      metadata: { status: replayStatus, quota_consumed: false },
+      metadata: {
+        status: replayStatus,
+        quota_consumed: false,
+        ...(payload?.data?.result?.id
+          ? {
+              entity_type: payload.data.level === "unit" ? "unit_label" : payload.data.level,
+              entity_id: payload.data.result.id,
+              level: payload.data.level,
+            }
+          : {}),
+      },
     });
     if (!result.ok) {
-      logWarn("Scan response preserved despite scan-log write failure", {
-        route: "/api/scan",
-        operation: "scanner_log_insert",
-        errorCode: result.errorCode,
-        errorMessage: result.message,
-      });
+      return false;
     }
+    return true;
   };
 
   if (idem.kind === "replay") {
-    const replayKey = String(body.idempotency_key || req.headers.get("idempotency-key") || req.headers.get("x-idempotency-key") || "").trim();
-    const replayHash = buildRequestHash({
-      raw: body.raw,
-      company_id: body.company_id ?? null,
-      device_context: body.device_context ?? null,
-    });
-    await reconcileReplayLog(idem.payload, replayKey, replayHash);
+    if (!(await reconcileReplayLog(idem.payload, logIdempotencyKey, logRequestHash))) return scanLogUnavailable(idem.statusCode, idem.payload);
     return json(idem.statusCode, idem.payload);
   }
   if (idem.kind === "pending") {
@@ -250,7 +280,7 @@ export async function POST(req: Request) {
       timeoutMs: 3500,
     });
     if (wait.kind === "replay") {
-      await reconcileReplayLog(wait.payload, idem.key, idem.requestHash);
+      if (!(await reconcileReplayLog(wait.payload, idem.key, idem.requestHash))) return scanLogUnavailable(wait.statusCode, wait.payload);
       return json(wait.statusCode, wait.payload);
     }
     return json(409, failPayload("INVALID_REQUEST", "Request already in progress"));
@@ -281,17 +311,19 @@ export async function POST(req: Request) {
     const parsedAny = parsePayload(body.raw);
     if (parsedAny.mode === "INVALID") {
       const payload = failPayload("INVALID_CODE", parsedAny.error || "Invalid payload");
-      await insertScanLogSafe(supabase, {
+      const logWrite = await insertScanLogSafe(supabase, {
         company_id: authCompanyId,
         handset_id: scannerContext.handsetId,
         raw_scan: body.raw,
         parsed: { parseError: parsedAny.error, raw: parsedAny.raw },
+        code_id: null,
         status: "INVALID",
         endpoint: "scan",
         idempotency_key: idem.key,
         request_hash: idem.requestHash,
         metadata: { status: "INVALID", reason: "parse_error", quota_consumed: false },
       });
+      if (!logWrite.ok) return scanLogUnavailable(400, payload);
       return finalize(400, payload);
     }
 
@@ -334,17 +366,19 @@ export async function POST(req: Request) {
     if (data.expiryDate) {
       const expiry = isExpiredStrict(data.expiryDate);
       if (!expiry.valid) {
-        await insertScanLogSafe(supabase, {
+        const logWrite = await insertScanLogSafe(supabase, {
           company_id: resolvedCompanyId,
           handset_id: scannerContext.handsetId,
           raw_scan: body.raw,
           parsed: { mode: parsedAny.mode, ...data },
+          code_id: null,
           status: "INVALID",
           endpoint: "scan",
           idempotency_key: idem.key,
           request_hash: idem.requestHash,
           metadata: { status: "INVALID", reason: "invalid_expiry", quota_consumed: false },
         });
+        if (!logWrite.ok) return scanLogUnavailable(400, failPayload("INVALID_CODE", "Invalid expiry in scanned code"));
         return finalize(400, failPayload("INVALID_CODE", "Invalid expiry in scanned code"));
       }
       data.expiryDate = expiry.isoDate;
@@ -527,23 +561,27 @@ export async function POST(req: Request) {
               ? compareGS1Payloads(storedPayload, body.raw)
               : normalizeMachinePayload(storedPayload) === normalizeMachinePayload(body.raw);
           if (!payloadsMatch) {
-            await insertScanLogSafe(supabase, {
+            const logWrite = await insertScanLogSafe(supabase, {
               company_id: unit.company_id || resolvedCompanyId,
               handset_id: scannerContext.handsetId,
               raw_scan: body.raw,
               parsed: { serialNo: data.serialNo || null },
+              code_id: null,
               status: "INVALID",
               endpoint: "scan",
               idempotency_key: idem.key,
               request_hash: idem.requestHash,
               metadata: {
                 level: "unit",
+                entity_type: "unit_label",
+                entity_id: unit.id,
                 status: "PAYLOAD_MISMATCH",
                 stored_payload: codeMode === "GS1" ? normalizeGS1Payload(storedPayload) : normalizeMachinePayload(storedPayload),
                 scanned_payload: codeMode === "GS1" ? normalizeGS1Payload(body.raw) : normalizeMachinePayload(body.raw),
                 unit_id: unit.id,
               },
             });
+            if (!logWrite.ok) return scanLogUnavailable(400, failPayload("INVALID_CODE", "Payload mismatch - code may be tampered"));
             return finalize(400, failPayload("INVALID_CODE", "Payload mismatch - code may be tampered"));
           }
         }
@@ -568,17 +606,19 @@ export async function POST(req: Request) {
     }
 
     if (!result || !level) {
-      await insertScanLogSafe(supabase, {
+      const logWrite = await insertScanLogSafe(supabase, {
         company_id: resolvedCompanyId,
         handset_id: scannerContext.handsetId,
         raw_scan: body.raw,
         parsed: { mode: parsedAny.mode, serialNo: data.serialNo || null, sscc: data.sscc || null },
+        code_id: null,
         status: "INVALID",
         endpoint: "scan",
         idempotency_key: idem.key,
         request_hash: idem.requestHash,
         metadata: { status: "INVALID", reason: "code_not_found", quota_consumed: false },
       });
+      if (!logWrite.ok) return scanLogUnavailable(404, failPayload("INVALID_CODE", "Code not found in hierarchy"));
       return finalize(404, failPayload("INVALID_CODE", "Code not found in hierarchy"));
     }
 
@@ -594,18 +634,20 @@ export async function POST(req: Request) {
 
     const status = expiryStatus === "EXPIRED" ? "EXPIRED" : duplicateInfo?.isDuplicate ? "DUPLICATE" : "VALID";
 
-    await insertScanLogSafe(supabase, {
+    const logWrite = await insertScanLogSafe(supabase, {
       company_id: resolvedCompanyId,
       handset_id: scannerContext.handsetId,
       raw_scan: body.raw,
       parsed: { mode: parsedAny.mode, ...data, serialNo: serial || null },
-      code_id: result?.id || null,
+      code_id: null,
       status,
       endpoint: "scan",
       idempotency_key: idem.key,
       request_hash: idem.requestHash,
       metadata: {
         level,
+        entity_type: level === "unit" ? "unit_label" : level,
+        entity_id: result?.id ?? null,
         serial: serial || null,
         gtin: data.gtin || null,
         batch: data.batchNo || data.batch || null,
@@ -617,7 +659,6 @@ export async function POST(req: Request) {
         quota_consumed: false,
       },
     });
-
     const payload = okPayload({
       status,
       level,
@@ -625,6 +666,8 @@ export async function POST(req: Request) {
       firstScanAt: duplicateInfo?.firstScannedAt ?? null,
       result,
     });
+
+    if (!logWrite.ok) return scanLogUnavailable(200, payload);
 
     return finalize(200, payload);
   } catch (err: any) {

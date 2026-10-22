@@ -5,7 +5,9 @@ type ScanLogPayload = {
   company_id: string | null;
   raw_scan: string;
   parsed: any;
-  code_id?: string | null;
+  // This column references codes(id), which is a BIGINT. UUID-backed scan
+  // entities belong in metadata unless a real codes.id is explicitly known.
+  code_id?: number | string | null;
   scanner_printer_id?: string | null;
   scanned_at?: string;
   handset_id?: string | null;
@@ -24,14 +26,53 @@ function isUniqueViolation(error: any): boolean {
   return String(error?.code || "") === "23505";
 }
 
+async function resolveBigintReference(
+  supabase: SupabaseClient,
+  table: "codes" | "printers",
+  value: number | string | null | undefined,
+  endpoint: ScanLogPayload["endpoint"]
+): Promise<string | null> {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!/^\d+$/.test(raw)) return null;
+  const id = raw.replace(/^0+(?=\d)/, "");
+  if (id === "0") return null;
+
+  try {
+    const { data, error } = await supabase.from(table).select("id").eq("id", id).maybeSingle();
+    if (error) {
+      logError("Scanner log reference validation failed", {
+        operation: `scanner_${table.slice(0, -1)}_reference_validation`,
+        endpoint,
+        errorCode: String(error.code || "UNKNOWN"),
+      });
+      return null;
+    }
+    return data?.id == null ? null : String(data.id);
+  } catch (error: any) {
+    logError("Scanner log reference validation failed", {
+      operation: `scanner_${table.slice(0, -1)}_reference_validation`,
+      endpoint,
+      errorCode: String(error?.code || "UNKNOWN"),
+    });
+    return null;
+  }
+}
+
 export async function insertScanLogSafe(supabase: SupabaseClient, payload: ScanLogPayload): Promise<ScanLogWriteResult> {
+  const suppliedPrinterId = payload.scanner_printer_id?.trim();
+  const [codeId, printerId] = await Promise.all([
+    resolveBigintReference(supabase, "codes", payload.code_id, payload.endpoint),
+    resolveBigintReference(supabase, "printers", suppliedPrinterId, payload.endpoint),
+  ]);
+
   const row = {
     company_id: payload.company_id,
     handset_id: payload.handset_id ?? null,
     raw_scan: payload.raw_scan,
     parsed: payload.parsed ?? null,
-    code_id: payload.code_id ?? null,
-    scanner_printer_id: payload.scanner_printer_id ?? null,
+    code_id: codeId,
+    scanner_printer_id: printerId,
     scanned_at: payload.scanned_at ?? new Date().toISOString(),
     metadata: payload.metadata ?? {},
     status: payload.status,
@@ -52,6 +93,9 @@ export async function insertScanLogSafe(supabase: SupabaseClient, payload: ScanL
         const reconciliationRow: Record<string, unknown> = { ...row };
         // Keep the timestamp of the original physical scan when reconciling a retry.
         delete reconciliationRow.scanned_at;
+        // Metadata captures the original scan details and entity reference; do not
+        // replace it with a thinner replay payload.
+        delete reconciliationRow.metadata;
         if (!payload.handset_id) delete reconciliationRow.handset_id;
         const { data, error: updateError } = await supabase
           .from("scan_logs")

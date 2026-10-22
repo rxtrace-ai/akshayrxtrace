@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockState = vi.hoisted(() => ({
   rateLimitResponses: [] as any[],
   logCalls: [] as any[],
+  beginKind: "replay" as "replay" | "ok",
+  unitFound: true,
+  logOk: true,
+  completeCalls: [] as any[],
 }));
 
 vi.mock("@/lib/security/rateLimit", () => ({
@@ -10,7 +14,15 @@ vi.mock("@/lib/security/rateLimit", () => ({
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
-  getSupabaseAdmin: () => ({}),
+  getSupabaseAdmin: () => {
+    const row = { id: "unit-uuid-1", company_id: "company-1", box_id: null, serial: "SERIAL-1", gs1_payload: null, payload: null, code_mode: "PIC", created_at: "2026-01-01" };
+    const query: any = {
+      select: () => query,
+      eq: () => query,
+      maybeSingle: async () => ({ data: mockState.unitFound ? row : null, error: null }),
+    };
+    return { from: () => query };
+  },
 }));
 
 vi.mock("@/lib/handset-v2/scannerContext", () => ({
@@ -19,19 +31,15 @@ vi.mock("@/lib/handset-v2/scannerContext", () => ({
 
 vi.mock("@/lib/scanner/idempotency", () => ({
   buildRequestHash: () => "hash-replay",
-  beginScannerIdempotency: async () => ({
-    kind: "replay",
-    statusCode: 200,
-    payload: { success: true, data: { status: "VALID" } },
-    key: "idem-1",
-    requestHash: "hash-1",
-  }),
-  completeScannerIdempotency: async () => undefined,
+  beginScannerIdempotency: async () => mockState.beginKind === "replay"
+    ? { kind: "replay", statusCode: 200, payload: { success: true, data: { status: "VALID", level: "unit", result: { id: "unit-uuid-1" } } }, key: "idem-1", requestHash: "hash-1" }
+    : { kind: "ok", key: "idem-1", requestHash: "hash-1" },
+  completeScannerIdempotency: async (args: any) => { mockState.completeCalls.push(args); },
   waitForScannerReplay: async () => ({ kind: "pending" }),
 }));
 
 vi.mock("@/lib/scanner/logging", () => ({
-  insertScanLogSafe: async (_supabase: unknown, payload: any) => { mockState.logCalls.push(payload); return { ok: true }; },
+  insertScanLogSafe: async (_supabase: unknown, payload: any) => { mockState.logCalls.push(payload); return mockState.logOk ? { ok: true } : { ok: false, errorCode: "XX000", message: "Database rejected scan log write" }; },
   recordSerialScanAtomic: async () => null,
 }));
 
@@ -43,6 +51,10 @@ describe("POST /api/scan rate limiting", () => {
   beforeEach(() => {
     mockState.rateLimitResponses = [];
     mockState.logCalls = [];
+    mockState.beginKind = "replay";
+    mockState.unitFound = true;
+    mockState.logOk = true;
+    mockState.completeCalls = [];
   });
 
   it("allows valid scanner traffic below the limit", async () => {
@@ -94,5 +106,51 @@ describe("POST /api/scan rate limiting", () => {
     });
     expect(res.headers.get("Retry-After")).toBe("11");
     expect(JSON.stringify(json)).not.toContain("secret-device-token");
+  });
+
+  it("logs a matched unit with company attribution and its UUID in metadata, never code_id", async () => {
+    mockState.beginKind = "ok";
+    const { POST } = await import("@/app/api/scan/route");
+    const res = await POST(new Request("http://localhost/api/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "idem-unit" },
+      body: JSON.stringify({ raw: "(95)SERIAL-1" }),
+    }));
+    expect(res.status).toBe(200);
+    expect(mockState.logCalls[0]).toMatchObject({ company_id: "company-1", code_id: null, metadata: { entity_type: "unit_label", entity_id: "unit-uuid-1" } });
+  });
+
+  it("logs unmatched scans without inventing an entity reference", async () => {
+    mockState.beginKind = "ok";
+    mockState.unitFound = false;
+    const { POST } = await import("@/app/api/scan/route");
+    const res = await POST(new Request("http://localhost/api/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "idem-missing" },
+      body: JSON.stringify({ raw: "(95)SERIAL-1" }),
+    }));
+    expect(res.status).toBe(404);
+    expect(mockState.logCalls[0]).toMatchObject({ company_id: "company-1", code_id: null, metadata: { reason: "code_not_found" } });
+  });
+
+  it("returns retryable failure for a failed log write and reconciles on duplicate request", async () => {
+    mockState.beginKind = "ok";
+    mockState.logOk = false;
+    const { POST } = await import("@/app/api/scan/route");
+    const request = () => new Request("http://localhost/api/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "idem-retry" },
+      body: JSON.stringify({ raw: "(95)SERIAL-1" }),
+    });
+    const first = await POST(request());
+    expect(first.status).toBe(503);
+    expect(mockState.completeCalls).toHaveLength(1);
+
+    mockState.beginKind = "replay";
+    mockState.logOk = true;
+    const retry = await POST(request());
+    expect(retry.status).toBe(200);
+    expect(mockState.logCalls).toHaveLength(2);
+    expect(mockState.logCalls[1].metadata).toMatchObject({ entity_type: "unit_label", entity_id: "unit-uuid-1" });
   });
 });

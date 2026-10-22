@@ -5,6 +5,8 @@ const state = vi.hoisted(() => ({
   handsetId: "handset-1" as string | null,
   companyId: null as string | null,
   isDuplicate: true,
+  unitFound: true,
+  unitExpiry: "",
   rateLimitAllowed: true,
   logResult: { ok: true } as { ok: boolean; errorCode?: string; message?: string },
   logCalls: [] as any[],
@@ -12,20 +14,19 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
-  getSupabaseAdmin: () => ({
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          order: () => ({
-            limit: async () => ({
-              data: [{ id: "unit-1", company_id: "company-1", serial: "SERIAL-1", gtin: null, batch: null, payload: null, gs1_payload: null, code_mode: "PIC", created_at: "2026-01-01" }],
-              error: null,
-            }),
-          }),
-        }),
+  getSupabaseAdmin: () => {
+    const query: any = {
+      select: () => query,
+      eq: () => query,
+      order: () => query,
+      limit: () => query,
+      then: (resolve: any) => resolve({
+        data: state.unitFound ? [{ id: "unit-1", company_id: "company-1", serial: "SERIAL-1", gtin: null, batch: null, payload: null, gs1_payload: null, code_mode: "PIC", created_at: "2026-01-01", expiry: state.unitExpiry }] : [],
+        error: null,
       }),
-    }),
-  }),
+    };
+    return { from: () => query };
+  },
 }));
 
 vi.mock("@/lib/handset-v2/scannerContext", () => ({
@@ -63,6 +64,8 @@ describe("POST /api/verify scan-log behavior", () => {
     state.handsetId = "handset-1";
     state.companyId = null;
     state.isDuplicate = true;
+    state.unitFound = true;
+    state.unitExpiry = "";
     state.rateLimitAllowed = true;
     state.logResult = { ok: true };
     state.logCalls = [];
@@ -78,16 +81,17 @@ describe("POST /api/verify scan-log behavior", () => {
     expect(payload.status).toBe("DUPLICATE");
     expect(state.logCalls).toHaveLength(1);
     expect(state.logCalls[0]).toMatchObject({ company_id: "company-1", handset_id: "handset-1", status: "DUPLICATE", endpoint: "verify", idempotency_key: "idem-verify-1" });
+    expect(state.logCalls[0]).toMatchObject({ code_id: null, metadata: { entity_type: "unit_label", entity_id: "unit-1" } });
   });
 
-  it("keeps a valid duplicate result when the log write fails", async () => {
+  it("returns retryable failure while caching the outcome for log reconciliation", async () => {
     state.logResult = { ok: false, errorCode: "08006", message: "Database rejected scan log write" };
     const { POST } = await import("@/app/api/verify/route");
     const response = await POST(request());
     const payload = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(payload.status).toBe("DUPLICATE");
+    expect(response.status).toBe(503);
+    expect(payload.error.code).toBe("SCAN_LOG_UNAVAILABLE");
     expect(state.completeCalls).toHaveLength(1);
   });
 
@@ -107,10 +111,11 @@ describe("POST /api/verify scan-log behavior", () => {
     });
   });
 
-  it("retries the same upsert on completed replay after a failed write", async () => {
+  it("retries a failed log write on the next idempotent request", async () => {
     state.logResult = { ok: false, errorCode: "08006", message: "Database rejected scan log write" };
     const { POST } = await import("@/app/api/verify/route");
-    await POST(request());
+    const first = await POST(request());
+    expect(first.status).toBe(503);
 
     state.beginKind = "replay";
     state.logResult = { ok: true };
@@ -121,6 +126,23 @@ describe("POST /api/verify scan-log behavior", () => {
     expect(state.logCalls).toHaveLength(2);
     expect(state.logCalls[0].idempotency_key).toBe(state.logCalls[1].idempotency_key);
     expect(state.logCalls[0].company_id).toBe(state.logCalls[1].company_id);
+    expect(state.completeCalls).toHaveLength(1);
+  });
+
+  it("logs unmatched verify requests with a null entity reference", async () => {
+    state.unitFound = false;
+    state.companyId = "company-1";
+    const { POST } = await import("@/app/api/verify/route");
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(state.logCalls[0]).toMatchObject({ company_id: "company-1", code_id: null, metadata: { reason: "code_not_found" } });
+  });
+
+  it("keeps unit-label reference on invalid expiry logs", async () => {
+    const { POST } = await import("@/app/api/verify/route");
+    const response = await POST(request({ raw: "(93)991332(95)SERIAL-1" }));
+    expect(response.status).toBe(200);
+    expect(state.logCalls[0]).toMatchObject({ code_id: null, metadata: { reason: "invalid_expiry", entity_type: "unit_label", entity_id: "unit-1" } });
   });
 
   it("leaves handset association optional when verified handset context is unavailable", async () => {
