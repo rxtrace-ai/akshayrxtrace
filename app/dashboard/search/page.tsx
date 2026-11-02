@@ -21,6 +21,41 @@ type SearchResponse = {
   counts?: TraceCounts;
 };
 
+const SEARCH_TYPES = ["UNIT", "BOX", "CARTON", "PALLET"] as const;
+
+function isSearchResponse(value: unknown): value is SearchResponse {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    typeof value.type === "string" &&
+    SEARCH_TYPES.includes(value.type as (typeof SEARCH_TYPES)[number])
+  );
+}
+
+function responseErrorMessage(payload: any, status: number): string {
+  const code = payload?.error?.code;
+  const message = payload?.error?.message;
+
+  if (status === 401 || status === 403) {
+    return typeof message === "string" && message.trim()
+      ? message
+      : "Authentication failed. Please sign in again.";
+  }
+  if (status === 404) {
+    return typeof code === "string" && code ? `${code}: ${message || "Code not found."}` : "CODE_NOT_FOUND: Code not found.";
+  }
+  if (status >= 500) {
+    return typeof message === "string" && message.trim()
+      ? message
+      : "The search service encountered an error. Please try again.";
+  }
+  if (typeof message === "string" && message.trim()) return message;
+  return typeof payload?.error === "string" && payload.error.trim()
+    ? payload.error
+    : "Search failed. Please check the code and try again.";
+}
+
 function HierarchyCard({
   title,
   identifier,
@@ -109,13 +144,23 @@ export default function Page() {
         )}&company_id=${encodeURIComponent(company.id)}`
       );
 
-      const data = await res.json();
+      let payload: any;
+      try {
+        payload = await res.json();
+      } catch {
+        throw new Error("The search service returned an invalid response.");
+      }
 
-      if (!res.ok) throw new Error(data?.error || "Search failed");
+      if (!res.ok) throw new Error(responseErrorMessage(payload, res.status));
 
-      setResult(data);
+      const extracted = payload?.data ?? payload;
+      if (!isSearchResponse(extracted)) {
+        throw new Error("The search service returned an invalid response: missing or invalid result type.");
+      }
+
+      setResult(extracted);
     } catch (err: any) {
-      setError(err.message || "Search failed");
+      setError(err.message || "Search failed. Please try again.");
     } finally {
       setLoading(false);
     }
